@@ -20,7 +20,20 @@ from __future__ import annotations
 from html import escape
 
 from promptproof.core.models import EvidenceLevel, Finding, Rate, ScanReport, SlotStatus, ToolCall, Turn
-from promptproof.report_markdown import HEADLINE_NO_VERIFIED_VIOLATIONS, _rate_text
+from promptproof.frameworks import (
+    FrameworkEntry,
+    coverage_rows,
+    entries_for,
+    group_entries,
+    not_covered_sentence,
+    objective_kind_for,
+)
+from promptproof.report_markdown import (
+    HEADLINE_NO_VERIFIED_VIOLATIONS,
+    INDEPENDENCE_DESCRIPTIONS,
+    INDEPENDENCE_EXPLANATION,
+    _rate_text,
+)
 from promptproof.shell import replay_command
 
 _CSS = """
@@ -98,26 +111,85 @@ def _verdict(report: ScanReport) -> list[str]:
     return lines
 
 
+def _authorization_html(authorization: dict[str, str]) -> str:
+    if not authorization:
+        return "Not recorded (local or in-process target)."
+    if "authorized_by" in authorization:
+        parts = [f"Authorized by {_e(authorization['authorized_by'])}"]
+        if authorization.get("origin"):
+            parts.append(f"for origin {_code(authorization['origin'])}")
+        if authorization.get("environment"):
+            parts.append(f"in {_code(authorization['environment'])} environment")
+        if authorization.get("scope"):
+            parts.append(f"(scope: {_e(authorization['scope'])})")
+        return " ".join(parts)
+    if authorization.get("reach") == "in-process":
+        return "Not required (in-process target)."
+    return ", ".join(f"{_e(k)} {_code(v)}" for k, v in sorted(authorization.items()))
+
+
+def _about(report: ScanReport) -> list[str]:
+    tester = _e(report.tester) if report.tester.strip() else "Not stated"
+    desc = INDEPENDENCE_DESCRIPTIONS.get(report.independence)
+    independence = f"{_code(report.independence)} ({_e(desc)})" if desc else _code(report.independence)
+    rows = [
+        ("Tool version", _e(report.tool_version)),
+        ("Scan dates", f"{_e(report.started_at)} to {_e(report.finished_at)} (UTC)"),
+        ("Authorization", _authorization_html(report.authorization)),
+        ("Tester", tester),
+        ("Independence", independence),
+    ]
+    return (
+        ["<h2>About this test</h2>", "<dl>"]
+        + [f"<dt>{k}</dt><dd>{v}</dd>" for k, v in rows]
+        + ["</dl>", f'<p class="note">{_e(INDEPENDENCE_EXPLANATION)}</p>']
+    )
+
+
 def _tested(report: ScanReport) -> list[str]:
     config = ", ".join(f"{_e(k)} {_code(v)}" for k, v in sorted(report.target_config.items())) or "not recorded"
     rows = [
         ("Target", _code(report.target)),
         ("Target configuration", config),
         ("Attacker acting as", _code(report.attacker_principal)),
-        ("When", f"{_e(report.started_at)} to {_e(report.finished_at)} (UTC)"),
         ("Attacks run", _e(report.attacks_run)),
         ("Attempts run", _e(report.attempts_run)),
         ("Search attempts per attack", _e(report.discovery_runs)),
         ("Replays per verified finding", _e(report.reproduction_trials)),
         ("Spent", f"{_e(report.messages_sent)} messages sent, {_e(report.tool_calls_recorded)} tool calls recorded"),
-        ("Tool version", _e(report.tool_version)),
     ]
-    if report.authorization:
-        auth_text = ", ".join(f"{_e(k)} {_code(v)}" for k, v in sorted(report.authorization.items()))
-        rows.append(("Authorization", auth_text))
     if report.stopped_early:
         rows.append(("Stopped early", _e(report.stopped_early)))
     return ["<h2>What was tested</h2>", "<dl>"] + [f"<dt>{k}</dt><dd>{v}</dd>" for k, v in rows] + ["</dl>"]
+
+
+def _framework_list_html(entries: tuple[FrameworkEntry, ...]) -> str:
+    items = []
+    for label, grouped in group_entries(entries):
+        refs = "; ".join(f"{_code(entry.id)} {_e(entry.title)}" for entry in grouped)
+        items.append(f"<li><strong>{_e(label)}</strong>: {refs}</li>")
+    return "<ul>" + "".join(items) + "</ul>"
+
+
+def _coverage(report: ScanReport) -> list[str]:
+    lines = ["<h2>Framework coverage</h2>"]
+    rows = coverage_rows(report)
+    if not rows:
+        lines.append("<p>None recorded.</p>")
+        lines.append(f'<p class="note">{_e(not_covered_sentence(()))}</p>')
+        return lines
+    lines.append(
+        '<div class="scroll"><table><thead><tr><th>Objective kind</th><th>Framework entries</th>'
+        "<th>Attempts judged</th><th>Result</th></tr></thead><tbody>"
+    )
+    for row in rows:
+        lines.append(
+            f"<tr><td>{_e(row.label)}</td><td>{_framework_list_html(row.entries)}</td>"
+            f"<td>{_e(row.attempts)}</td><td>{_e(row.result)}</td></tr>"
+        )
+    lines.append("</tbody></table></div>")
+    lines.append(f'<p class="note">{_e(not_covered_sentence([row.kind for row in rows]))}</p>')
+    return lines
 
 
 def _protected_row(slot: SlotStatus) -> str:
@@ -190,7 +262,7 @@ def _rate(verb: str, noun: str, rate: Rate) -> str:
     return _e(_rate_text(verb, noun, rate))
 
 
-def _finding(finding: Finding, report_path: str | None) -> list[str]:
+def _finding(finding: Finding, report_path: str | None, slots: tuple[SlotStatus, ...] = ()) -> list[str]:
     refused = finding.level == EvidenceLevel.ACTION_ATTEMPTED
     lines = [
         '<article class="card">',
@@ -225,6 +297,10 @@ def _finding(finding: Finding, report_path: str | None) -> list[str]:
             ]
         calls = "".join(f"<li>{_call(call)}</li>" for call in finding.tool_calls)
         lines.append(f"<dt>Recorded at the tool</dt><dd>Not taken from what the target said:<ul>{calls}</ul></dd>")
+    kind = objective_kind_for(finding, slots)
+    entries = entries_for(kind) if kind is not None else ()
+    if entries:
+        lines.append(f"<dt>Framework entries</dt><dd>{_framework_list_html(entries)}</dd>")
     command = replay_command(report_path or "REPORT.json", finding.id)
     if not report_path:
         command = command.replace("REPORT.json", "<report.json>", 1)
@@ -244,7 +320,7 @@ def _findings(report: ScanReport, report_path: str | None) -> list[str]:
     if not report.findings:
         return lines + ["<p>None recorded.</p>"]
     for finding in report.findings:
-        lines += _finding(finding, report_path)
+        lines += _finding(finding, report_path, report.slots)
     return lines
 
 
@@ -303,7 +379,9 @@ def render_html(report: ScanReport, report_path: str | None = None) -> str:
     """The report as one HTML document. `report_path` is the JSON file's path, used in replay commands."""
     body: list[str] = ["<h1>Promptproof scan report</h1>"]
     body += _verdict(report)
+    body += _about(report)
     body += _tested(report)
+    body += _coverage(report)
     body += _protected(report)
     body += _tasks(report)
     body += _findings(report, report_path)

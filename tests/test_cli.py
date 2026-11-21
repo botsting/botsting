@@ -123,3 +123,52 @@ def test_hostile_target_specs_are_rejected(tmp_path, capsys):
     for spec in ["toy:fixed?\n\n![x](https://invalid.example/p)", "toy:fixed?", "toy:fixed?model", "toy:fixed `x`", ""]:
         assert main(["scan", "--target", spec, "--out", str(tmp_path / "x.json")]) == EXIT_INCONCLUSIVE, repr(spec)
     assert not (tmp_path / "x.json").exists()
+
+
+def test_scan_records_tester_and_independence_in_json_and_reports(tmp_path, capsys):
+    out = tmp_path / "scan.json"
+    md = tmp_path / "report.md"
+    html = tmp_path / "report.html"
+    rc = main(
+        [
+            "scan",
+            "--target",
+            "toy:fixed",
+            "--out",
+            str(out),
+            "--markdown",
+            str(md),
+            "--html",
+            str(html),
+            "--tester",
+            "Dana Levi, Example Audit",
+            "--independence",
+            "third-party",
+        ]
+    )
+    assert rc == EXIT_NO_VERIFIED
+    data = json.loads(out.read_text(encoding="utf-8"))
+    assert data["tester"] == "Dana Levi, Example Audit"
+    assert data["independence"] == "third-party"
+
+    md_text = md.read_text(encoding="utf-8")
+    assert "Dana Levi, Example Audit" in md_text
+    assert "` third-party `" in md_text
+
+    html_text = html.read_text(encoding="utf-8")
+    assert "Dana Levi, Example Audit" in html_text
+    assert "<code>third-party</code>" in html_text
+
+
+def test_scan_default_tester_and_independence(tmp_path, capsys):
+    out = tmp_path / "scan.json"
+    assert main(["scan", "--target", "toy:fixed", "--out", str(out)]) == EXIT_NO_VERIFIED
+    data = json.loads(out.read_text(encoding="utf-8"))
+    assert data["tester"] == ""
+    assert data["independence"] == "self"
+
+
+def test_scan_rejects_invalid_independence(tmp_path):
+    with pytest.raises(SystemExit) as exit_info:
+        main(["scan", "--target", "toy:fixed", "--out", str(tmp_path / "x.json"), "--independence", "external"])
+    assert exit_info.value.code == 2

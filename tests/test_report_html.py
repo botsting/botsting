@@ -12,12 +12,14 @@ from promptproof.cli import EXIT_VIOLATIONS, main
 from promptproof.core.models import ErrorRecord, ScanReport, SuspectedFinding, TaskStatus, ToolCall, Turn
 from promptproof.core.runner import run_scan
 from promptproof.report_html import render_html
-from promptproof.report_markdown import HEADLINE_NO_VERIFIED_VIOLATIONS
+from promptproof.report_markdown import HEADLINE_NO_VERIFIED_VIOLATIONS, INDEPENDENCE_EXPLANATION
 from promptproof.targets.registry import build_target
 
-BANNED = ("safe", "secure", "clean", "certified", "passed")
+BANNED = ("safe", "secure", "clean", "certified", "passed", "compliant")
 SECTIONS = [
+    "About this test",
     "What was tested",
+    "Framework coverage",
     "What was protected",
     "Normal use",
     "Verified findings",
@@ -179,6 +181,13 @@ def test_nothing_a_target_or_attacker_wrote_can_become_markup(vulnerable):
         errors=(ErrorRecord(HOSTILE, HOSTILE, HOSTILE),),
         limitations=(HOSTILE,),
         inconclusive_reasons=(HOSTILE,),
+        tester=HOSTILE,
+        authorization={
+            "authorized_by": HOSTILE,
+            "origin": HOSTILE,
+            "environment": HOSTILE,
+            "scope": HOSTILE,
+        },
     )
     html = render_html(report, HOSTILE)
     page = assert_inert(html)  # no <script>, <img>, <a>, no src/href/on* attributes anywhere
@@ -217,3 +226,84 @@ def test_a_report_file_with_markup_in_a_number_is_refused(vulnerable):
     # And even if a bad value got into a report object, the page escapes it.
     page = assert_inert(render_html(replace(vulnerable, contaminated_attempts=hostile)))  # type: ignore[arg-type]
     assert hostile in page.visible
+
+
+def test_html_includes_about_coverage_table_and_per_finding_frameworks(vulnerable, fixed):
+    custom = replace(
+        vulnerable,
+        tester="Dana Levi, Example Audit",
+        independence="third-party",
+        authorization={
+            "reach": "network",
+            "origin": "https://staging.example.com",
+            "authorized_by": "Dana Levi",
+            "environment": "staging",
+            "scope": "support bot",
+        },
+    )
+    html = render_html(custom, "reports/scan.promptproof.json")
+    page = assert_inert(html)
+    text = page.visible
+    assert "About this test" in text
+    assert "Dana Levi, Example Audit" in text
+    assert "third-party" in text
+    assert "Authorized by Dana Levi" in text
+    assert "https://staging.example.com" in text
+    assert INDEPENDENCE_EXPLANATION in text
+
+    # Coverage table has all four exercised objective kinds and the non-coverage sentence.
+    assert "Framework coverage" in text
+    assert "Leak of an instruction secret" in text
+    assert "Leak of another user's record" in text
+    assert "Unauthorized tool action by direct request" in text
+    assert "Unauthorized tool action through injected content" in text
+    assert "proven finding" in text
+    assert "This scan did not cover" in text
+
+    # Per-finding framework entries appear inside finding cards.
+    assert "Framework entries" in text
+    assert "LLM08:2026" in text
+    assert "ASI02" in text
+    assert "AML.T0053" in text
+    assert "MS-2.7-007" in text
+    assert "B006" in text
+
+    # Fixed report shows no verified violation and default tester/independence.
+    fixed_page = assert_inert(render_html(fixed))
+    assert "Not stated" in fixed_page.visible
+    assert "self" in fixed_page.visible
+    assert "no verified violation" in fixed_page.visible
+
+
+def test_html_renders_old_report_json_without_new_fields(vulnerable):
+    import json
+
+    legacy = json.loads(json.dumps(vulnerable.to_dict()))
+    legacy.pop("tester", None)
+    legacy.pop("independence", None)
+    legacy.pop("authorization", None)
+    loaded = ScanReport.from_dict(legacy)
+    assert loaded.tester == ""
+    assert loaded.independence == "self"
+    page = assert_inert(render_html(loaded))
+    assert page.headings == SECTIONS
+    assert "Not stated" in page.visible
+    assert "Framework coverage" in page.visible
+
+
+def test_generated_reports_never_contain_forbidden_framework_claims(vulnerable, fixed):
+    from promptproof.report_markdown import render_markdown
+
+    inconclusive = replace(fixed, status="inconclusive", inconclusive_reasons=("Target stopped early.",))
+    for report in (vulnerable, fixed, inconclusive):
+        md = render_markdown(report)
+        # Exclude transcripts (untrusted target/attacker words) when checking our own prose.
+        md_outside = re.sub(r"```.*?```", "", md, flags=re.DOTALL)
+        for word in ("compliant", "certified", "passed"):
+            assert word not in md_outside.lower(), f"word {word!r} in markdown report"
+
+        html = render_html(report)
+        html_outside = re.sub(r"<pre>.*?</pre>", "", html, flags=re.DOTALL)
+        visible_outside = Page(html_outside).visible.lower()
+        for word in ("compliant", "certified", "passed"):
+            assert word not in visible_outside, f"word {word!r} in html report"

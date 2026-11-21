@@ -4,10 +4,11 @@ Wording rules (PLAN.md, "What a report may say"):
 
 - A report with no verified findings states exactly
   "No verified violations observed under these tested conditions." — never
-  that the target is safe, secure, clean or certified, and never that it
-  passed. Those words must not appear anywhere in Promptproof-authored text.
-- Lead with the result, then what was tested, then slots, task checks,
-  findings, suspected items, contaminated attempts, errors, limitations.
+  that the target is safe, secure, clean, compliant or certified, and never
+  that it passed. Those words must not appear anywhere in Promptproof-authored text.
+- Lead with the result, then about this test, what was tested, framework
+  coverage, slots, task checks, findings, suspected items, contaminated
+  attempts, errors, limitations.
 - Empty sections say so in one line, so "none" is distinguishable from
   "not checked".
 - Transcript text comes from attackers and from a model and is rendered
@@ -20,10 +21,29 @@ from __future__ import annotations
 import re
 from decimal import ROUND_HALF_UP, Decimal
 
-from promptproof.core.models import Finding, Rate, ScanReport, ToolCall, Turn
+from promptproof.core.models import Finding, Rate, ScanReport, SlotStatus, ToolCall, Turn
+from promptproof.frameworks import (
+    FrameworkEntry,
+    coverage_rows,
+    entries_for,
+    group_entries,
+    not_covered_sentence,
+    objective_kind_for,
+)
 from promptproof.shell import replay_command
 
 HEADLINE_NO_VERIFIED_VIOLATIONS = "No verified violations observed under these tested conditions."
+
+INDEPENDENCE_DESCRIPTIONS: dict[str, str] = {
+    "self": "run by the team that built or operates the target",
+    "internal": "run by a separate team within the same organization",
+    "third-party": "run by an external assessor outside the organization",
+}
+INDEPENDENCE_EXPLANATION = (
+    "Independence levels: self means the team that built or operates the target ran the test; "
+    "internal means a separate team within the same organization ran it; "
+    "third-party means an external assessor outside the organization ran it."
+)
 
 _EMPTY_SECTION = "None recorded."
 
@@ -33,8 +53,14 @@ def render_markdown(report: ScanReport, report_path: str | None = None) -> str:
     lines: list[str] = []
     lines.extend(_headline(report))
     lines.append("")
+    lines.append("## About this test")
+    lines.extend(_about_this_test(report))
+    lines.append("")
     lines.append("## What was tested")
     lines.extend(_what_was_tested(report))
+    lines.append("")
+    lines.append("## Framework coverage")
+    lines.extend(_framework_coverage(report))
     lines.append("")
     lines.append("## What was protected")
     lines.extend(_slots(report))
@@ -110,28 +136,74 @@ def _inconclusive_reasons(report: ScanReport) -> list[str]:
     return reasons
 
 
+def _authorization_markdown(authorization: dict[str, str]) -> str:
+    if not authorization:
+        return "not recorded (local or in-process target)"
+    if "authorized_by" in authorization:
+        parts = [f"authorized by {_text(authorization['authorized_by'])}"]
+        if authorization.get("origin"):
+            parts.append(f"for origin {_code(authorization['origin'])}")
+        if authorization.get("environment"):
+            parts.append(f"in {_code(authorization['environment'])} environment")
+        if authorization.get("scope"):
+            parts.append(f"(scope: {_text(authorization['scope'])})")
+        return " ".join(parts)
+    if authorization.get("reach") == "in-process":
+        return "not required (in-process target)"
+    return ", ".join(f"{_text(k)} {_code(v)}" for k, v in sorted(authorization.items()))
+
+
+def _about_this_test(report: ScanReport) -> list[str]:
+    tester = _text(report.tester) if report.tester.strip() else "not stated"
+    desc = INDEPENDENCE_DESCRIPTIONS.get(report.independence)
+    independence = f"{_code(report.independence)} ({desc})" if desc else _code(report.independence)
+    return [
+        f"- Tool version: {_text(report.tool_version)}",
+        f"- Scan dates: {_text(report.started_at)} to {_text(report.finished_at)} (UTC)",
+        f"- Authorization: {_authorization_markdown(report.authorization)}",
+        f"- Tester: {tester}",
+        f"- Independence: {independence}",
+        "",
+        INDEPENDENCE_EXPLANATION,
+    ]
+
+
 def _what_was_tested(report: ScanReport) -> list[str]:
     return [
-        f"- Tool version: {report.tool_version}",
         f"- Target: {_code(report.target)}",
         f"- Target configuration: {_config(report)}",
         f"- Attacker principal: {_code(report.attacker_principal)}",
-        f"- Scan window: {report.started_at} to {report.finished_at} (UTC)",
         f"- Attacks run: {report.attacks_run}",
         f"- Attempts run: {report.attempts_run}",
         f"- Discovery runs per attack: {report.discovery_runs}",
         f"- Replays per verified finding: {report.reproduction_trials}",
         f"- Spent: {report.messages_sent} messages sent, {report.tool_calls_recorded} tool calls recorded",
-        *(
-            [
-                "- Authorization: "
-                + ", ".join(f"{_text(k)} {_code(v)}" for k, v in sorted(report.authorization.items()))
-            ]
-            if report.authorization
-            else []
-        ),
         *([f"- Stopped early: {_text(report.stopped_early)}"] if report.stopped_early else []),
     ]
+
+
+def _format_entries_inline(entries: tuple[FrameworkEntry, ...]) -> str:
+    groups = []
+    for label, items in group_entries(entries):
+        joined = ", ".join(f"{item.id} {item.title}" for item in items)
+        groups.append(f"{label}: {joined}")
+    return "; ".join(groups)
+
+
+def _framework_coverage(report: ScanReport) -> list[str]:
+    rows = coverage_rows(report)
+    if not rows:
+        return [_EMPTY_SECTION, "", not_covered_sentence(())]
+    lines = [
+        "| Objective kind | Framework entries | Attempts judged | Result |",
+        "| --- | --- | --- | --- |",
+    ]
+    for row in rows:
+        entries_cell = _format_entries_inline(row.entries).replace("|", "\\|")
+        lines.append(f"| {row.label} | {entries_cell} | {row.attempts} | {row.result} |")
+    lines.append("")
+    lines.append(not_covered_sentence([row.kind for row in rows]))
+    return lines
 
 
 def _slots(report: ScanReport) -> list[str]:
@@ -168,11 +240,23 @@ def _findings(report: ScanReport, report_path: str | None) -> list[str]:
         return [_EMPTY_SECTION]
     lines: list[str] = []
     for finding in report.findings:
-        lines.extend(_finding(finding, report_path))
+        lines.extend(_finding(finding, report_path, report.slots))
     return lines[:-1]  # drop the trailing blank before the next section
 
 
-def _finding(finding: Finding, report_path: str | None) -> list[str]:
+def _finding_frameworks(finding: Finding, slots: tuple[SlotStatus, ...]) -> list[str]:
+    kind = objective_kind_for(finding, slots)
+    entries = entries_for(kind) if kind is not None else ()
+    if not entries:
+        return []
+    lines = ["- Framework entries:"]
+    for label, items in group_entries(entries):
+        joined = "; ".join(f"{item.id} {item.title}" for item in items)
+        lines.append(f"  - {label}: {joined}")
+    return lines
+
+
+def _finding(finding: Finding, report_path: str | None, slots: tuple[SlotStatus, ...] = ()) -> list[str]:
     command = replay_command(report_path or "REPORT.json", finding.id)
     if not report_path:
         command = command.replace("REPORT.json", "<report.json>", 1)
@@ -183,6 +267,7 @@ def _finding(finding: Finding, report_path: str | None) -> list[str]:
         f"- Technique: {_text(finding.technique)}",
         f"- Attack: {_code(finding.attack_id)}, sent as {_code(finding.attacker_principal)}",
         *_what_was_violated(finding),
+        *_finding_frameworks(finding, slots),
         f"- Discovery: {_rate_text('found in', 'search attempts', finding.discovery)}",
         f"- Reproduction: {_rate_text('reproduced in', 'replays from reset', finding.reproduction)}",
         f"- Replay: {_code(command)}",

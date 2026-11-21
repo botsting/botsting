@@ -123,6 +123,8 @@ def _scan(args: argparse.Namespace) -> int:
             "max_tool_calls": args.max_tool_calls,
             "max_seconds": args.max_seconds,
             "discovery_budget_per_objective": args.budget_per_objective,
+            "tester": args.tester,
+            "independence": args.independence,
         }
         ScanConfig(**limits)  # type: ignore[arg-type]
         attacks = default_attacks(target) if args.strategy in ("static", "both") else []
@@ -328,6 +330,17 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--max-messages", type=int, default=5000, help="stop after sending this many messages")
     scan.add_argument("--max-tool-calls", type=int, default=500, help="stop once more than this many tool calls were recorded")
     scan.add_argument("--max-seconds", type=float, default=3600, help="stop after this much time")
+    scan.add_argument(
+        "--tester",
+        default="",
+        help='who ran this scan, for example "Dana Levi, Example Audit"',
+    )
+    scan.add_argument(
+        "--independence",
+        choices=("self", "internal", "third-party"),
+        default="self",
+        help="independence of the tester from the team that built or operates the target",
+    )
     scan = commands.add_parser("scan", parents=[options], help="attack a target and report what was proven")
     scan.add_argument("--out", default="reports/scan.promptproof.json", help="where to write the JSON report")
     scan.add_argument("--markdown", help="also write a readable report to this path")

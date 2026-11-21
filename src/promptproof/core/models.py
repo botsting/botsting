@@ -34,6 +34,26 @@ def _fraction(value: object) -> float | None:
     return float(value)
 
 
+Independence = Literal["self", "internal", "third-party"]
+INDEPENDENCE_LEVELS: tuple[str, ...] = ("self", "internal", "third-party")
+
+
+def _tester(value: object) -> str:
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise ValueError(f"tester must be text, got {value!r}")
+    return value
+
+
+def _independence(value: object) -> Independence:
+    if value is None:
+        return "self"
+    if not isinstance(value, str) or value not in INDEPENDENCE_LEVELS:
+        raise ValueError(f"independence must be one of {', '.join(INDEPENDENCE_LEVELS)}, got {value!r}")
+    return value  # type: ignore[return-value]
+
+
 class EvidenceLevel(IntEnum):
     """How strong the evidence for a finding is. A finding carries the highest level it reached."""
 
@@ -371,6 +391,9 @@ class ScanReport:
     discovery_messages_sent: int = 0
     # Non-sensitive summary of the authorization record (for non-local scans); empty for local targets.
     authorization: dict[str, str] = field(default_factory=dict)
+    # Who ran the scan (optional, e.g. "Dana Levi, Example Audit") and their independence from the target team.
+    tester: str = ""
+    independence: Independence = "self"
 
     def breakdown(self) -> str:
         """The verified findings by what they prove, so a refused attempt is never read as completed harm."""
@@ -493,4 +516,6 @@ class ScanReport:
             tool_calls_recorded=_count(data.get("tool_calls_recorded", 0), "tool_calls_recorded"),
             discovery_messages_sent=_count(data.get("discovery_messages_sent", 0), "discovery_messages_sent"),
             authorization={str(k): str(v) for k, v in dict(data.get("authorization", {})).items()},
+            tester=_tester(data.get("tester")),
+            independence=_independence(data.get("independence")),
         )

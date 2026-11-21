@@ -70,12 +70,14 @@ from promptproof.core.matcher import (
     stronger,
 )
 from promptproof.core.models import (
+    INDEPENDENCE_LEVELS,
     Attack,
     Attempt,
     AttemptOutcome,
     ErrorRecord,
     EvidenceLevel,
     Finding,
+    Independence,
     InjectionPoint,
     Match,
     Rate,
@@ -210,6 +212,9 @@ class ScanConfig:
     discovery_budget_per_objective: int | None = None
     # Polled before every message. Returning True stops the scan the same way.
     cancelled: Callable[[], bool] | None = field(default=None, compare=False)
+    # Audit metadata recorded in the report.
+    tester: str = ""
+    independence: Independence = "self"
 
     def __post_init__(self) -> None:
         if self.discovery_runs < 1 or self.reproduction_trials < 1:
@@ -220,6 +225,10 @@ class ScanConfig:
             raise ValueError("discovery_message_budget must be at least 1")
         if self.discovery_budget_per_objective is not None and self.discovery_budget_per_objective < 1:
             raise ValueError("discovery_budget_per_objective must be at least 1")
+        if not isinstance(self.tester, str):
+            raise ValueError("tester must be text")
+        if self.independence not in INDEPENDENCE_LEVELS:
+            raise ValueError(f"independence must be one of {', '.join(INDEPENDENCE_LEVELS)}")
 
 
 class _Stop(Exception):
@@ -1412,6 +1421,8 @@ async def run_scan(
         tool_calls_recorded=meter.tool_calls,
         discovery_messages_sent=budget.total_used,
         authorization=authorization_summary(target),
+        tester=" ".join(config.tester.split()),
+        independence=config.independence,
     )
 
 
