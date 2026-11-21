@@ -71,6 +71,7 @@ def _split(principal: str) -> tuple[str, str]:
 class ToyTarget:
     attacker_principal = "customer:alice"
     tool_safety = "sinks"  # refunds are written to self.ledger and nowhere else
+    reach = "in-process"  # the bot and its model run inside this process
 
     def __init__(self, variant: Variant, model: ChatModel, spec: str) -> None:
         self.variant: Variant = variant

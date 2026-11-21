@@ -229,6 +229,7 @@ class FakeTarget:
     spec = "fake"
     attacker_principal = "customer:alice"
     tool_safety = "no-tools"
+    reach = "in-process"
 
     def __init__(self, respond: Responder, slot: Slot = SLOT, tasks: Sequence[TaskCheck] = (TASK,)) -> None:
         self._respond = respond

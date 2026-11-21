@@ -86,6 +86,7 @@ from promptproof.targets.base import (
     TargetError,
     as_reply,
     injection_points,
+    NotAuthorizedError,
     UnsafeTargetError,
     require_contained_tools,
     tool_rules,
@@ -381,8 +382,15 @@ async def run_attempt(target: Target, attack: Attack, meter: Meter | None = None
     generated. That ordering is what guarantees the attacker's words cannot contain them.
     """
     _check_attack(attack)
-    require_contained_tools(target)
     meter = meter or Meter()
+    try:
+        require_contained_tools(target)
+    except NotAuthorizedError as exc:
+        # Permission was there when the scan started (it is checked first) and is gone
+        # now, for example because the proof of control was taken down. Stop, send
+        # nothing more, and let the scan report what it had already found.
+        meter.stop_reason = meter.stop_reason or f"authorization no longer valid: {exc}"
+        return Attempt(attack.id, attack.slot_id, "none", (), error=f"stopped early: {meter.stop_reason}")
     slots = target.slots()
     canaries = _fresh(slots)
     transcript: list[Turn] = []
@@ -710,7 +718,11 @@ class Preflight:
 
 async def preflight(target: Target, meter: Meter | None = None) -> Preflight:
     meter = meter or Meter()
-    require_contained_tools(target)
+    try:
+        require_contained_tools(target)
+    except NotAuthorizedError as exc:
+        # Every check below then stops before sending anything and reports itself as not checked.
+        meter.stop_reason = meter.stop_reason or f"authorization no longer valid: {exc}"
     statuses = [await _check_slot(target, slot, meter) for slot in target.slots()]
     watched: set[str] = set()  # tools whose recorder was seen to record a legitimate call
     for rule in tool_rules(target):

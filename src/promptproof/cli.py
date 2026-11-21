@@ -238,6 +238,10 @@ def build_parser() -> argparse.ArgumentParser:
     rep.add_argument("--trials", type=int, default=5)
     rep.add_argument("--target", help="replay against a different target, for example the fixed build")
     rep.set_defaults(handler=_replay)
+
+    from promptproof.authorize_cli import register as register_authorize
+
+    register_authorize(commands)
     return parser
 
 

@@ -50,6 +50,25 @@ Exit codes: `0` no verified violations, `1` violations verified, `2` inconclusiv
 
 Known limits are listed at the end of every report.
 
+## Permission to test
+
+Promptproof sends hostile messages, so it will not send anything to a bot outside its own process without permission on record. Only the built-in practice bots run in-process today; adapters for bots reached over a network come next, and every one of them goes through this check.
+
+```
+promptproof authorize https://staging.example.com --by "Your Name" \
+    --scope "the support bot on our staging site" --environment staging --days 30
+```
+
+This records who authorizes the test, for which exact origin, what it covers and until when (at most 90 days), and prints a token. Serve that token at `https://staging.example.com/.well-known/promptproof-challenge.txt`, then:
+
+```
+promptproof authorize --verify https://staging.example.com
+```
+
+The token is fetched again whenever a scan or replay starts, and every ten minutes during a long scan; if it has been taken down, the scan stops and reports what it had found so far. A bot on your own machine (`localhost`, `127.0.0.1`) needs the record but not the token. Authorizations are kept in `promptproof.authorizations.json` in the current folder and are never sent anywhere.
+
+This shows control of what a site serves. It does not show that the person who placed the token owns everything behind it; the named person and the scope are how someone takes responsibility for that. Anyone can remove a check from open-source code; it is on by default.
+
 ## Development
 
 ```
