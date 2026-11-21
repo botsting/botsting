@@ -301,11 +301,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"promptproof {__version__}")
     commands = parser.add_subparsers(dest="command", required=True)
 
-    scan = commands.add_parser("scan", help="attack a target and report what was proven")
+    # What a scan does, shared by `scan` and `ci`. Where the reports go is each command's own.
+    scan = options = argparse.ArgumentParser(add_help=False)
     scan.add_argument("--target", required=True, help="for example toy:vulnerable or toy:fixed?model=ollama:llama3.2")
-    scan.add_argument("--out", default="reports/scan.promptproof.json", help="where to write the JSON report")
-    scan.add_argument("--markdown", help="also write a readable report to this path")
-    scan.add_argument("--html", help="also write a self-contained report to open in a browser or print")
     scan.add_argument(
         "--strategy",
         choices=("static", "adaptive", "both"),
@@ -330,6 +328,10 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--max-messages", type=int, default=5000, help="stop after sending this many messages")
     scan.add_argument("--max-tool-calls", type=int, default=500, help="stop once more than this many tool calls were recorded")
     scan.add_argument("--max-seconds", type=float, default=3600, help="stop after this much time")
+    scan = commands.add_parser("scan", parents=[options], help="attack a target and report what was proven")
+    scan.add_argument("--out", default="reports/scan.promptproof.json", help="where to write the JSON report")
+    scan.add_argument("--markdown", help="also write a readable report to this path")
+    scan.add_argument("--html", help="also write a self-contained report to open in a browser or print")
     scan.set_defaults(handler=_scan)
 
     rep = commands.add_parser("replay", help="replay a finding from a reset state with fresh canaries")
@@ -372,6 +374,10 @@ def build_parser() -> argparse.ArgumentParser:
     from promptproof.seal import register as register_seal
 
     register_seal(commands)
+
+    from promptproof.ci import register as register_ci
+
+    register_ci(commands, [options])
 
     key = commands.add_parser("harness-key", help="make a key for the drop-in test harness (promptproof.harness)")
     key.set_defaults(handler=_harness_key)

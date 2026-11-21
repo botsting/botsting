@@ -1,0 +1,76 @@
+name: Promptproof scan
+description: >
+  Red-team your own LLM bot in CI and report only what was proven: a planted fake secret
+  that leaked, or a forbidden tool call recorded at the tool. Writes reports, seals the
+  evidence, and adds the readable report to the job summary.
+author: Promptproof
+branding:
+  icon: shield
+  color: yellow
+
+inputs:
+  target:
+    description: >
+      What to scan, for example http:staging (described in promptproof.targets.json) or
+      toy:vulnerable (the built-in practice bot).
+    required: true
+  fail-on:
+    description: "What fails the job: violations (default), inconclusive, or never."
+    default: violations
+  args:
+    description: Extra options for the scan, for example "--strategy both --replays 3".
+    default: ""
+  report-dir:
+    description: Where the reports are written. Must be new or empty.
+    default: promptproof-report
+  upload:
+    description: Upload the reports and the sealed bundle as a workflow artifact ("true" or "false").
+    default: "true"
+  python-version:
+    description: The Python version to run Promptproof with.
+    default: "3.12"
+
+outputs:
+  status:
+    description: violations_verified, no_verified_violations or inconclusive.
+    value: ${{ steps.scan.outputs.status }}
+  findings:
+    description: The number of proven findings.
+    value: ${{ steps.scan.outputs.findings }}
+  seal:
+    description: The SHA-256 seal of the evidence bundle.
+    value: ${{ steps.scan.outputs.seal }}
+  bundle:
+    description: The path of the sealed evidence bundle.
+    value: ${{ steps.scan.outputs.bundle }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+    - name: Install Promptproof
+      shell: bash
+      run: python -m pip install --quiet "${{ github.action_path }}"
+    - name: Scan
+      id: scan
+      shell: bash
+      env:
+        PP_TARGET: ${{ inputs.target }}
+        PP_FAIL_ON: ${{ inputs.fail-on }}
+        PP_DIR: ${{ inputs.report-dir }}
+        PP_ARGS: ${{ inputs.args }}
+      # Inputs reach the shell as environment variables, never pasted into the script.
+      run: |
+        read -r -a extra <<< "$PP_ARGS"
+        promptproof ci --target "$PP_TARGET" --fail-on "$PP_FAIL_ON" --dir "$PP_DIR" "${extra[@]}"
+    - name: Upload the evidence
+      if: ${{ always() && inputs.upload == 'true' }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: promptproof-report
+        path: |
+          ${{ inputs.report-dir }}
+          ${{ inputs.report-dir }}.sealed.zip
+        if-no-files-found: warn

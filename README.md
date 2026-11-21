@@ -165,6 +165,23 @@ The token is fetched again whenever a scan or replay starts, and every ten minut
 
 This shows control of what a site serves. It does not show that the person who placed the token owns everything behind it; the named person and the scope are how someone takes responsibility for that. Anyone can remove a check from open-source code; it is on by default.
 
+## In a build pipeline
+
+`promptproof ci` runs a scan, writes the JSON, readable and browser reports into one folder, seals that folder, and exits for a pipeline: a proven finding fails the build. `--fail-on inconclusive` also fails it when the scan could not show its attacks would have been seen. A scan that could not run at all always fails, so a pipeline that tests nothing never looks green.
+
+On GitHub Actions, use the action in this repository:
+
+```yaml
+- uses: OWNER/promptproof@main        # pin a release tag once there is one
+  with:
+    target: http:staging               # described in promptproof.targets.json in your repository
+    fail-on: violations
+  env:
+    PROMPTPROOF_HARNESS_KEY: ${{ secrets.PROMPTPROOF_HARNESS_KEY }}
+```
+
+The readable report appears in the job summary, the reports and the sealed bundle are uploaded as an artifact, and the step's outputs are `status`, `findings`, `seal` and `bundle`. The scan runs on your runner; nothing is sent to Promptproof. The authorization file (`promptproof.authorizations.json`) must be present in the job, for example restored from a secret, because it names the person who allowed the test.
+
 ## Development
 
 ```
