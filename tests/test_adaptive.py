@@ -104,6 +104,7 @@ def test_unsafe_target_is_refused_before_attacker_model_runs():
     class UnsafeTarget:
         spec = "unsafe:test"
         attacker_principal = "customer:alice"
+        reach = "in-process"
 
         async def describe(self) -> Mapping[str, str]:
             return {}
