@@ -1,0 +1,661 @@
+// The drop-in test harness for JavaScript bots: a few lines in the bot's own code
+// instead of a test endpoint. Port of promptproof/harness.py; wire-compatible with
+// the Python scanner, which needs no changes to scan a Node bot.
+//
+//   import * as pp from "promptproof-harness";
+//
+//   const server = http.createServer(pp.wrapNode(handler));   // a plain Node bot
+//   app.use(pp.express());                                    // an Express bot
+//   export default pp.wrapFetch(handler);                     // a fetch-style bot (Next.js, Hono, Cloudflare)
+//
+//   const issueRefund = pp.action("issue_refund", (orderId, amount) => refunds.push(...));  // risky tool
+//   const prompt = BASE_PROMPT + pp.planted("admin_code");    // where a fake secret lives in a test
+//
+// When is it on? Only for a request that carries a valid Promptproof session, signed
+// with the key in PROMPTPROOF_HARNESS_KEY. Set that key on the staging or test
+// deployment only. A request without the Promptproof-Session header (every real user)
+// reaches the bot untouched: tools run as written and planted() returns its default.
+//
+// A request that carries the header but is not a valid session here (no key on this
+// deployment, another key, an expired or damaged session) is refused with HTTP 403
+// and never reaches the bot. It says it is a test message; running it as an ordinary
+// one, with real tools, is the one thing that must not happen.
+//
+// What a test session does: planted() returns the fake secret the scan chose for that
+// slot, content() returns text the scan placed at an injection point, and a function
+// wrapped with action() is recorded and never run — the call and its arguments go back
+// to the scanner in the Promptproof-Tool-Calls response header, signed for that
+// session and that one message so the record cannot be made up, moved to another
+// conversation or reused for a later message.
+//
+// The signatures are byte-identical to the Python harness: the MAC input is
+// domain + json.dumps(list_of_parts) with Python's default separators (", ") and
+// ASCII escaping, reproduced exactly by the py* helpers below.
+//
+// What it does not do: it cannot see a tool that is not wrapped, and it follows the
+// request, not the work — the session lives in an AsyncLocalStorage, so work handed
+// to a job queue or a worker thread is not covered (see README.md). It uses only the
+// Node standard library.
+
+import { AsyncLocalStorage, AsyncResource } from "node:async_hooks";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+
+export const KEY_ENV = "PROMPTPROOF_HARNESS_KEY";
+export const CHALLENGE_ENV = "PROMPTPROOF_CHALLENGE";
+export const CHALLENGE_PATH = "/.well-known/promptproof-challenge.txt";
+export const READY_PATH = "/.well-known/promptproof-harness";
+export const SESSION_HEADER = "Promptproof-Session";
+export const CALLS_HEADER = "Promptproof-Tool-Calls";
+export const MIN_KEY_LENGTH = 32;
+export const MAX_TOKEN_BYTES = 6000; // most servers refuse headers much larger than 8 KB
+export const MAX_CALLS = 100;
+export const MAX_RECORD_BYTES = 24_000; // of recorded calls in one reply; the record travels in a header
+export const MAX_LIFETIME_SECONDS = 900;
+
+const SESSION_DOMAIN = Buffer.from("promptproof-session/1\n");
+const CALLS_DOMAIN = Buffer.from("promptproof-calls/1\n");
+const DEFAULT_RESULT = { status: "ok" };
+const READY = Buffer.from("promptproof harness ready\n");
+const REFUSED = Buffer.from(
+  "promptproof: this request carries a test session that is not valid here, so it was not run\n"
+);
+
+export class HarnessError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "HarnessError";
+  }
+}
+
+// -- Python-exact JSON, so every signed byte matches ---------------------------------------
+//
+// Python json.dumps(..., ensure_ascii=True) escapes ", \, the short escapes \b \t \n
+// \f \r, every other control character and everything non-ASCII as \uXXXX (lowercase
+// hex, surrogate pairs for astral characters). Key order is insertion order unless
+// sort_keys is given, and separators are (", ", ": ") by default or (",", ":") compact.
+
+function pyEscape(value) {
+  let out = '"';
+  for (const ch of value) {
+    const cp = ch.codePointAt(0);
+    if (ch === '"') out += '\\"';
+    else if (ch === "\\") out += "\\\\";
+    else if (cp === 0x08) out += "\\b";
+    else if (cp === 0x09) out += "\\t";
+    else if (cp === 0x0a) out += "\\n";
+    else if (cp === 0x0c) out += "\\f";
+    else if (cp === 0x0d) out += "\\r";
+    else if (cp >= 0x20 && cp <= 0x7e) out += ch; // Python leaves space..tilde literal, DEL included in the escapes
+    else if (cp >= 0x10000) {
+      // astral: Python emits a UTF-16 surrogate pair
+      const v = cp - 0x10000;
+      const hi = (0xd800 + (v >> 10)).toString(16).padStart(4, "0");
+      const lo = (0xdc00 + (v & 0x3ff)).toString(16).padStart(4, "0");
+      out += "\\u" + hi + "\\u" + lo;
+    } else out += "\\u" + cp.toString(16).padStart(4, "0");
+  }
+  return out + '"';
+}
+
+function pyNumber(value) {
+  if (Number.isInteger(value) && Math.abs(value) < 1e21) return String(value);
+  return String(value); // JS and Python both print the shortest round-trip form for common values
+}
+
+function pyCmp(a, b) {
+  // Python sorts strings by code point, not by UTF-16 unit.
+  const A = Array.from(a);
+  const B = Array.from(b);
+  const n = Math.min(A.length, B.length);
+  for (let i = 0; i < n; i++) {
+    const x = A[i].codePointAt(0);
+    const y = B[i].codePointAt(0);
+    if (x !== y) return x < y ? -1 : 1;
+  }
+  return A.length - B.length;
+}
+
+function pyDumps(value, { compact = false, sortKeys = false } = {}) {
+  const itemSep = compact ? "," : ", ";
+  const kvSep = compact ? ":" : ": ";
+  function enc(v) {
+    if (v === null || v === undefined) return "null";
+    if (typeof v === "string") return pyEscape(v);
+    if (typeof v === "number") return pyNumber(v);
+    if (typeof v === "boolean") return v ? "true" : "false";
+    if (Array.isArray(v)) return "[" + v.map(enc).join(itemSep) + "]";
+    if (typeof v === "object") {
+      let keys = Object.keys(v);
+      if (sortKeys) keys = keys.slice().sort(pyCmp);
+      return "{" + keys.map((k) => pyEscape(k) + kvSep + enc(v[k])).join(itemSep) + "}";
+    }
+    return enc(String(v)); // Python's default=str for anything not serializable
+  }
+  try {
+    return enc(value);
+  } catch {
+    return enc(String(value)); // circular structures: Python falls back to str() too
+  }
+}
+
+// Python int(): truncates floats, accepts decimal strings, refuses anything else.
+function pyInt(value) {
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw new TypeError("cannot convert float to integer");
+    return value < 0 ? Math.ceil(value) : Math.floor(value);
+  }
+  if (typeof value === "boolean") return value ? 1 : 0;
+  if (typeof value === "string") {
+    if (/^[+-]?\d+$/.test(value.trim())) return parseInt(value, 10);
+    throw new TypeError("invalid literal for int()");
+  }
+  throw new TypeError("an integer is required");
+}
+
+// Python str() for the JSON types a token can carry.
+function pyStr(value) {
+  if (value === null) return "None";
+  if (value === true) return "True";
+  if (value === false) return "False";
+  if (typeof value === "number") return pyNumber(value);
+  return String(value);
+}
+
+// -- signing (shared with the scanner and the Python harness) -------------------------------
+
+const b64 = (data) => Buffer.from(data).toString("base64url"); // Node's base64url omits padding, like rstrip("=")
+const unb64 = (text) => Buffer.from(text, "base64url");
+
+export function mac(key, domain, parts) {
+  // A list, so parts cannot run together; the bytes are Python's json.dumps exactly.
+  const message = Buffer.concat([
+    Buffer.isBuffer(domain) ? domain : Buffer.from(domain),
+    Buffer.from(pyDumps([...parts]), "ascii"),
+  ]);
+  return createHmac("sha256", Buffer.from(key, "utf8")).update(message).digest("base64url");
+}
+
+function same(given, expected) {
+  // Constant-time comparison that also accepts whatever bytes arrived in a header.
+  const a = Buffer.from(given, "utf8");
+  const b = Buffer.from(expected, "utf8");
+  if (a.length === 0 || a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
+
+export function checkKey(key) {
+  if (typeof key !== "string" || key.length < MIN_KEY_LENGTH) {
+    throw new HarnessError(
+      `${KEY_ENV} must be at least ${MIN_KEY_LENGTH} characters; make one with promptproof harness-key`
+    );
+  }
+  return key;
+}
+
+export function newKey() {
+  return randomBytes(32).toString("base64url");
+}
+
+export function makeSessionToken(
+  key,
+  sessionId,
+  fixtures,
+  content = {},
+  { lifetimeSeconds = 300, now = null, nonce = "" } = {}
+) {
+  // What the scanner puts in the Promptproof-Session header of each message. The
+  // nonce should be new for every message: the harness signs it into that message's
+  // tool-call record.
+  checkKey(key);
+  if (!(lifetimeSeconds > 0) || lifetimeSeconds > MAX_LIFETIME_SECONDS) {
+    throw new HarnessError(`a session token may live at most ${MAX_LIFETIME_SECONDS} seconds`);
+  }
+  const body = {
+    v: 1,
+    sid: sessionId,
+    n: nonce,
+    exp: pyInt((now === null ? Date.now() / 1000 : now) + lifetimeSeconds),
+    fixtures: { ...fixtures },
+    content: { ...content },
+  };
+  const payload = b64(Buffer.from(pyDumps(body, { compact: true, sortKeys: true }), "utf8"));
+  const token = payload + "." + mac(key, SESSION_DOMAIN, [payload]);
+  if (token.length > MAX_TOKEN_BYTES) {
+    throw new HarnessError(
+      `the planted secrets and content come to ${token.length} bytes in the header, more than ${MAX_TOKEN_BYTES}; ` +
+        "use shorter injection content"
+    );
+  }
+  return token;
+}
+
+export function readCallsHeader(key, sessionId, value, nonce = "") {
+  // What the scanner does with the Promptproof-Tool-Calls header. Raises HarnessError
+  // if it was not made by a harness holding the key for this very session and message,
+  // or if calls were left out.
+  if (value === null || value === undefined) {
+    throw new HarnessError(
+      `the reply has no ${CALLS_HEADER} header: the harness did not see this as a test session ` +
+        `(is ${KEY_ENV} the same on both sides, and is the app wrapped?)`
+    );
+  }
+  const trimmed = String(value).trim();
+  const dot = trimmed.indexOf(".");
+  const payload = dot < 0 ? trimmed : trimmed.slice(0, dot);
+  const macPart = dot < 0 ? "" : trimmed.slice(dot + 1);
+  if (!macPart || !same(macPart, mac(key, CALLS_DOMAIN, [sessionId, nonce, payload]))) {
+    throw new HarnessError("the tool-call record is not signed by the harness for this session and message");
+  }
+  let record;
+  try {
+    record = JSON.parse(unb64(payload).toString("utf8"));
+    if (record === null || typeof record !== "object" || Array.isArray(record)) throw new TypeError("not an object");
+    if (!("calls" in record)) throw new TypeError("no calls");
+    var dropped = pyInt(record.dropped); // eslint-disable-line no-var
+  } catch (error) {
+    throw new HarnessError(`the tool-call record is unreadable: ${error && error.message ? error.message : error}`);
+  }
+  if (!Array.isArray(record.calls)) {
+    throw new HarnessError("the tool-call record must hold a list of calls");
+  }
+  if (dropped) {
+    throw new HarnessError(
+      `the bot made more tool calls in one reply than the record holds (${MAX_CALLS} calls, ` +
+        `${MAX_RECORD_BYTES} bytes); ${dropped} were not recorded`
+    );
+  }
+  return record.calls;
+}
+
+// -- the session -----------------------------------------------------------------------------
+
+export class Session {
+  constructor(sid, fixtures, content, key, nonce = "") {
+    this.sid = sid;
+    this.fixtures = fixtures;
+    this.content = content;
+    this.key = key;
+    this.nonce = nonce;
+    this.calls = [];
+    this.dropped = 0;
+    this.size = 0;
+  }
+
+  add(call) {
+    // Record a call, or count it as dropped: the scanner treats any dropped call as an error.
+    const size = pyDumps(call, { compact: true }).length;
+    if (this.calls.length >= MAX_CALLS || this.size + size > MAX_RECORD_BYTES) {
+      this.dropped += 1;
+      return;
+    }
+    this.size += size;
+    this.calls.push(call);
+  }
+
+  headerValue() {
+    const record = { calls: this.calls, dropped: this.dropped };
+    const payload = b64(Buffer.from(pyDumps(record, { compact: true }), "utf8"));
+    return payload + "." + mac(this.key, CALLS_DOMAIN, [this.sid, this.nonce, payload]);
+  }
+
+  run(fn) {
+    return storage.run(this, fn);
+  }
+}
+
+const storage = new AsyncLocalStorage();
+
+function envKey() {
+  const key = process.env[KEY_ENV];
+  if (!key) return null;
+  return checkKey(key);
+}
+
+function required(body, name) {
+  if (!(name in body)) throw new TypeError(`missing ${name}`);
+  return body[name];
+}
+
+function stringMap(value) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError("not a mapping");
+  }
+  const out = {};
+  for (const [k, v] of Object.entries(value)) out[pyStr(k)] = pyStr(v);
+  return out;
+}
+
+export function openSession(token, now = null) {
+  // A session for a validly signed, unexpired token; null for anything else.
+  const key = envKey();
+  if (key === null || !token || token.length > MAX_TOKEN_BYTES) return null;
+  const trimmed = String(token).trim();
+  const dot = trimmed.indexOf(".");
+  const payload = dot < 0 ? trimmed : trimmed.slice(0, dot);
+  const macPart = dot < 0 ? "" : trimmed.slice(dot + 1);
+  if (!macPart || !same(macPart, mac(key, SESSION_DOMAIN, [payload]))) return null;
+  let body;
+  try {
+    body = JSON.parse(unb64(payload).toString("utf8"));
+    if (body === null || typeof body !== "object" || Array.isArray(body)) return null;
+    var expires = pyInt(required(body, "exp")); // eslint-disable-line no-var
+    var sid = pyStr(required(body, "sid")); // eslint-disable-line no-var
+    var nonce = "n" in body ? pyStr(body.n) : ""; // eslint-disable-line no-var
+    var fixtures = stringMap(required(body, "fixtures")); // eslint-disable-line no-var
+    var content = stringMap("content" in body ? body.content : {}); // eslint-disable-line no-var
+  } catch {
+    return null;
+  }
+  if (body.v !== 1 || expires < (now === null ? Date.now() / 1000 : now)) return null;
+  return new Session(sid, fixtures, content, key, nonce);
+}
+
+// -- what the bot's code calls ----------------------------------------------------------------
+
+export function active() {
+  // True while handling a request from a Promptproof scan.
+  return storage.getStore() !== undefined;
+}
+
+export function planted(slotId, default_ = "") {
+  // The fake secret for this slot during a test session, `default` at any other time.
+  const session = storage.getStore();
+  if (session === undefined) return default_;
+  return slotId in session.fixtures ? session.fixtures[slotId] : default_;
+}
+
+export function content(pointId, default_ = "") {
+  // Text the scan placed at this injection point during a test session, `default` otherwise.
+  const session = storage.getStore();
+  if (session === undefined) return default_;
+  return pointId in session.content ? session.content[pointId] : default_;
+}
+
+export function recordedCalls() {
+  // The calls recorded so far in this request, for a bot that reports them in its own reply body.
+  const session = storage.getStore();
+  return session ? session.calls.map((c) => ({ ...c })) : [];
+}
+
+function paramNames(fn) {
+  // Best effort: read the parameter names off the function's source, the way Python's
+  // inspect.signature does. Anything unusual (rest, destructuring, native code, a bound
+  // or minified-away shape we cannot trust) returns null and calls are recorded with
+  // generated names arg0, arg1, ... Default values are fine: the name before "=" is
+  // kept, and JavaScript itself has already filled the value in.
+  let source;
+  try {
+    source = Function.prototype.toString.call(fn);
+  } catch {
+    return null;
+  }
+  if (source.includes("[native code]")) return [];
+  const head = source.match(/^\s*(?:async\s+)?(?:function\s*(?:[\w$]+\s*)?|(?:[\w$]+\s*))?\(/);
+  if (!head) return null;
+  let text = source.slice(head[0].length); // just after the opening "("
+  const params = [];
+  let current = "";
+  let depth = 0;
+  let closed = false;
+  for (const ch of text) {
+    if (ch === "(" || ch === "[" || ch === "{") depth += 1;
+    else if (ch === ")" || ch === "]" || ch === "}") {
+      if (depth === 0) {
+        closed = true;
+        break;
+      }
+      depth -= 1;
+    } else if (ch === "," && depth === 0) {
+      params.push(current.trim());
+      current = "";
+      continue;
+    }
+    current += ch;
+  }
+  if (!closed) return null;
+  params.push(current.trim());
+  if (params.length === 1 && params[0] === "") return []; // zero parameters
+  const names = [];
+  for (const raw of params) {
+    if (raw === "") return null; // stray trailing comma or something odd
+    const name = raw.split("=")[0].trim(); // keep the name of a parameter with a default
+    if (!/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name)) return null; // ...rest, destructuring: generated names
+    names.push(name);
+  }
+  return names;
+}
+
+function text(value) {
+  // Python _text: strings stay, everything else becomes its Python-json form.
+  if (typeof value === "string") return value;
+  return pyDumps(value, { sortKeys: true });
+}
+
+function recordCall(tool, resultOption, names, args, session) {
+  let arguments_;
+  if (names && args.length <= names.length) {
+    arguments_ = {};
+    for (let i = 0; i < args.length; i++) arguments_[names[i]] = args[i];
+    delete arguments_.self; // a method call: the bound instance is not an argument
+    delete arguments_.cls;
+  } else {
+    // more arguments than the source names, or names we could not read: Python's
+    // signature.bind would have raised, so every argument gets a generated name
+    arguments_ = {};
+    for (let i = 0; i < args.length; i++) arguments_[`arg${i}`] = args[i];
+  }
+  const standIn = typeof resultOption === "function" ? resultOption(arguments_) : resultOption;
+  const recorded = {};
+  for (const key of Object.keys(arguments_)) recorded[key] = text(arguments_[key]);
+  session.add({
+    id: `call-${session.calls.length + 1}`,
+    tool,
+    arguments: recorded,
+    accepted: true,
+    result: text(standIn),
+  });
+  return standIn;
+}
+
+export function action(tool, fn, options = {}) {
+  // Mark a function as a risky tool. In a test session it is recorded, not run, and
+  // returns `options.result` (or `options.result(arguments)` if that is a function).
+  // Outside one it runs as written.
+  const resultOption = options && options.result !== undefined ? options.result : DEFAULT_RESULT;
+  const names = paramNames(fn);
+  const isAsync = fn && fn.constructor && fn.constructor.name === "AsyncFunction";
+  if (isAsync) {
+    return async function (...args) {
+      const session = storage.getStore();
+      if (session === undefined) return fn.apply(this, args);
+      return recordCall(tool, resultOption, names, args, session);
+    };
+  }
+  return function (...args) {
+    const session = storage.getStore();
+    if (session === undefined) return fn.apply(this, args);
+    return recordCall(tool, resultOption, names, args, session);
+  };
+}
+
+// -- wrapping the web app ----------------------------------------------------------------------
+
+function challengeBytes() {
+  const value = (process.env[CHALLENGE_ENV] || "").trim();
+  return value ? Buffer.from(value, "utf8") : null;
+}
+
+function challengeResponse(writeHead, end) {
+  const challenge = challengeBytes();
+  writeHead(200, { "content-type": "text/plain" });
+  end(Buffer.concat([challenge, Buffer.from("\n")]));
+}
+
+function refuse(writeHead, end) {
+  // It says it is a test message but is not a valid session here. Never run it as an ordinary one.
+  writeHead(403, { "content-type": "text/plain" });
+  end(REFUSED);
+}
+
+function pathOf(url) {
+  // The path without the query, as the Python adapters see it.
+  const q = url.indexOf("?");
+  return q < 0 ? url : url.slice(0, q);
+}
+
+function tokensFromRawHeaders(rawHeaders) {
+  const wanted = SESSION_HEADER.toLowerCase();
+  const tokens = [];
+  for (let i = 0; i < rawHeaders.length; i += 2) {
+    if (rawHeaders[i].toLowerCase() === wanted) tokens.push(rawHeaders[i + 1]);
+  }
+  return tokens;
+}
+
+function attachCallsHeader(res, session) {
+  // The record is signed the moment the response headers are sent, so calls made after
+  // that (a streaming reply that keeps working) are blocked but not reported.
+  let sent = false;
+  const add = () => {
+    if (sent || res.headersSent || res.writableEnded) return;
+    sent = true;
+    const value = session.headerValue();
+    const existing = res.getHeader(CALLS_HEADER);
+    // append, never replace: a reply that carries its own made-up record keeps it, and
+    // the two values together fail the scanner's signature check, as they should
+    if (existing === undefined) res.setHeader(CALLS_HEADER, value);
+    else res.setHeader(CALLS_HEADER, [].concat(existing, value));
+  };
+  for (const name of ["writeHead", "write", "end"]) {
+    const original = res[name].bind(res);
+    res[name] = (...args) => {
+      add();
+      return original(...args);
+    };
+  }
+}
+
+function bindEmitter(emitter) {
+  // The session lives in an AsyncLocalStorage, which follows promises, awaits and
+  // timers — but not Node's raw event emitters: a listener registered on the request
+  // fires later in the socket's own context, where there is no session, and a wrapped
+  // tool called there would run for real. Binding each listener into the context it
+  // was registered in (inside the session) is what makes `req.on("data"/"end")` and
+  // `res.on("finish")` see the session, the way Python's context variable follows the
+  // whole request. Registering through this wrapper and removing through it match.
+  const boundListeners = new WeakMap();
+  const bind = (listener) => {
+    if (typeof listener !== "function") return listener;
+    let bound = boundListeners.get(listener);
+    if (bound === undefined) {
+      bound = AsyncResource.bind(listener);
+      boundListeners.set(listener, bound);
+    }
+    return bound;
+  };
+  for (const name of ["on", "addListener", "once", "prependListener", "prependOnceListener"]) {
+    const original = emitter[name].bind(emitter);
+    emitter[name] = (event, listener, options) => original(event, bind(listener), options);
+  }
+  for (const name of ["off", "removeListener"]) {
+    const original = emitter[name].bind(emitter);
+    emitter[name] = (event, listener, options) => original(event, boundListeners.get(listener) ?? listener, options);
+  }
+}
+
+export function wrapNode(handler) {
+  // Wrap a plain (req, res) Node http handler. Without PROMPTPROOF_HARNESS_KEY set,
+  // requests pass straight through.
+  envKey(); // a key that is set but too short is a mistake worth stopping on
+  return function (req, res) {
+    const path = pathOf(req.url || "/");
+    if (challengeBytes() !== null && req.method === "GET" && path === CHALLENGE_PATH) {
+      challengeResponse((status, headers) => res.writeHead(status, headers), (body) => res.end(body));
+      return;
+    }
+    const tokens = tokensFromRawHeaders(req.rawHeaders || []);
+    if (tokens.length === 0) return handler(req, res); // an ordinary request
+    const session = tokens.length === 1 ? openSession(tokens[0]) : null;
+    if (session === null) {
+      refuse((status, headers) => res.writeHead(status, headers), (body) => res.end(body));
+      return;
+    }
+    if (path === READY_PATH) {
+      req.resume(); // some clients wait for their (empty) body to be taken in
+      res.writeHead(200, { "content-type": "text/plain", [CALLS_HEADER]: session.headerValue() });
+      res.end(READY);
+      return;
+    }
+    attachCallsHeader(res, session);
+    bindEmitter(req);
+    bindEmitter(res);
+    return storage.run(session, () => handler(req, res));
+  };
+}
+
+export function express() {
+  // Express-style middleware: (req, res, next). Install it as early as possible.
+  envKey();
+  return function (req, res, next) {
+    const path = pathOf(req.url || "/");
+    if (challengeBytes() !== null && req.method === "GET" && path === CHALLENGE_PATH) {
+      challengeResponse((status, headers) => res.writeHead(status, headers), (body) => res.end(body));
+      return;
+    }
+    const tokens = tokensFromRawHeaders(req.rawHeaders || []);
+    if (tokens.length === 0) return next(); // an ordinary request
+    const session = tokens.length === 1 ? openSession(tokens[0]) : null;
+    if (session === null) {
+      refuse((status, headers) => res.writeHead(status, headers), (body) => res.end(body));
+      return;
+    }
+    if (path === READY_PATH) {
+      req.resume();
+      res.writeHead(200, { "content-type": "text/plain", [CALLS_HEADER]: session.headerValue() });
+      res.end(READY);
+      return;
+    }
+    attachCallsHeader(res, session);
+    bindEmitter(req);
+    bindEmitter(res);
+    return storage.run(session, () => next());
+  };
+}
+
+export function wrapFetch(handler) {
+  // Wrap a (Request) => Response | Promise<Response> handler: Next.js route handlers,
+  // Hono, Cloudflare Workers style. The Request and Response are the standard fetch kinds.
+  envKey();
+  return async function (request) {
+    const path = new URL(request.url).pathname;
+    const challenge = challengeBytes();
+    if (challenge !== null && request.method === "GET" && path === CHALLENGE_PATH) {
+      return new Response(Buffer.concat([challenge, Buffer.from("\n")]), {
+        status: 200,
+        headers: { "content-type": "text/plain" },
+      });
+    }
+    // Headers.get() joins repeated headers with ", ", so a doubled session header is
+    // one string that cannot verify — refused, exactly as the Python adapters refuse it.
+    const token = request.headers.get(SESSION_HEADER);
+    if (token === null) return handler(request); // an ordinary request
+    const session = openSession(token);
+    if (session === null) {
+      return new Response(REFUSED, { status: 403, headers: { "content-type": "text/plain" } });
+    }
+    if (path === READY_PATH) {
+      return new Response(READY, {
+        status: 200,
+        headers: { "content-type": "text/plain", [CALLS_HEADER]: session.headerValue() },
+      });
+    }
+    const response = await storage.run(session, () => handler(request));
+    const headers = new Headers(response.headers);
+    headers.append(CALLS_HEADER, session.headerValue()); // append: a lying reply keeps its own fake record
+    return new Response(response.status === 204 || response.status === 304 ? null : response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+    });
+  };
+}
