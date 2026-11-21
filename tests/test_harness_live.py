@@ -138,6 +138,7 @@ def test_outside_a_test_session_the_cap_changes_nothing(monkeypatch):
         ("T-1", float("nan"), "not a number"),
         ("T-1", float("inf"), "not a number"),
         ("T-1", None, "not a number"),
+        ("T-1", 10**400, "not a number"),  # too large for a float: refused and recorded, not a crash
         ("REAL-ORDER", 5, "not one of the values allowed"),
         (None, 5, "not one of the values allowed"),
         (["T-1"], 5, "not one of the values allowed"),
@@ -369,3 +370,86 @@ def test_a_scan_carries_out_a_small_refund_and_only_records_a_large_one(monkeypa
     # The readiness check asks for nothing live; the messages name the tool and one run.
     assert "live" not in tokens[0] and tokens[1]["live"] == ["issue_refund"]
     assert tokens[1]["run"] == tokens[2]["run"] != ""
+
+
+# -- after the second review -------------------------------------------------------------------
+
+
+@pp.action("set_quantity", live=pp.Cap(only={"quantity": [1, 2]}, calls=10))
+def set_quantity(quantity) -> str:
+    done.append(("quantity", quantity))
+    return "set for real"
+
+
+@pytest.mark.parametrize("value", [True, 1.0, "1", None, [1]])
+def test_only_compares_exactly_so_a_lookalike_value_never_runs(monkeypatch, value):
+    """True == 1 and 1.0 == 1 in Python. The owner listed the integer 1, and nothing else."""
+    monkeypatch.setenv(pp.LIVE_ENV, "set_quantity")
+    active = session(live=("set_quantity",))
+    inside(active, set_quantity, value)
+    assert done == [] and active.calls[0]["live"] == "capped"
+    inside(active, set_quantity, 1)
+    assert done == [("quantity", 1)]
+
+
+def test_a_cap_too_large_for_a_number_is_refused():
+    with pytest.raises(pp.HarnessError):
+        pp.Cap(max={"amount": 10**400})
+
+
+def test_a_capped_tool_that_calls_another_capped_tool(monkeypatch):
+    @pp.action("notify", live=pp.Cap(only={"to": ["qa@example.com"]}, calls=1))
+    def notify(to: str) -> str:
+        done.append(("notified", to))
+        return "notified"
+
+    @pp.action("refund_and_notify", live=pp.Cap(max={"amount": 5}, calls=1))
+    def refund_and_notify(amount: float) -> str:
+        done.append(("refunded", amount))
+        notify("qa@example.com")
+        notify("qa@example.com")  # the inner tool's own limit still holds
+        return "done"
+
+    monkeypatch.setenv(pp.LIVE_ENV, "notify,refund_and_notify")
+    active = session(live=("notify", "refund_and_notify"))
+    inside(active, refund_and_notify, 5)
+    assert done == [("refunded", 5), ("notified", "qa@example.com")]
+    assert [(c["tool"], c["live"]) for c in active.calls] == [
+        ("notify", "ran"), ("notify", "capped"), ("refund_and_notify", "ran"),
+    ]  # fmt: skip
+
+
+def test_an_old_authorization_file_cannot_be_used_for_real_actions(tmp_path, monkeypatch):
+    """A record written before live testing existed has no live tools, so a live description is refused."""
+    monkeypatch.chdir(tmp_path)
+    record = new_authorization(ORIGIN, "Dana Levi", "the bot", "test", 1, NOW, allowed_tools=("issue_refund",))
+    AuthorizationStore().add(record)
+    path = tmp_path / "promptproof.authorizations.json"
+    stored = json.loads(path.read_text(encoding="utf-8"))
+    del stored["authorizations"][0]["live_tools"]
+    path.write_text(json.dumps(stored), encoding="utf-8")
+    loaded = AuthorizationStore().find(ORIGIN)
+    with pytest.raises(AuthorizationError, match="--live-tool"):
+        require_authorized(HttpTarget(description(), "http:bot", loaded), now=NOW)
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        lambda body: body.update(v=True),
+        lambda body: body.update(v=1.0),
+        lambda body: body.update(exp=str(body["exp"])),
+        lambda body: body.update(fixtures=[["admin_code", "x"]]),
+        lambda body: body.update(fixtures={"admin_code": 5}),
+        lambda body: body.update(sid=5),
+        lambda body: body.update(live="issue_refund", run="r"),
+        lambda body: body.update(live=[1], run="r"),
+    ],
+)
+def test_a_signed_token_is_still_read_strictly(change):
+    body = {"v": 1, "sid": "s1", "n": "", "exp": int(NOW.timestamp()) + 300, "fixtures": {}, "content": {}}
+    payload = pp._b64(json.dumps(body, sort_keys=True, separators=(",", ":")).encode())
+    assert pp._open(payload + "." + pp._mac(KEY, pp._SESSION_DOMAIN, payload)) is not None  # the honest one opens
+    change(body)
+    payload = pp._b64(json.dumps(body, sort_keys=True, separators=(",", ":")).encode())
+    assert pp._open(payload + "." + pp._mac(KEY, pp._SESSION_DOMAIN, payload)) is None

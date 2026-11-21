@@ -86,13 +86,14 @@ def test_scanning_the_practice_bot_and_reading_the_report(project):
     report, failed = call(project, "read_report")
     assert not failed and "verified violations found" in report
     again, failed = call(project, "scan", target="toy:vulnerable", replays=1)
-    assert "not empty" in again  # old evidence is never mixed in
+    assert failed and "not empty" in again  # old evidence is never mixed in, and no success is claimed
+    assert "did not run" in again and "Reports are in" not in again
 
 
 def test_a_real_target_is_refused_without_a_persons_authorization(project):
     (project / "promptproof.targets.json").write_text(json.dumps({"targets": {"staging": DESCRIPTION}}), encoding="utf-8")
-    text, _ = call(project, "scan", target="http:staging", replays=1, dir="first")
-    assert "no authorization" in text.lower() and "NOT RUN" in text
+    text, failed = call(project, "scan", target="http:staging", replays=1, dir="first")
+    assert failed and "no authorization" in text.lower() and "NOT RUN" in text and "Reports are in" not in text
     status, failed = call(project, "authorization_status", origin="https://staging.example.com")
     assert not failed and "No authorization on record" in status and "Only a person can authorize" in status
 
@@ -206,3 +207,27 @@ def test_the_guide_matches_the_code(project, capsys):
 
     for used in ("wrap", "action", "planted"):
         assert f"pp.{used}" in GUIDE and hasattr(pp, used)
+
+
+def test_find_tools_does_not_follow_a_link_out_of_the_project(tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secrets.py").write_text("def delete_everything(): ...", encoding="utf-8")
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "app.py").write_text("def send_email(to): ...", encoding="utf-8")
+    try:
+        (project / "linked").symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("this machine does not allow making links")
+    text, failed = call(project, "find_tools")
+    assert not failed and "send_email" in text and "delete_everything" not in text
+
+
+def test_read_report_refuses_a_huge_file(project):
+    from promptproof import mcp_server
+
+    big = project / "huge.md"
+    big.write_bytes(b"x" * (mcp_server._MAX_REPORT_BYTES + 1))
+    text, failed = call(project, "read_report", path="huge.md")
+    assert failed and "larger than" in text

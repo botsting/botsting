@@ -26,13 +26,28 @@ EXPECTED_FRAMEWORKS = {
 }
 
 
-def test_every_objective_kind_has_entries_from_all_frameworks() -> None:
+def test_every_objective_kind_has_entries() -> None:
+    """Not every framework has an entry that really covers every objective, and a loose fit is
+    worse than none in an audit document. So each kind needs entries, not one from every framework."""
     assert set(FRAMEWORK_MAPPINGS) == set(OBJECTIVE_KINDS)
     assert set(OBJECTIVE_LABELS) == set(OBJECTIVE_KINDS)
     for kind in OBJECTIVE_KINDS:
         entries = entries_for(kind)
-        assert len(entries) >= 1
-        assert {e.framework for e in entries} == EXPECTED_FRAMEWORKS
+        assert len({e.framework for e in entries}) >= 4
+        assert {e.framework for e in entries} <= EXPECTED_FRAMEWORKS
+    assert {e.framework for e in ALL_FRAMEWORK_ENTRIES} == EXPECTED_FRAMEWORKS
+
+
+def test_entries_removed_as_loose_fits_stay_out() -> None:
+    """From the independent check on 2026-11-22. Do not add these back without reading their text."""
+    ids = {entry.id for entry in ALL_FRAMEWORK_ENTRIES}
+    assert not ids & {"B007", "B009", "A006", "MS-4.2-001"}
+    secret = {entry.id for entry in entries_for("instruction_secret")}
+    assert not secret & {"ASI01", "MS-2.10-001"}
+    # NIST gives its actions no titles: what is shown is the action's opening words, visibly cut.
+    for entry in ALL_FRAMEWORK_ENTRIES:
+        if entry.id.startswith("MS-"):
+            assert entry.title.endswith("...") and not entry.title.startswith("MEASURE")
 
 
 def test_all_entries_have_required_fields_and_https_urls() -> None:

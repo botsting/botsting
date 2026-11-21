@@ -1,11 +1,25 @@
 """Data-only mapping from Promptproof objective kinds to public security frameworks.
 
-Every entry below was verified directly against the framework's official publication:
+Every id, edition and title below was checked against the framework's own publication,
+and then checked again by a second, independent pass on 2026-11-22:
 - OWASP Top 10 for LLM Applications (2026, published August 2026)
 - OWASP Top 10 for Agentic Applications (2026, published December 2025)
 - MITRE ATLAS (v2026.10, October 2026)
 - NIST AI 600-1: Artificial Intelligence Risk Management Framework: Generative AI Profile (July 2024)
 - AIUC-1 (Q4 2026, October 2026)
+
+Notes for whoever updates this:
+- NIST AI 600-1 gives its suggested actions no titles. The text shown for an action id is
+  the opening of the action, word for word, ending in "..." where it is cut.
+- The atlas.mitre.org technique pages are drawn in the browser; a plain fetch of them
+  answers 404. The ids and names here were checked against MITRE's ATLAS-2026.10 data
+  release.
+- An entry is listed for an objective only where the entry's own text covers it. Entries
+  that fit only loosely were removed after the second pass (AIUC-1 B007 and B009, NIST
+  MS-4.2-001, and ASI01 and MS-2.10-001 for an instruction secret). AIUC-1 A006 (personal
+  data) was removed because a planted record need not be personal data.
+- AIUC-1 A009 and B001 ask for testing by an appointed third party at least every three
+  months. A scan can be evidence toward them; it does not meet them alone.
 
 This mapping covers only the four objective kinds Promptproof tests. It is never full
 coverage of any framework, and a scan result is never a claim of compliance,
@@ -189,28 +203,31 @@ _NIST_MS_2_7_001 = FrameworkEntry(
     framework=_NIST,
     version=_NIST_VER,
     id="MS-2.7-001",
-    title="MEASURE 2.7: Apply established security measures to assess likelihood and magnitude of vulnerabilities and threats",
+    title=(
+        "Apply established security measures to: Assess likelihood and magnitude of vulnerabilities and threats "
+        "such as backdoors, compromised dependencies, data breaches, eavesdropping, man-in-the-middle attacks, ..."
+    ),
     url=_NIST_URL,
 )
 _NIST_MS_2_7_007 = FrameworkEntry(
     framework=_NIST,
     version=_NIST_VER,
     id="MS-2.7-007",
-    title="MEASURE 2.7: Perform AI red-teaming to assess resilience against GAI attacks (e.g., prompt injection)",
+    title=(
+        "Perform AI red-teaming to assess resilience against: Abuse to facilitate attacks on other systems "
+        "(e.g., malicious code generation, enhanced phishing content), GAI attacks (e.g., prompt injection), ..."
+    ),
     url=_NIST_URL,
 )
 _NIST_MS_2_10_001 = FrameworkEntry(
     framework=_NIST,
     version=_NIST_VER,
     id="MS-2.10-001",
-    title="MEASURE 2.10: Conduct AI red-teaming to assess privacy and sensitive information disclosure risks",
-    url=_NIST_URL,
-)
-_NIST_MS_4_2_001 = FrameworkEntry(
-    framework=_NIST,
-    version=_NIST_VER,
-    id="MS-4.2-001",
-    title="MEASURE 4.2: Conduct adversarial testing at a regular cadence to map and measure GAI risks",
+    title=(
+        "Conduct AI red-teaming to assess issues such as: Outputting of training data samples, and subsequent "
+        "reverse engineering, model extraction, and membership inference risks; Revealing biometric, confidential, "
+        "copyrighted, licensed, patented, personal, proprietary, sensitive, or trade-marked information; ..."
+    ),
     url=_NIST_URL,
 )
 
@@ -225,13 +242,6 @@ _AIUC_A005 = FrameworkEntry(
     id="A005",
     title="Prevent cross-customer data exposure",
     url="https://standard.aiuc-1.com/data-and-privacy/prevent-cross-customer-data-exposure",
-)
-_AIUC_A006 = FrameworkEntry(
-    framework=_AIUC,
-    version=_AIUC_VER,
-    id="A006",
-    title="Prevent PII leakage",
-    url="https://standard.aiuc-1.com/data-and-privacy/prevent-pii-leakage",
 )
 _AIUC_A008 = FrameworkEntry(
     framework=_AIUC,
@@ -261,20 +271,6 @@ _AIUC_B006 = FrameworkEntry(
     title="Prevent unauthorized AI agent actions",
     url="https://standard.aiuc-1.com/security/enforce-contextual-access-controls",
 )
-_AIUC_B007 = FrameworkEntry(
-    framework=_AIUC,
-    version=_AIUC_VER,
-    id="B007",
-    title="Enforce user access privileges to AI systems",
-    url="https://standard.aiuc-1.com/security/enforce-ai-access-privileges",
-)
-_AIUC_B009 = FrameworkEntry(
-    framework=_AIUC,
-    version=_AIUC_VER,
-    id="B009",
-    title="Limit output over-exposure",
-    url="https://standard.aiuc-1.com/security/limit-output-over-exposure",
-)
 
 ALL_FRAMEWORK_ENTRIES: tuple[FrameworkEntry, ...] = (
     _LLM01,
@@ -295,15 +291,11 @@ ALL_FRAMEWORK_ENTRIES: tuple[FrameworkEntry, ...] = (
     _NIST_MS_2_7_001,
     _NIST_MS_2_7_007,
     _NIST_MS_2_10_001,
-    _NIST_MS_4_2_001,
     _AIUC_A005,
-    _AIUC_A006,
     _AIUC_A008,
     _AIUC_A009,
     _AIUC_B001,
     _AIUC_B006,
-    _AIUC_B007,
-    _AIUC_B009,
 )
 
 FRAMEWORK_MAPPINGS: dict[ObjectiveKind, tuple[FrameworkEntry, ...]] = {
@@ -311,16 +303,13 @@ FRAMEWORK_MAPPINGS: dict[ObjectiveKind, tuple[FrameworkEntry, ...]] = {
         _LLM01,
         _LLM02,
         _LLM08,
-        _ASI01,
         _ATLAS_DIRECT_PI,
         _ATLAS_SYSTEM_INSTRUCTIONS,
         _ATLAS_EXFIL_UI,
         _NIST_INFO_SECURITY,
         _NIST_MS_2_7_007,
-        _NIST_MS_2_10_001,
         _AIUC_A008,
         _AIUC_B001,
-        _AIUC_B009,
     ),
     "other_user_record": (
         _LLM02,
@@ -331,9 +320,7 @@ FRAMEWORK_MAPPINGS: dict[ObjectiveKind, tuple[FrameworkEntry, ...]] = {
         _NIST_INFO_SECURITY,
         _NIST_MS_2_10_001,
         _AIUC_A005,
-        _AIUC_A006,
         _AIUC_A009,
-        _AIUC_B007,
     ),
     "tool_rule": (
         _LLM01,
@@ -347,7 +334,6 @@ FRAMEWORK_MAPPINGS: dict[ObjectiveKind, tuple[FrameworkEntry, ...]] = {
         _NIST_MS_2_7_007,
         _AIUC_B001,
         _AIUC_B006,
-        _AIUC_B007,
     ),
     "injection_point": (
         _LLM01,
@@ -358,7 +344,6 @@ FRAMEWORK_MAPPINGS: dict[ObjectiveKind, tuple[FrameworkEntry, ...]] = {
         _ATLAS_TOOL_INVOCATION,
         _NIST_INFO_SECURITY,
         _NIST_MS_2_7_007,
-        _NIST_MS_4_2_001,
         _AIUC_B001,
         _AIUC_B006,
     ),

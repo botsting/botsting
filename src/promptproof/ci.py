@@ -16,7 +16,7 @@ other pipeline; those two extras are simply skipped.
 
 A scan that could not run at all (a target that is not described, no authorization)
 fails the build under both `violations` and `inconclusive`: a pipeline that tests
-nothing must not look green.
+nothing must not look green. So does a scan whose evidence could not be sealed.
 
 An inconclusive scan is not a clean one: it means the scan could not show that its
 attacks would have been seen. With the default, the summary says so in its first line.
@@ -66,6 +66,9 @@ def _ci(args: argparse.Namespace) -> int:
     )
 
     directory = Path(args.dir)
+    if directory.exists() and not directory.is_dir():
+        print(f"error: {directory} is a file; --dir must be a new or empty folder", file=sys.stderr)
+        return EXIT_INCONCLUSIVE
     if directory.exists() and any(directory.iterdir()):
         print(f"error: {directory} is not empty; give an empty or new --dir so old evidence is not mixed in", file=sys.stderr)
         return EXIT_INCONCLUSIVE
@@ -80,14 +83,15 @@ def _ci(args: argparse.Namespace) -> int:
         data = json.loads(report.read_text(encoding="utf-8"))
         status, findings = str(data.get("status", "unknown")), len(data.get("findings", []))
 
-    value, bundle = "", directory.with_name(directory.name + ".sealed.zip")
+    value, bundle, unsealed = "", directory.with_name(directory.name + ".sealed.zip"), False
     if directory.is_dir() and any(directory.iterdir()):
         try:
             value = seal(directory, bundle)
             print(f"Evidence bundle: {bundle}")
             print(f"Seal: {value}")
         except SealError as error:
-            print(f"note: the evidence was not sealed: {error}", file=sys.stderr)
+            unsealed = True
+            print(f"error: the evidence was not sealed: {error}", file=sys.stderr)
 
     headline = {
         EXIT_VIOLATIONS: f"Promptproof: {findings} proven finding(s).",
@@ -115,8 +119,8 @@ def _ci(args: argparse.Namespace) -> int:
         return 0
     if code == EXIT_VIOLATIONS:
         return EXIT_VIOLATIONS
-    if status == "not_run":
-        return EXIT_INCONCLUSIVE
+    if status == "not_run" or unsealed:
+        return EXIT_INCONCLUSIVE  # nothing was tested, or the evidence could not be sealed
     if code != EXIT_NO_VERIFIED and args.fail_on == "inconclusive":
         return EXIT_INCONCLUSIVE
     return 0

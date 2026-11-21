@@ -80,3 +80,21 @@ def test_it_works_outside_github(tmp_path, monkeypatch):
     monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
     assert main(["ci", "--target", "toy:fixed", "--replays", "1"]) == 0
     assert (tmp_path / "promptproof-report.sealed.zip").exists()
+
+
+def test_a_dir_that_is_a_file_is_a_plain_error(pipeline, capsys):
+    (pipeline / "taken").write_text("x", encoding="utf-8")
+    assert main(["ci", "--target", "toy:fixed", "--dir", "taken"]) == 2
+    assert "is a file" in capsys.readouterr().err
+
+
+def test_evidence_that_cannot_be_sealed_fails_the_build(pipeline, monkeypatch, capsys):
+    import promptproof.ci as ci
+
+    def broken(run_dir, out):
+        raise ci.SealError("the disk is full")
+
+    monkeypatch.setattr(ci, "seal", broken)
+    assert main(["ci", "--target", "toy:fixed", "--replays", "1"]) == 2
+    assert "was not sealed" in capsys.readouterr().err and outputs(pipeline)["seal"] == ""
+    assert main(["ci", "--target", "toy:fixed", "--replays", "1", "--fail-on", "never", "--dir", "second"]) == 0

@@ -87,8 +87,10 @@ refund of 500 is proven by the record of the attempt, and no money moves.
 
 The per-call limits (`max`, `only`) are exact. The per-run limits (`total`, `calls`)
 are counted in this process's memory: a deployment with N worker processes can carry
-out up to N times those limits in one run, and a restart forgets the count. Set them
-with that in mind, and rely on `max` and `only` for what must never be exceeded.
+out up to N times those limits in one run, and a restart forgets the count. They are
+counted per run, and the run is named by the scanner: whoever holds the harness key
+can start a new run and with it a new allowance. Set them with that in mind, and rely
+on `max` and `only` for what must never be exceeded.
 
 It uses only the standard library, so adding it to a bot adds no dependencies.
 """
@@ -232,11 +234,11 @@ def read_calls_header(
         )
     try:
         record = json.loads(_unb64(payload))
-        calls, dropped = record["calls"], int(record["dropped"])
+        calls, dropped = record["calls"], record["dropped"]
     except (ValueError, KeyError, TypeError) as error:
         raise HarnessError(f"the tool-call record is unreadable: {error}") from error
-    if not isinstance(calls, list):
-        raise HarnessError("the tool-call record must hold a list of calls")
+    if not isinstance(calls, list) or type(dropped) is not int:
+        raise HarnessError("the tool-call record must hold a list of calls and a count of dropped ones")
     if dropped:
         raise HarnessError(
             f"the bot made more tool calls in one reply than the record holds ({MAX_CALLS} calls, "
@@ -296,17 +298,23 @@ def _open(token: str | None, now: float | None = None) -> _Session | None:
         return None
     try:
         body = json.loads(_unb64(payload))
-        expires = int(body["exp"])
-        sid = str(body["sid"])
-        nonce = str(body.get("n", ""))
-        live = frozenset(str(t) for t in list(body.get("live", [])))
-        run = str(body.get("run", ""))
-        fixtures = {str(k): str(v) for k, v in dict(body["fixtures"]).items()}
-        content = {str(k): str(v) for k, v in dict(body.get("content", {})).items()}
+        expires, sid, nonce, run = body["exp"], body["sid"], body.get("n", ""), body.get("run", "")
+        asked, planted_values, placed = body.get("live", []), body["fixtures"], body.get("content", {})
     except (ValueError, KeyError, TypeError):
         return None
-    if body.get("v") != 1 or expires < (time.time() if now is None else now):
+    # Only a key holder can get this far, but a token is still read strictly: the right types or nothing.
+    texts = (sid, nonce, run)
+    if type(body.get("v")) is not int or body["v"] != 1 or type(expires) is not int:
         return None
+    if not all(isinstance(t, str) for t in texts) or not isinstance(asked, list):
+        return None
+    if not isinstance(planted_values, dict) or not isinstance(placed, dict):
+        return None
+    if not all(isinstance(t, str) for t in [*asked, *planted_values.values(), *placed.values()]):
+        return None
+    if expires < (time.time() if now is None else now):
+        return None
+    live, fixtures, content = frozenset(asked), dict(planted_values), dict(placed)
     if live and not run:
         return None
     return _Session(sid=sid, fixtures=fixtures, content=content, key=key, nonce=nonce, live=live, run=run)
@@ -371,8 +379,20 @@ def _number(value: Any) -> float | None:
     """The value as a finite number, or None. True and False are not numbers here."""
     if isinstance(value, bool) or not isinstance(value, int | float | Decimal):
         return None
-    number = float(value)
+    try:
+        number = float(value)
+    except (OverflowError, ValueError):  # an integer too large for a float is no amount a cap can allow
+        return None
     return number if math.isfinite(number) else None
+
+
+def _listed(value: Any, allowed: Collection[Any]) -> bool:
+    """Whether `value` is one of `allowed`, of the same type. Plain `in` would let True pass for 1
+    and 1.0 pass for 1, and the tool would then receive a value its owner never listed."""
+    try:
+        return any(type(item) is type(value) and item == value for item in allowed)
+    except TypeError:  # a value that cannot even be compared is not on the list
+        return False
 
 
 # run id -> tool -> [real calls so far, {argument: sum so far}]. In this process only.
@@ -400,11 +420,7 @@ def _may_run(session: _Session, tool: str, cap: Cap | None, arguments: Mapping[s
         if not 0 <= value <= float(ceiling):
             return False, f"{name} {value:g} is outside the cap of 0 to {float(ceiling):g}"
     for name, allowed in cap.only.items():
-        try:
-            listed = arguments.get(name) in allowed
-        except TypeError:  # a value that cannot even be compared is not on the list
-            listed = False
-        if not listed:
+        if not _listed(arguments.get(name), allowed):
             return False, f"{name} is not one of the values allowed for a live test"
     sums: dict[str, float] = {}
     for name in cap.total:

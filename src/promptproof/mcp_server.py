@@ -35,9 +35,10 @@ import ast
 import contextlib
 import io
 import json
+import os
 import re
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any, TextIO
 
@@ -47,6 +48,7 @@ PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
 _MAX_FILES = 2000
 _MAX_FILE_BYTES = 400_000
 _MAX_TEXT = 60_000
+_MAX_REPORT_BYTES = 5_000_000
 _SKIP_DIRS = {".git", ".venv", "venv", "node_modules", "__pycache__", "dist", "build", ".tox", "site-packages"}
 
 GUIDE = """\
@@ -65,7 +67,7 @@ the developer has recorded an authorization themselves.
   `find_tools` for candidates, then read the code: the list is a starting point.
 - Where the bot's instructions are built, and where it reads one user's data.
 
-## 2. Add the drop-in harness (Python; a JavaScript package mirrors it)
+## 2. Add the drop-in harness (Python here; for Node see js/harness/README.md in the Promptproof repository)
 ```python
 import promptproof.harness as pp
 
@@ -131,7 +133,7 @@ promptproof authorize https://staging.example.com --by "THEIR NAME" \\
     --scope "the support bot on staging" --environment staging --tool issue_refund
 # set PROMPTPROOF_CHALLENGE on staging to the printed line, deploy, then:
 promptproof authorize --verify https://staging.example.com
-promptproof sterile-check --env-file .env.staging   # if available: no production keys on staging
+promptproof sterile-check --env-file staging.env    # an export of staging's settings: no production keys
 ```
 
 ## 5. Check, then scan
@@ -179,17 +181,25 @@ def _decorator_names(node: ast.AST) -> list[str]:
     return names
 
 
+def _python_files(start: Path) -> Iterator[Path]:
+    """Python files under `start`, in order, without entering skipped folders or following links."""
+    for folder, folders, files in os.walk(start, followlinks=False):
+        folders[:] = sorted(d for d in folders if d not in _SKIP_DIRS and not Path(folder, d).is_symlink())
+        for name in sorted(files):
+            if name.endswith(".py"):
+                yield Path(folder, name)
+
+
 def _find_tools(root: Path, arguments: dict[str, Any]) -> str:
     start = _inside(root, str(arguments.get("path", ".")))
     if not start.exists():
         raise ToolError(f"{start} does not exist")
-    files = [start] if start.is_file() else sorted(start.rglob("*.py"))
     found: list[str] = []
     marked = 0
     read = 0
-    for file in files:
-        if any(part in _SKIP_DIRS for part in file.relative_to(root.resolve()).parts):
-            continue
+    for file in [start] if start.is_file() else _python_files(start):
+        if not file.resolve().is_relative_to(root.resolve()):
+            continue  # reached through a link that leads out of the project
         if read >= _MAX_FILES:
             found.append(f"(stopped after {_MAX_FILES} files; give a narrower path)")
             break
@@ -213,7 +223,7 @@ def _find_tools(root: Path, arguments: dict[str, Any]) -> str:
             if _RISKY.search(node.name):
                 reasons.append("its name suggests it changes something")
             if reasons:
-                where = file.relative_to(root.resolve()).as_posix()
+                where = file.resolve().relative_to(root.resolve()).as_posix()
                 arguments_text = ", ".join(a.arg for a in node.args.args if a.arg not in ("self", "cls"))
                 found.append(f"{where}:{node.lineno}  {node.name}({arguments_text})  - {'; '.join(reasons)}")
     lines = [
@@ -319,10 +329,15 @@ def _scan(root: Path, arguments: dict[str, Any]) -> str:
     argv += ["--replays", str(int(arguments.get("replays", 3)))]
     argv += ["--max-seconds", str(float(arguments.get("max_seconds", 600)))]
     argv += ["--max-messages", str(int(arguments.get("max_messages", 1000)))]
+    before = _inside(root, directory) / "scan.promptproof.json"
+    existed = before.exists()
     try:
         main(argv)
     except SystemExit as error:  # argparse refusing an option
         raise ToolError(f"the scan options were not accepted (exit {error.code})") from error
+    if existed or not before.exists():
+        # What the command printed (captured by the caller) says why. Do not claim reports that were not written.
+        raise ToolError("The scan did not run, so no report was written. The lines above say why.")
     return f"Reports are in {directory}/ (report.md, report.html, scan.promptproof.json). Use read_report to read one."
 
 
@@ -331,8 +346,10 @@ def _read_report(root: Path, arguments: dict[str, Any]) -> str:
     if path.suffix not in (".md", ".json"):
         raise ToolError("read_report reads .md and .json reports")
     try:
+        if path.stat().st_size > _MAX_REPORT_BYTES:
+            raise ToolError(f"{path.name} is larger than {_MAX_REPORT_BYTES} bytes; open it in an editor instead")
         text = path.read_text(encoding="utf-8")
-    except OSError as error:
+    except (OSError, ValueError) as error:
         raise ToolError(f"could not read {path.name}: {error}") from error
     return text
 
