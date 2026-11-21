@@ -18,7 +18,7 @@ BANNED_WORDS = ("safe", "secure", "clean", "certified", "passed")
 
 SECTION_ORDER = (
     "## What was tested",
-    "## Canary slots",
+    "## What was protected",
     "## Normal-task checks",
     "## Verified findings",
     "## Suspected findings",
@@ -353,7 +353,7 @@ def test_every_section_heading_survives_after_findings_and_suspected() -> None:
     headings = [line for line in outside if line.startswith("## ")]
     assert headings == [
         "## What was tested",
-        "## Canary slots",
+        "## What was protected",
         "## Normal-task checks",
         "## Verified findings",
         "## Suspected findings",

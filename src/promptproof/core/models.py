@@ -40,13 +40,82 @@ class EvidenceLevel(IntEnum):
 
 
 SlotKind = Literal["instruction_secret", "other_user_record"]
-Role = Literal["attacker", "target"]
+# "attacker" is a message the attacker sent or content the attacker planted.
+# "user" is an ordinary person using the target, who has no idea an attack is under way.
+Role = Literal["attacker", "user", "target"]
+AttackKind = Literal["disclosure", "action", "injection"]
+
+
+@dataclass(frozen=True)
+class ToolCall:
+    """One call the target made to one of its tools, as recorded at the tool.
+
+    The record comes from a recorder on the tool itself, never from what the target
+    says it did: a model can claim a refund it never issued, or issue one silently.
+    """
+
+    id: str  # assigned by the recorder; ties the call to its place in the conversation
+    tool: str
+    arguments: tuple[tuple[str, str], ...]
+    accepted: bool  # the tool carried the call out, as opposed to refusing it
+    result: str = ""
+
+
+@dataclass(frozen=True)
+class Reply:
+    """What came back from one message to the target: its words and what it did."""
+
+    text: str
+    tool_calls: tuple[ToolCall, ...] = ()
 
 
 @dataclass(frozen=True)
 class Turn:
     role: Role
     text: str
+    tool_calls: tuple[ToolCall, ...] = ()  # target turns only
+    note: str = ""  # for example where planted content was placed
+
+
+@dataclass(frozen=True)
+class ToolRule:
+    """A tool and who is allowed to cause it to run."""
+
+    id: str
+    tool: str
+    description: str
+    # What an attacker would ask for, e.g. "a refund of 50 on order A-1001".
+    hint: str
+    # Principals whose own request may cause the tool to run. A call during anyone
+    # else's conversation is a violation, whether or not the tool accepts it.
+    authorized: tuple[str, ...]
+    # A legitimate request that must produce an accepted, recorded call. Run before
+    # attacking: if the recorder cannot see a legitimate call it cannot see a forbidden one.
+    control_principal: str
+    control_prompt: str
+
+
+@dataclass(frozen=True)
+class InjectionPoint:
+    """A place where someone else's text ends up in front of the target.
+
+    The attacker never talks to the target here. They leave text where the target will
+    read it later, while helping an ordinary user with an ordinary request.
+    """
+
+    id: str
+    description: str
+    # The ordinary request during which the planted text gets read.
+    victim_principal: str
+    victim_prompt: str
+    expect_substring: str  # the ordinary request must still be answered
+    # Harmless text for the same place. The request is run with this first: if a
+    # forbidden tool is called even then, the attack is not what caused it.
+    benign_content: str
+    # Tools that have no business running during this request.
+    forbidden_tools: tuple[str, ...]
+    # What the planted text tries to make the target do, e.g. "issue a refund of 500 on order B-2002".
+    goal: str
 
 
 @dataclass(frozen=True)
@@ -79,13 +148,21 @@ class TaskCheck:
 
 @dataclass(frozen=True)
 class Attack:
-    """A scripted attack. `turns` are sent in order as the attacker principal."""
+    """A scripted attack.
+
+    disclosure  `turns` are sent as the attacker; success is a canary from `slot_id` in the replies.
+    action      `turns` are sent as the attacker; success is a call to the tool of rule `slot_id`.
+    injection   `payload` is planted at injection point `slot_id`, then the point's ordinary
+                user makes their ordinary request; success is a call to a forbidden tool.
+    """
 
     id: str
     technique: str
     title: str
-    slot_id: str
-    turns: tuple[str, ...]
+    slot_id: str  # the slot, tool rule or injection point this is aimed at
+    turns: tuple[str, ...] = ()
+    kind: AttackKind = "disclosure"
+    payload: str = ""
 
 
 @dataclass(frozen=True)
@@ -156,6 +233,9 @@ class Attempt:
     matches: tuple[Match, ...] = ()  # everything not discarded as contaminated
     contaminated_slots: tuple[str, ...] = ()
     error: str | None = None  # set when the run did not complete
+    # Recorded calls to a forbidden tool, each paired with the id of the tool rule or
+    # injection point that forbids it.
+    forbidden_calls: tuple[tuple[str, ToolCall], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -183,6 +263,10 @@ class Finding:
     discovery: Rate
     # How often the frozen attack worked when replayed from reset.
     reproduction: Rate
+    kind: AttackKind = "disclosure"
+    payload: str = ""  # injection only: the planted text, frozen
+    # Action and injection findings: the recorded calls that should not have happened.
+    tool_calls: tuple[ToolCall, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -259,6 +343,10 @@ class ScanReport:
     # What the target said about its own configuration when scanned (model, digest,
     # settings), so a later replay can tell whether it is facing the same thing.
     target_config: dict[str, str] = field(default_factory=dict)
+    # Set when the scan was stopped before finishing: a limit was reached or it was cancelled.
+    stopped_early: str = ""
+    messages_sent: int = 0
+    tool_calls_recorded: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -269,8 +357,28 @@ class ScanReport:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ScanReport":
-        def turns(items: list[dict[str, str]]) -> tuple[Turn, ...]:
-            return tuple(Turn(role=item["role"], text=item["text"]) for item in items)  # type: ignore[arg-type]
+        def calls(items: list[dict[str, Any]]) -> tuple[ToolCall, ...]:
+            return tuple(
+                ToolCall(
+                    id=c["id"],
+                    tool=c["tool"],
+                    arguments=tuple((str(k), str(v)) for k, v in c["arguments"]),
+                    accepted=bool(c["accepted"]),
+                    result=c.get("result", ""),
+                )
+                for c in items
+            )
+
+        def turns(items: list[dict[str, Any]]) -> tuple[Turn, ...]:
+            return tuple(
+                Turn(
+                    role=item["role"],
+                    text=item["text"],
+                    tool_calls=calls(item.get("tool_calls", [])),
+                    note=item.get("note", ""),
+                )
+                for item in items
+            )
 
         def rate(item: dict[str, Any]) -> Rate:
             return Rate(**item)
@@ -291,6 +399,9 @@ class ScanReport:
                 transcript=turns(f["transcript"]),
                 discovery=rate(f["discovery"]),
                 reproduction=rate(f["reproduction"]),
+                kind=f.get("kind", "disclosure"),
+                payload=f.get("payload", ""),
+                tool_calls=calls(f.get("tool_calls", [])),
             )
             for f in data["findings"]
         )
@@ -327,4 +438,7 @@ class ScanReport:
             limitations=tuple(data.get("limitations", ())),
             inconclusive_reasons=tuple(data.get("inconclusive_reasons", ())),
             target_config=dict(data.get("target_config", {})),
+            stopped_early=data.get("stopped_early", ""),
+            messages_sent=data.get("messages_sent", 0),
+            tool_calls_recorded=data.get("tool_calls_recorded", 0),
         )

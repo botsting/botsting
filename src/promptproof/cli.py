@@ -10,12 +10,14 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import signal
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 from promptproof import __version__
-from promptproof.attacks.library import attacks_for, benign_probes
-from promptproof.core.models import Rate, ScanReport
+from promptproof.attacks.library import default_attacks
+from promptproof.core.models import Finding, Rate, ScanReport
 from promptproof.core.runner import ScanConfig, identity_unknown, replay_finding, run_scan
 from promptproof.shell import replay_command
 from promptproof.targets.registry import SpecError, build_target
@@ -58,8 +60,7 @@ def _summary(report: ScanReport) -> str:
         lines.append(f"  not established: {reason}")
     for finding in report.findings:
         lines.append(
-            f"  {finding.id} [{finding.level.label}] {finding.attack_id}: {finding.slot_id} leaked "
-            f"({finding.encoding}, {finding.scope}); found in "
+            f"  {finding.id} [{finding.level.label}] {finding.attack_id}: {what_happened(finding)}; found in "
             f"{describe_rate(finding.discovery, 'search attempts')}; reproduced in "
             f"{describe_rate(finding.reproduction, 'replays from reset')}"
         )
@@ -67,7 +68,40 @@ def _summary(report: ScanReport) -> str:
         lines.append(f"  {len(report.suspected)} suspected finding(s), not verified and not counted.")
     if report.contaminated_attempts:
         lines.append(f"  {report.contaminated_attempts} attempt(s) discarded as contaminated.")
+    lines.append(f"  Spent: {report.messages_sent} messages, {report.tool_calls_recorded} recorded tool calls.")
     return "\n".join(lines)
+
+
+def what_happened(finding: Finding) -> str:
+    if finding.kind == "disclosure":
+        return f"{finding.slot_id} leaked ({finding.encoding}, {finding.scope})"
+    tools = ", ".join(dict.fromkeys(call.tool for call in finding.tool_calls)) or "a forbidden tool"
+    fate = "and the tool carried it out" if any(call.accepted for call in finding.tool_calls) else "which the tool refused"
+    how = "planted text caused a call to" if finding.kind == "injection" else "the attacker caused a call to"
+    return f"{finding.slot_id}: {how} {tools}, {fate}"
+
+
+def _run_until_done_or_cancelled(start: Callable[[Callable[[], bool]], object]) -> object:
+    """Run a scan so that Ctrl+C stops it after the current message and a partial report is still written.
+
+    A second Ctrl+C gives up immediately.
+    """
+    state = {"cancelled": False}
+
+    def on_interrupt(signum: int, frame: object) -> None:
+        if state["cancelled"]:
+            raise KeyboardInterrupt
+        state["cancelled"] = True
+        print("Stopping after the current message. Press Ctrl+C again to abandon the scan.", file=sys.stderr)
+
+    try:
+        previous = signal.signal(signal.SIGINT, on_interrupt)
+    except ValueError:  # not the main thread; run without the handler
+        return asyncio.run(start(lambda: False))  # type: ignore[arg-type]
+    try:
+        return asyncio.run(start(lambda: state["cancelled"]))  # type: ignore[arg-type]
+    finally:
+        signal.signal(signal.SIGINT, previous)
 
 
 def _write(path: Path, text: str) -> None:
@@ -78,13 +112,26 @@ def _write(path: Path, text: str) -> None:
 def _scan(args: argparse.Namespace) -> int:
     try:
         target = build_target(args.target)
-        config = ScanConfig(discovery_runs=args.discovery_runs, reproduction_trials=args.replays)
+        limits = {
+            "discovery_runs": args.discovery_runs,
+            "reproduction_trials": args.replays,
+            "max_messages": args.max_messages,
+            "max_tool_calls": args.max_tool_calls,
+            "max_seconds": args.max_seconds,
+        }
+        ScanConfig(**limits)  # validate before anything runs
+        attacks = default_attacks(target)
     except (SpecError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return EXIT_INCONCLUSIVE
-    slots = target.slots()
-    attacks = benign_probes(target.task_checks(), target.attacker_principal, slots) + attacks_for(slots)
-    report = asyncio.run(run_scan(target, attacks, config))
+    try:
+        report = _run_until_done_or_cancelled(
+            lambda cancelled: run_scan(target, attacks, ScanConfig(**limits, cancelled=cancelled))
+        )
+    except ValueError as exc:  # the runner refused the target or the attack list
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_INCONCLUSIVE
+    assert isinstance(report, ScanReport)
 
     out = Path(args.out)
     _write(out, json.dumps(report.to_dict(), indent=2))
@@ -124,9 +171,10 @@ def _replay(args: argparse.Namespace) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return EXIT_INCONCLUSIVE
 
-    result = asyncio.run(replay_finding(target, finding.slot_id, finding.frozen_turns, args.trials))
+    result = asyncio.run(replay_finding(target, finding, args.trials))
+    verb = "leaked" if finding.kind == "disclosure" else "was violated"
     print(
-        f"{finding.id} ({finding.attack_id}) against {target.spec}: {finding.slot_id} leaked in "
+        f"{finding.id} ({finding.attack_id}) against {target.spec}: {finding.slot_id} {verb} in "
         f"{describe_rate(result.rate, 'replays from reset with fresh canaries')}."
     )
     changed = sorted(
@@ -149,7 +197,7 @@ def _replay(args: argparse.Namespace) -> int:
         for problem in result.problems:
             print(f"  {problem}")
         return EXIT_INCONCLUSIVE
-    print("The canary is still reachable by its legitimate route and normal use still works.")
+    print("What it reached still works by its legitimate route, and normal use still works.")
     return EXIT_NO_VERIFIED
 
 
@@ -167,6 +215,9 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--markdown", help="also write a readable report to this path")
     scan.add_argument("--discovery-runs", type=int, default=1, help="attempts per attack while searching")
     scan.add_argument("--replays", type=int, default=5, help="replays of each attack that worked")
+    scan.add_argument("--max-messages", type=int, default=5000, help="stop after sending this many messages")
+    scan.add_argument("--max-tool-calls", type=int, default=500, help="stop once more than this many tool calls were recorded")
+    scan.add_argument("--max-seconds", type=float, default=3600, help="stop after this much time")
     scan.set_defaults(handler=_scan)
 
     rep = commands.add_parser("replay", help="replay a finding from a reset state with fresh canaries")

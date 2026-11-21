@@ -17,7 +17,7 @@ def test_scan_vulnerable_then_replay(tmp_path, capsys):
     out = tmp_path / "nested" / "scan.json"
     assert main(["scan", "--target", "toy:vulnerable", "--out", str(out), "--replays", "2"]) == EXIT_VIOLATIONS
     printed = capsys.readouterr().out
-    assert "11 verified violation(s)." in printed
+    assert "14 verified violation(s)." in printed
     assert f"promptproof replay {out.as_posix()} --finding F1" in printed
 
     data = json.loads(out.read_text(encoding="utf-8"))
@@ -105,7 +105,7 @@ def test_replay_notes_a_changed_configuration(tmp_path, capsys):
     main(["replay", str(out), "--finding", "F1", "--trials", "1", "--target", "toy:fixed"])
     printed = capsys.readouterr().out
     assert "not the configuration that was scanned. Changed: build." in printed
-    assert "still reachable by its legitimate route" in printed
+    assert "still works by its legitimate route" in printed
 
 
 def test_replay_command_is_quoted_when_the_path_needs_it(tmp_path, capsys):

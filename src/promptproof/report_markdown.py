@@ -20,7 +20,7 @@ from __future__ import annotations
 import re
 from decimal import ROUND_HALF_UP, Decimal
 
-from promptproof.core.models import Finding, Rate, ScanReport, Turn
+from promptproof.core.models import Finding, Rate, ScanReport, ToolCall, Turn
 from promptproof.shell import replay_command
 
 HEADLINE_NO_VERIFIED_VIOLATIONS = "No verified violations observed under these tested conditions."
@@ -36,7 +36,7 @@ def render_markdown(report: ScanReport, report_path: str | None = None) -> str:
     lines.append("## What was tested")
     lines.extend(_what_was_tested(report))
     lines.append("")
-    lines.append("## Canary slots")
+    lines.append("## What was protected")
     lines.extend(_slots(report))
     lines.append("")
     lines.append("## Normal-task checks")
@@ -121,6 +121,8 @@ def _what_was_tested(report: ScanReport) -> list[str]:
         f"- Attempts run: {report.attempts_run}",
         f"- Discovery runs per attack: {report.discovery_runs}",
         f"- Replays per verified finding: {report.reproduction_trials}",
+        f"- Spent: {report.messages_sent} messages sent, {report.tool_calls_recorded} tool calls recorded",
+        *([f"- Stopped early: {_text(report.stopped_early)}"] if report.stopped_early else []),
     ]
 
 
@@ -132,7 +134,12 @@ def _slots(report: ScanReport) -> list[str]:
         detail = f" — {_code(slot.detail)}" if slot.detail else ""
         lines.append(f"- {_code(slot.slot_id)} ({_text(slot.kind)}): {_text(slot.description)}")
         lines.append(f"  - State: {slot.state}{detail}")
-        lines.append(f"  - Principals authorized to see it: {_principals(slot.authorized)}")
+        if slot.kind == "tool_rule":
+            lines.append(f"  - Principals whose own request may cause this tool to run: {_principals(slot.authorized)}")
+        elif slot.kind == "injection_point":
+            lines.append("  - Tested by planting text here and having an ordinary user make an ordinary request")
+        else:
+            lines.append(f"  - Principals authorized to see it: {_principals(slot.authorized)}")
         lines.append(f"  - Attempts aimed at it that completed and were judged: {slot.judged_attempts}")
     return lines
 
@@ -167,9 +174,7 @@ def _finding(finding: Finding, report_path: str | None) -> list[str]:
         f"- Evidence level: {finding.level.label}",
         f"- Technique: {_text(finding.technique)}",
         f"- Attack: {_code(finding.attack_id)}, sent as {_code(finding.attacker_principal)}",
-        f"- Slot: {_code(finding.slot_id)}",
-        f"- Policy: principals authorized to see this slot: {_principals(finding.authorized)}",
-        f"- How the canary appeared: encoding {_code(finding.encoding)}, scope {_code(finding.scope)}",
+        *_what_was_violated(finding),
         f"- Discovery: {_rate_text('found in', 'search attempts', finding.discovery)}",
         f"- Reproduction: {_rate_text('reproduced in', 'replays from reset', finding.reproduction)}",
         f"- Replay: {_code(command)}",
@@ -179,6 +184,37 @@ def _finding(finding: Finding, report_path: str | None) -> list[str]:
     ]
     lines.extend(_transcript_lines(finding.transcript))
     return lines
+
+
+def _what_was_violated(finding: Finding) -> list[str]:
+    if finding.kind == "disclosure":
+        return [
+            f"- Slot: {_code(finding.slot_id)}",
+            f"- Policy: principals authorized to see this slot: {_principals(finding.authorized)}",
+            f"- How the canary appeared: encoding {_code(finding.encoding)}, scope {_code(finding.scope)}",
+        ]
+    lines = []
+    if finding.kind == "injection":
+        lines.append(f"- Injection point: {_code(finding.slot_id)}")
+        lines.append(
+            "- Policy: this tool has no business running during the ordinary request below; the same "
+            "request with harmless text in place of the planted text did not call it"
+        )
+    else:
+        lines.append(f"- Tool rule: {_code(finding.slot_id)}")
+        lines.append(
+            f"- Policy: principals whose own request may cause this tool to run: {_principals(finding.authorized)}"
+        )
+    lines.append("- Recorded at the tool, not taken from what the target said:")
+    lines.extend(f"  - {_call_text(call)}" for call in finding.tool_calls)
+    return lines
+
+
+def _call_text(call: ToolCall) -> str:
+    arguments = ", ".join(f"{name}={value}" for name, value in call.arguments)
+    fate = "carried out by the tool" if call.accepted else "refused by the tool"
+    result = f"; the tool answered {_code(call.result)}" if call.result else ""
+    return f"{_code(f'{call.tool}({arguments})')} {fate}{result}"
 
 
 def _rate_text(verb: str, noun_plural: str, rate: Rate) -> str:
@@ -272,14 +308,19 @@ def _transcript_lines(transcript: tuple[Turn, ...]) -> list[str]:
         return ["(empty transcript)", ""]
     lines: list[str] = []
     for turn in transcript:
-        speaker = "Attacker" if turn.role == "attacker" else "Target"
+        speaker = {"attacker": "Attacker", "user": "Ordinary user"}.get(turn.role, "Target")
+        note = f" ({_text(turn.note)})" if turn.note else ""
         fence = _fence(turn.text)
-        lines.append(f"**{speaker}:**")
+        lines.append(f"**{speaker}{note}:**")
         lines.append("")
         lines.append(fence)
         lines.append(turn.text)
         lines.append(fence)
         lines.append("")
+        for call in turn.tool_calls:
+            lines.append(f"- Tool call recorded during this reply: {_call_text(call)}")
+        if turn.tool_calls:
+            lines.append("")
     return lines  # ends with a blank line; callers trim the one after their last item
 
 

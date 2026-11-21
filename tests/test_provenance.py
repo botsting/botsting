@@ -123,7 +123,7 @@ def test_attacks_without_messages_are_rejected():
         with pytest.raises(ValueError, match="would test nothing"):
             asyncio.run(run_scan(target, attacks))
         with pytest.raises(ValueError, match="would test nothing"):
-            asyncio.run(run_attempt(target, "empty", "staff_code", turns))
+            asyncio.run(run_attempt(target, Attack("empty", "test", "Empty", "staff_code", turns)))
 
 
 # Third review: a bounded reader is not monotonic, and attribution needs one threshold.
