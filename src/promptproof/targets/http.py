@@ -5,6 +5,18 @@ the file named by the PROMPTPROOF_TARGETS_FILE environment variable) and scans i
 `http:<name>`. The description says where the bot is, how to talk to it as each user,
 where its reply is in the response, and what it protects.
 
+Three ways to plant the fake secrets (`"harness"` in the description)
+---------------------------------------------------------------------
+- "endpoint" (the default): the bot has a reset endpoint, described below.
+- "sdk": the drop-in harness, a few lines in the bot's code (promptproof/harness.py).
+- "inputs": nothing is added to the bot at all. The fake secret travels in each chat
+  request, in a variable the bot's builder already accepts and puts into its
+  instructions (Flowise `overrideConfig.vars`, Dify `inputs`, Langflow `tweaks`).
+  Write `{canary:<slot id>}` in the request body where that variable goes. This can
+  only stand for a secret in the bot's instructions: a per-request variable is seen
+  by whoever sends the request, so it cannot stand for another user's record, and no
+  tool can be watched this way. Use it for bots built in a no-code builder.
+
 What the bot must offer
 -----------------------
 Promptproof can only prove a leak of something it planted, so the bot's staging or test
@@ -132,7 +144,8 @@ class HttpTargetConfig:
     tenant: str = ""
     timeout_seconds: float = 60.0
     digest: str = ""  # of the description as written, so a replay can tell it changed
-    harness: str = "endpoint"  # "endpoint": the bot has a reset endpoint; "sdk": the drop-in harness
+    harness: str = "endpoint"  # "endpoint": a reset endpoint; "sdk": the drop-in harness; "inputs": request variables
+    session_pointer: str = ""  # if the bot names the conversation itself: where its id is in each response
     harness_key_env: str = KEY_ENV
     live_actions: tuple[str, ...] = ()  # tools the scan asks the harness to carry out for real, under its caps
 
@@ -189,8 +202,8 @@ def parse_config(name: str, raw: Mapping[str, Any], digest: str = "") -> HttpTar
     if not isinstance(body, Mapping) or not _mentions(body, "{message}"):
         raise TargetConfigError(f"{where}: chat.body must be a JSON object that contains \"{{message}}\" somewhere")
     harness = raw.get("harness", "endpoint")
-    if harness not in ("endpoint", "sdk"):
-        raise TargetConfigError(f"{where}: harness must be \"endpoint\" or \"sdk\"")
+    if harness not in ("endpoint", "sdk", "inputs"):
+        raise TargetConfigError(f"{where}: harness must be \"endpoint\", \"sdk\" or \"inputs\"")
     key_env = raw.get("harness_key_env", KEY_ENV)
     if not isinstance(key_env, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key_env):
         raise TargetConfigError(f"{where}: harness_key_env must be the name of an environment variable")
@@ -202,6 +215,10 @@ def parse_config(name: str, raw: Mapping[str, Any], digest: str = "") -> HttpTar
                 "header; remove reset and chat.tool_calls_pointer"
             )
         reset = {"path": READY_PATH}
+    elif harness == "inputs":
+        if reset is not None:
+            raise TargetConfigError(f"{where}: with \"harness\": \"inputs\" there is no reset endpoint; remove reset")
+        reset = {"path": chat.get("path")}  # nothing is ever sent there; only the chat path is used
     elif not isinstance(reset, Mapping):
         raise TargetConfigError(f"{where}: reset must describe the test-harness reset endpoint")
     live_actions = _names(raw, "live_actions", where)
@@ -289,6 +306,9 @@ def parse_config(name: str, raw: Mapping[str, Any], digest: str = "") -> HttpTar
         for t in each("task_checks")
     )
     tool_calls_pointer = _pointer(chat.get("tool_calls_pointer"), f"{where}: chat.tool_calls_pointer")
+    session_pointer = _pointer(chat.get("session_pointer"), f"{where}: chat.session_pointer")
+    if harness == "inputs":
+        _check_inputs(where, body, principals_raw, slots, tool_safety, rules, points)
     if tool_safety == "no-tools" and (rules or points or tool_calls_pointer):
         raise TargetConfigError(f"{where}: says no-tools but declares tool rules, injection points or tool calls")
     used = {attacker} | {s.control_principal for s in slots} | {r.control_principal for r in rules}
@@ -319,9 +339,40 @@ def parse_config(name: str, raw: Mapping[str, Any], digest: str = "") -> HttpTar
         timeout_seconds=float(timeout),
         digest=digest,
         harness=str(harness),
+        session_pointer=session_pointer,
         harness_key_env=key_env,
         live_actions=live_actions,
     )
+
+
+def _check_inputs(
+    where: str,
+    body: Mapping[str, Any],
+    principals: Mapping[str, Any],
+    slots: tuple[Slot, ...],
+    tool_safety: object,
+    rules: tuple[ToolRule, ...],
+    points: tuple[InjectionPoint, ...],
+) -> None:
+    """What "harness": "inputs" can and cannot stand for. Refused early, so a scan is never quietly empty."""
+    if tool_safety != "no-tools" or rules or points:
+        raise TargetConfigError(
+            f"{where}: with \"harness\": \"inputs\" no tool can be watched, so tool_safety must be \"no-tools\" "
+            "with no tool rules or injection points; to test tools, use the drop-in harness"
+        )
+    for slot in slots:
+        if slot.kind != "instruction_secret":
+            raise TargetConfigError(
+                f"{where}: slot {slot.id} is another user's record, which a request variable cannot stand for "
+                "(whoever sends the request would see it); use the drop-in harness for that"
+            )
+        token = "{canary:" + slot.id + "}"
+        everywhere = [body, *(p.get("body", {}) for p in principals.values() if isinstance(p, Mapping))]
+        if not any(_mentions(part, token) for part in everywhere):
+            raise TargetConfigError(
+                f"{where}: slot {slot.id} is never planted: write \"{token}\" in chat.body where the bot's "
+                "variable for it goes"
+            )
 
 
 def load_config(name: str, path: Path | None = None) -> HttpTargetConfig:
@@ -354,15 +405,38 @@ def _mentions(value: Any, token: str) -> bool:
     return False
 
 
-def _fill(value: Any, message: str, session: str) -> Any:
-    """Put the message and session id into a body template. Only whole JSON values are built,
-    so nothing in the message can change the structure of the request."""
+_PLACEHOLDER = re.compile(r"\{(message|session|canary:[A-Za-z0-9_.-]+|content:[A-Za-z0-9_.-]+)\}")
+
+
+def _fill(
+    value: Any,
+    message: str,
+    session: str,
+    fixtures: Mapping[str, str] | None = None,
+    content: Mapping[str, str] | None = None,
+) -> Any:
+    """Put the message and session id into a body template, and, for "harness": "inputs", the fake
+    secrets and planted content. Only whole JSON values are built, so nothing in the message can
+    change the structure of the request; one pass, so nothing put in is itself filled in again."""
     if isinstance(value, str):
-        return value.replace("{session}", session).replace("{message}", message)
+
+        def put(match: re.Match[str]) -> str:
+            name = match.group(1)
+            if name == "message":
+                return message
+            if name == "session":
+                return session
+            kind, _, key = name.partition(":")
+            source = fixtures if kind == "canary" else content
+            if source is None:
+                return match.group(0)  # not an "inputs" target: left as written
+            return source.get(key, "")
+
+        return _PLACEHOLDER.sub(put, value)
     if isinstance(value, Mapping):
-        return {k: _fill(v, message, session) for k, v in value.items()}
+        return {k: _fill(v, message, session, fixtures, content) for k, v in value.items()}
     if isinstance(value, list):
-        return [_fill(v, message, session) for v in value]
+        return [_fill(v, message, session, fixtures, content) for v in value]
     return value
 
 
@@ -563,6 +637,10 @@ class HttpTarget:
         return _tool_calls(record)
 
     async def reset(self, fixtures: Mapping[str, str], content: Mapping[str, str] | None = None) -> None:
+        if self.config.harness == "inputs":
+            # Nothing to reset on the bot: the next requests carry these values themselves.
+            self._fixtures, self._content = dict(fixtures), dict(content or {})
+            return
         if self.config.harness != "sdk":
             await self._post(self.config.reset_path, {"fixtures": dict(fixtures), "content": dict(content or {})}, {})
             return
@@ -589,10 +667,16 @@ class HttpSession:
         self._target = target
         self._principal = principal
         self._session = uuid.uuid4().hex  # a new conversation every time
+        if target.config.session_pointer:
+            self._session = ""  # the bot names the conversation in its first reply
 
     async def send(self, text: str) -> Reply:
         config = self._target.config
-        body = {**_fill(config.chat_body, text, self._session), **dict(self._principal.body)}
+        planted = (self._target._fixtures, self._target._content) if config.harness == "inputs" else (None, None)
+        body = {
+            **_fill(config.chat_body, text, self._session, *planted),
+            **_fill(dict(self._principal.body), text, self._session, *planted),
+        }
         headers = {name: _env(value) for name, value in self._principal.headers.items()}
         nonce = ""
         if config.harness == "sdk":
@@ -605,6 +689,14 @@ class HttpSession:
             raise TargetError(f"the response has nothing at {config.reply_pointer}") from exc
         if not isinstance(reply, str):
             raise TargetError(f"the reply at {config.reply_pointer or 'the top level'} is not text")
+        if config.session_pointer:
+            try:
+                named = resolve_pointer(data, config.session_pointer)
+            except KeyError as exc:
+                raise TargetError(f"the response has no conversation id at {config.session_pointer}") from exc
+            if not isinstance(named, str) or not named:
+                raise TargetError(f"the conversation id at {config.session_pointer} is not text")
+            self._session = named
         calls: tuple[ToolCall, ...] = ()
         if config.harness == "sdk":
             calls = self._target.harness_calls(self._session, nonce, answered)

@@ -128,6 +128,24 @@ Limits:
 - The test session follows the request. Python carries it into `await`, `asyncio.to_thread` and the thread pools of Starlette and FastAPI. It is not carried into a thread you start yourself, a bare `run_in_executor`, a process pool or a job queue (Celery, RQ). A marked tool that runs there during a test runs for real. If your tools run that way, mark the function that hands the work over, not the worker.
 - The signatures stop the model from faking the record. They do not stop the bot's own code from lying.
 
+### Bots built in a no-code builder
+
+A bot built in Flowise, Dify, Langflow or a similar builder has no code to add lines to. If the builder lets a request carry a variable that the bot puts into its instructions, write `"harness": "inputs"` in the description and put `{canary:<slot id>}` in the chat request where that variable goes:
+
+```json
+"harness": "inputs",
+"chat": {
+  "path": "/v1/chat-messages",
+  "body": {"query": "{message}", "conversation_id": "{session}", "inputs": {"staff_code": "{canary:staff_code}"}},
+  "reply_pointer": "/answer",
+  "session_pointer": "/conversation_id"
+}
+```
+
+Each attempt then sends a fresh fake secret with its messages, and nothing is added to the bot. `session_pointer` is for bots that name the conversation themselves: the first message sends an empty id, and later ones send the id the bot returned.
+
+This tests one thing: whether the bot can be talked into revealing a secret held in its instructions. A request variable is seen by whoever sends the request, so it cannot stand for another user's record, and no tool can be watched this way; descriptions that ask for either are refused. Check the builder's own terms before testing a bot on its hosted cloud.
+
 ### Testing the real system
 
 A copy is never exactly the real thing: settings, data and connected services differ. The drop-in harness also works on the real deployment, at two levels. Both need an authorization recorded with `--environment production`.
