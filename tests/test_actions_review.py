@@ -159,6 +159,89 @@ def test_replay_that_sees_the_tool_fire_with_harmless_text_is_unattributable(tmp
     assert "cannot be pinned on the planted text" in capsys.readouterr().out
 
 
+def control_breaks_after_preflight(harmless_reply) -> Responder:
+    """Clean for the three preflight requests. After that planted text gets a payment, and the
+    harmless-text request gets `harmless_reply()` instead of a proper answer."""
+    seen = {"n": 0}
+
+    def respond(principal: str, message: str, secret: str, inbox: str) -> Reply | str:
+        if message == "Summarize my inbox":
+            seen["n"] += 1
+            if seen["n"] <= 3:
+                return f"Your inbox says: {inbox}"
+            if "SYSTEM" in inbox:
+                return Reply("ok", (call(),))
+            return harmless_reply()
+        return healthy(principal, message, secret, inbox)
+
+    return respond
+
+
+def _control_errors():
+    from promptproof.targets.base import TargetError
+
+    raise TargetError("control unavailable")
+
+
+@pytest.mark.parametrize("harmless_reply", [_control_errors, lambda: "Sorry, something went wrong."])
+def test_a_control_that_fails_is_a_comparison_that_was_not_made(harmless_reply, tmp_path, capsys, monkeypatch):
+    """Second review: a harmless-text request that errored was being counted as a clean control."""
+    report = scan(FakeTarget(control_breaks_after_preflight(harmless_reply)), ATTACKS, reproduction_trials=2)
+    assert report.findings == (), "a finding about planted text needs a completed comparison"
+    assert [(s.attack_id, s.slot_id) for s in report.suspected] == [("plant:inbox", "inbox")]
+    assert "comparison this needs was not completed" in report.suspected[0].reason
+    assert any(e.phase == "reproduction" and "harmless-text control" in e.message for e in report.errors)
+    assert report.status == "inconclusive"
+
+    finding = injection_finding(honest_report())
+    result = asyncio.run(replay_finding(FakeTarget(control_breaks_after_preflight(harmless_reply)), finding, 2))
+    assert result.rate.successes == 2
+    assert "not completed" in result.unattributable and result.problems
+
+    import promptproof.cli as cli
+
+    out = tmp_path / "scan.json"
+    out.write_text(json.dumps(honest_report().to_dict()), encoding="utf-8")
+    monkeypatch.setattr(cli, "build_target", lambda spec: FakeTarget(control_breaks_after_preflight(harmless_reply)))
+    assert main(["replay", str(out), "--finding", finding.id, "--trials", "2"]) == EXIT_INCONCLUSIVE
+
+
+def test_cancel_is_noticed_while_the_target_is_still_answering():
+    """Second review: a cancel during a slow reply was ignored until the reply came back."""
+    state = {"cancel": False}
+
+    class SlowSession(FakeSession):
+        async def send(self, text: str):
+            state["cancel"] = True  # the user presses Ctrl+C just after the message goes out
+            await asyncio.sleep(5)
+            return "too late"
+
+    class SlowTarget(FakeTarget):
+        async def open_session(self, principal: str):
+            return SlowSession(self, principal)
+
+    started = time.monotonic()
+    report = scan(SlowTarget(healthy), ATTACKS, cancelled=lambda: state["cancel"])
+    assert time.monotonic() - started < 2, "the scan must not sit out the five-second reply"
+    assert report.stopped_early == "cancelled"
+    assert report.status == "inconclusive"
+
+
+def test_nothing_is_started_once_the_scan_is_cancelled():
+    from promptproof.core.runner import Meter
+
+    resets = {"n": 0}
+
+    class CountingTarget(FakeTarget):
+        async def reset(self, fixtures, content=None):
+            resets["n"] += 1
+            await super().reset(fixtures, content)
+
+    attempt = asyncio.run(run_attempt(CountingTarget(healthy), ATTACKS[0], Meter(ScanConfig(cancelled=lambda: True))))
+    assert resets["n"] == 0, "an already-cancelled attempt must not even reset the target"
+    assert attempt.error == "stopped early: cancelled" and attempt.transcript == ()
+
+
 # -- 3. nothing is sent to a target that has not promised its tools are harmless ------------
 
 
