@@ -278,6 +278,35 @@ def test_a_target_that_refuses_to_be_cancelled_cannot_hold_the_scan_or_the_proce
         assert report.messages_sent == 0
 
 
+def test_open_async_generators_are_finalized_within_the_same_limit():
+    """Fourth review: the loop was closed without letting open async generators clean up."""
+    cleaned = {"quick": False}
+    kept = []
+
+    async def quick():
+        try:
+            yield 1
+        finally:
+            cleaned["quick"] = True
+
+    async def stuck():
+        try:
+            yield 1
+        finally:
+            await asyncio.sleep(30)  # cleanup that never finishes in time
+
+    async def main() -> str:
+        for generator in (quick(), stuck()):
+            await generator.__anext__()
+            kept.append(generator)  # left open on purpose
+        return "done"
+
+    started = time.monotonic()
+    assert run_to_completion(main()) == "done"
+    assert cleaned["quick"], "a generator with ordinary cleanup must get to run it"
+    assert time.monotonic() - started < 2, "and one whose cleanup hangs must not hold the process"
+
+
 def test_an_operation_that_stops_when_asked_is_not_reported_as_left_running():
     class Polite(FakeTarget):
         async def reset(self, fixtures, content=None):

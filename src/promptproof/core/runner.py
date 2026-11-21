@@ -167,6 +167,12 @@ def run_to_completion(main: Coroutine[object, object, _T]) -> _T:
             for task in leftover:
                 if not task.done():
                     task._log_destroy_pending = False  # type: ignore[attr-defined]
+        # Async generators still open (a streaming adapter, say) get to run their cleanup,
+        # under the same limit so that a stuck one cannot hold the process either.
+        try:
+            loop.run_until_complete(asyncio.wait_for(loop.shutdown_asyncgens(), timeout=_ABANDON_GRACE_SECONDS))
+        except (TimeoutError, RuntimeError):
+            pass
         loop.close()
 UNAVAILABLE = "unavailable"
 
