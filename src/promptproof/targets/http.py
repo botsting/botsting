@@ -19,6 +19,14 @@ would. If the bot has tools, the harness reports the calls it recorded during ea
 reply in the chat response (`tool_calls_pointer`). Those records must come from the
 harness's own recorder on the tool, not from anything the model says.
 
+Or, instead of that endpoint, the drop-in harness (`"harness": "sdk"`, see
+promptproof/harness.py): a few lines in the bot's code. Then nothing is reset on the
+bot. Each message carries the canaries and content in a session signed with the key in
+PROMPTPROOF_HARNESS_KEY (or the variable `harness_key_env` names), and the recorded
+calls come back in a header signed with the same key. Before the first message of
+every attempt the scan checks that the harness answers for a signed session, so a bot
+that is not in test mode is never sent an attack.
+
 Safety
 ------
 - Nothing is sent unless the authorization gate allows it: a recorded, unexpired
@@ -61,6 +69,16 @@ from promptproof.core.models import (
     TaskCheck,
     ToolCall,
     ToolRule,
+)
+from promptproof.harness import (
+    CALLS_HEADER,
+    KEY_ENV,
+    READY_PATH,
+    SESSION_HEADER,
+    HarnessError,
+    check_key,
+    make_session_token,
+    read_calls_header,
 )
 from promptproof.targets.base import TargetError
 
@@ -107,6 +125,8 @@ class HttpTargetConfig:
     tenant: str = ""
     timeout_seconds: float = 60.0
     digest: str = ""  # of the description as written, so a replay can tell it changed
+    harness: str = "endpoint"  # "endpoint": the bot has a reset endpoint; "sdk": the drop-in harness
+    harness_key_env: str = KEY_ENV
 
 
 _PLAIN_PATH = re.compile(r"(/[A-Za-z0-9._~-]+)+")
@@ -160,8 +180,21 @@ def parse_config(name: str, raw: Mapping[str, Any], digest: str = "") -> HttpTar
     body = chat.get("body", {"message": "{message}", "session_id": "{session}"})
     if not isinstance(body, Mapping) or not _mentions(body, "{message}"):
         raise TargetConfigError(f"{where}: chat.body must be a JSON object that contains \"{{message}}\" somewhere")
+    harness = raw.get("harness", "endpoint")
+    if harness not in ("endpoint", "sdk"):
+        raise TargetConfigError(f"{where}: harness must be \"endpoint\" or \"sdk\"")
+    key_env = raw.get("harness_key_env", KEY_ENV)
+    if not isinstance(key_env, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key_env):
+        raise TargetConfigError(f"{where}: harness_key_env must be the name of an environment variable")
     reset = raw.get("reset")
-    if not isinstance(reset, Mapping):
+    if harness == "sdk":
+        if reset is not None or chat.get("tool_calls_pointer"):
+            raise TargetConfigError(
+                f"{where}: with the drop-in harness there is no reset endpoint and tool calls come from its signed "
+                "header; remove reset and chat.tool_calls_pointer"
+            )
+        reset = {"path": READY_PATH}
+    elif not isinstance(reset, Mapping):
         raise TargetConfigError(f"{where}: reset must describe the test-harness reset endpoint")
     tool_safety = raw.get("tool_safety")
     if tool_safety not in ("no-tools", "sinks"):
@@ -272,6 +305,8 @@ def parse_config(name: str, raw: Mapping[str, Any], digest: str = "") -> HttpTar
         tenant=str(raw.get("tenant", "") or ""),
         timeout_seconds=float(timeout),
         digest=digest,
+        harness=str(harness),
+        harness_key_env=key_env,
     )
 
 
@@ -420,6 +455,8 @@ class HttpTarget:
             frozenset({config.chat_path, config.reset_path}),
             transport or httpx.AsyncHTTPTransport(retries=0),
         )
+        self._fixtures: dict[str, str] = {}
+        self._content: dict[str, str] = {}
 
     # The description.
 
@@ -441,6 +478,12 @@ class HttpTarget:
     # Talking to it.
 
     async def _post(self, path: str, body: Mapping[str, Any], headers: Mapping[str, str]) -> Any:
+        data, _ = await self._exchange(path, body, headers)
+        return data
+
+    async def _exchange(
+        self, path: str, body: Mapping[str, Any], headers: Mapping[str, str]
+    ) -> tuple[Any, httpx.Headers]:
         async with httpx.AsyncClient(
             transport=self._transport,
             timeout=self.config.timeout_seconds,
@@ -453,6 +496,7 @@ class HttpTarget:
                         raise TargetError(f"{path} answered with a redirect; redirects are not followed")
                     if not 200 <= response.status_code < 300:
                         raise TargetError(f"{path} answered HTTP {response.status_code}")
+                    answered = response.headers
                     data = b""
                     async for chunk in response.aiter_bytes():
                         data += chunk
@@ -461,14 +505,52 @@ class HttpTarget:
             except httpx.HTTPError as exc:
                 raise TargetError(f"could not reach {path}: {type(exc).__name__}: {exc}") from exc
         if not data:
-            return None
+            return None, answered
         try:
-            return json.loads(data)
+            return json.loads(data), answered
         except ValueError:
-            return data.decode("utf-8", "replace")
+            return data.decode("utf-8", "replace"), answered
+
+    def harness_key(self) -> str:
+        key = os.environ.get(self.config.harness_key_env)
+        if not key:
+            raise TargetError(f"environment variable {self.config.harness_key_env} is not set (the drop-in harness key)")
+        try:
+            return check_key(key)
+        except HarnessError as exc:
+            raise TargetError(str(exc)) from exc
+
+    def session_headers(self, session_id: str) -> dict[str, str]:
+        try:
+            token = make_session_token(
+                self.harness_key(),
+                session_id,
+                self._fixtures,
+                self._content,
+                lifetime_seconds=self.config.timeout_seconds + 60,
+            )
+        except HarnessError as exc:
+            raise TargetError(str(exc)) from exc
+        return {SESSION_HEADER: token}
+
+    def harness_calls(self, session_id: str, headers: httpx.Headers) -> tuple[ToolCall, ...]:
+        try:
+            return _tool_calls(read_calls_header(self.harness_key(), session_id, headers.get(CALLS_HEADER)))
+        except HarnessError as exc:
+            raise TargetError(str(exc)) from exc
 
     async def reset(self, fixtures: Mapping[str, str], content: Mapping[str, str] | None = None) -> None:
-        await self._post(self.config.reset_path, {"fixtures": dict(fixtures), "content": dict(content or {})}, {})
+        if self.config.harness != "sdk":
+            await self._post(self.config.reset_path, {"fixtures": dict(fixtures), "content": dict(content or {})}, {})
+            return
+        self._fixtures, self._content = dict(fixtures), dict(content or {})
+        # Nothing is reset on the bot. Check that it is in test mode before anything is sent to it.
+        probe = uuid.uuid4().hex
+        try:
+            _, headers = await self._exchange(self.config.reset_path, {}, self.session_headers(probe))
+            self.harness_calls(probe, headers)
+        except TargetError as exc:
+            raise TargetError(f"the drop-in harness did not confirm test mode, so nothing was sent: {exc}") from exc
 
     async def open_session(self, principal: str) -> HttpSession:
         found = self.config.principals.get(principal)
@@ -487,7 +569,9 @@ class HttpSession:
         config = self._target.config
         body = {**_fill(config.chat_body, text, self._session), **dict(self._principal.body)}
         headers = {name: _env(value) for name, value in self._principal.headers.items()}
-        data = await self._target._post(config.chat_path, body, headers)
+        if config.harness == "sdk":
+            headers.update(self._target.session_headers(self._session))
+        data, answered = await self._target._exchange(config.chat_path, body, headers)
         try:
             reply = resolve_pointer(data, config.reply_pointer)
         except KeyError as exc:
@@ -495,7 +579,9 @@ class HttpSession:
         if not isinstance(reply, str):
             raise TargetError(f"the reply at {config.reply_pointer or 'the top level'} is not text")
         calls: tuple[ToolCall, ...] = ()
-        if config.tool_calls_pointer:
+        if config.harness == "sdk":
+            calls = self._target.harness_calls(self._session, answered)
+        elif config.tool_calls_pointer:
             try:
                 calls = _tool_calls(resolve_pointer(data, config.tool_calls_pointer))
             except KeyError:

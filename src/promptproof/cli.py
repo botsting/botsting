@@ -373,6 +373,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     register_seal(commands)
 
+    key = commands.add_parser("harness-key", help="make a key for the drop-in test harness (promptproof.harness)")
+    key.set_defaults(handler=_harness_key)
+
     practice = commands.add_parser(
         "practice-server",
         help="serve the practice bot over HTTP on this machine, to try the HTTP adapter",
@@ -386,6 +389,18 @@ def build_parser() -> argparse.ArgumentParser:
     )  # fmt: skip
     practice.set_defaults(handler=_practice_server)
     return parser
+
+
+def _harness_key(args: argparse.Namespace) -> int:
+    from promptproof.harness import KEY_ENV, new_key
+
+    print(new_key())
+    print(
+        f"Set this as {KEY_ENV} on the staging or test deployment only, and in the environment where you run "
+        "the scan. Never set it in production.",
+        file=sys.stderr,
+    )
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:

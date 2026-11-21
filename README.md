@@ -85,6 +85,33 @@ uv run promptproof scan --target http:practice --html reports/practice.html
 
 `--write-config` adds the practice bot to `promptproof.targets.json`, which is a working example of the format.
 
+### The drop-in harness (Python bots)
+
+Instead of writing the reset endpoint and recorders yourself, add a few lines to the bot:
+
+```python
+import promptproof.harness as pp
+
+app = pp.wrap(app)                         # FastAPI/Starlette (ASGI) or Flask/Django (WSGI)
+
+@pp.action("issue_refund")                 # on the function that does the deed, after your own checks
+def issue_refund(order_id: str, amount: float): ...
+
+prompt = BASE_PROMPT + pp.planted("admin_code")              # where a fake secret lives in a test
+note = pp.planted("bob_note", note) if user == "bob" else note  # or in a test customer's record
+```
+
+Make a key with `promptproof harness-key` and set it as `PROMPTPROOF_HARNESS_KEY` on the staging deployment and where you run the scan. In the target description, write `"harness": "sdk"` and leave out `reset` and `tool_calls_pointer`.
+
+- Nothing changes unless a request carries a Promptproof session signed with that key. Real users, even on staging, get the bot exactly as written.
+- In a test session, `planted` returns that session's fake secret. Nothing is written to your database, so no fake users or records are needed.
+- In a test session, a function marked `@pp.action` is recorded and not run. The record goes back to the scan in a signed header, so the model cannot fake it.
+- Before each attempt, the scan asks the harness to confirm test mode. If it does not, nothing is sent.
+- Set `PROMPTPROOF_CHALLENGE` to the token line from `promptproof authorize` and the harness serves the ownership proof for you.
+- The harness uses only the Python standard library.
+
+Limits: a tool that is not marked cannot be seen, and calls made after a streaming reply has started are not reported.
+
 ## Permission to test
 
 Promptproof sends hostile messages, so it will not send anything to a bot outside its own process without permission on record. The built-in practice bots run in-process and need no permission; every bot reached over HTTP goes through this check.
