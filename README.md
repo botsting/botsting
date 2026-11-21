@@ -70,7 +70,7 @@ promptproof authorize https://staging.example.com --by "Your Name" \
     --scope "the support bot on our staging site" --environment staging --days 30
 ```
 
-This records who authorizes the test, for which exact origin, what it covers and until when (at most 90 days), and prints a token. Serve that token at `https://staging.example.com/.well-known/promptproof-challenge.txt`, then:
+This records who authorizes the test, for which exact origin, what it covers and until when (at most 90 days), and prints a token. Add `--tool NAME` for each tool the scan may exercise, and `--agent` or `--tenant` to limit it to one bot or account. Serve the token as plain text (`text/plain`) at `https://staging.example.com/.well-known/promptproof-challenge.txt`, then:
 
 ```
 promptproof authorize --verify https://staging.example.com
