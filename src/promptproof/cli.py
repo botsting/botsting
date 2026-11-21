@@ -144,6 +144,11 @@ def _scan(args: argparse.Namespace) -> int:
 
         _write(Path(args.markdown), render_markdown(report, str(out)))
         print(f"Readable report: {args.markdown}")
+    if args.html:
+        from promptproof.report_html import render_html
+
+        _write(Path(args.html), render_html(report, str(out)))
+        print(f"Report to open in a browser: {args.html}")
     for finding in report.findings:
         print(f"Replay {finding.id}: {replay_command(str(out), finding.id)}")
     return {
@@ -219,6 +224,7 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--target", required=True, help="for example toy:vulnerable or toy:fixed?model=ollama:llama3.2")
     scan.add_argument("--out", default="reports/scan.promptproof.json", help="where to write the JSON report")
     scan.add_argument("--markdown", help="also write a readable report to this path")
+    scan.add_argument("--html", help="also write a self-contained report to open in a browser or print")
     scan.add_argument("--discovery-runs", type=int, default=1, help="attempts per attack while searching")
     scan.add_argument("--replays", type=int, default=5, help="replays of each attack that worked")
     scan.add_argument("--max-messages", type=int, default=5000, help="stop after sending this many messages")
