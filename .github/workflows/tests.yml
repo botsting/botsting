@@ -23,6 +23,7 @@ jobs:
           node-version: "22"
       - run: python -m pip install -e . pytest
       - run: python -m pytest -q
+      - run: node --test js/harness/test/
   practice-scan:
     # The action, run on the built-in practice bots: the vulnerable one must be caught and the
     # fixed one must come out clean. Nothing leaves the runner.
