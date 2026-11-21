@@ -378,7 +378,9 @@ def _number(value: Any) -> float | None:
 # run id -> tool -> [real calls so far, {argument: sum so far}]. In this process only.
 _ledger: dict[str, dict[str, tuple[int, dict[str, float]]]] = {}
 _ledger_lock = threading.Lock()
+_run_first_seen: dict[str, float] = {}
 _MAX_RUNS_REMEMBERED = 64
+_RUN_MEMORY_SECONDS = 24 * 3600.0  # far longer than any scan; a run's count is never dropped while it could go on
 
 
 def _live_switch() -> frozenset[str]:
@@ -411,9 +413,17 @@ def _may_run(session: _Session, tool: str, cap: Cap | None, arguments: Mapping[s
             return False, f"{name} is not a number of 0 or more, so the run's total cannot be checked"
         sums[name] = value
     with _ledger_lock:
-        run = _ledger.setdefault(session.run, {})
-        while len(_ledger) > _MAX_RUNS_REMEMBERED:
-            del _ledger[next(iter(_ledger))]
+        now = time.monotonic()
+        if session.run not in _ledger:
+            for old in [r for r, seen in _run_first_seen.items() if now - seen > _RUN_MEMORY_SECONDS]:
+                _ledger.pop(old, None)
+                _run_first_seen.pop(old, None)
+            if len(_ledger) >= _MAX_RUNS_REMEMBERED:
+                # Forgetting a recent run would hand it a fresh allowance. Refuse the new one instead.
+                return False, "too many test runs in the last day for this process to keep count of; nothing more runs for real"
+            _ledger[session.run] = {}
+            _run_first_seen[session.run] = now
+        run = _ledger[session.run]
         calls, totals = run.get(tool, (0, {}))
         if calls + 1 > cap.calls:
             return False, f"the run's limit of {cap.calls} real call(s) to {tool} is used up"

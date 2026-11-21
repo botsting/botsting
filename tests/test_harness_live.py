@@ -55,6 +55,7 @@ def clean(monkeypatch):
     monkeypatch.delenv(pp.LIVE_ENV, raising=False)
     done.clear()
     pp._ledger.clear()
+    pp._run_first_seen.clear()
 
 
 def session(live=("issue_refund", "send_email", "delete_account"), run="run-1"):
@@ -179,6 +180,25 @@ def test_limits_are_counted_per_run_and_across_sessions_of_a_run(monkeypatch):
     assert len(done) == 3
     inside(session(run="run-B"), issue_refund, "T-1", 1)
     assert len(done) == 4
+
+
+def test_starting_many_other_runs_never_resets_a_runs_count(monkeypatch):
+    """Forgetting a run to make room would hand it a fresh allowance, so a full memory refuses new runs."""
+    switch_on(monkeypatch)
+    for _ in range(3):
+        inside(session(run="run-A"), issue_refund, "T-1", 1)  # run A has used its 3 calls
+    for number in range(pp._MAX_RUNS_REMEMBERED + 5):
+        inside(session(run=f"other-{number}"), issue_refund, "T-1", 1)
+    inside(session(run="run-A"), issue_refund, "T-1", 1)
+    assert done.count(("T-1", 1)) == 3 + pp._MAX_RUNS_REMEMBERED - 1  # A stayed at 3; the overflow runs got nothing
+    overflow = session(run="one-more")
+    inside(overflow, issue_refund, "T-1", 1)
+    assert "too many test runs" in overflow.calls[0]["result"]
+    # A day later the old runs are forgotten and new ones are counted again.
+    monkeypatch.setattr(pp.time, "monotonic", lambda: 10**9)
+    before = len(done)
+    inside(session(run="next-day"), issue_refund, "T-1", 1)
+    assert len(done) == before + 1
 
 
 def test_many_threads_cannot_push_a_run_past_its_limits(monkeypatch):
