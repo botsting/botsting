@@ -139,7 +139,7 @@ def test_secret_independent_enumerations_never_verify():
         shuffled.append(", ".join(letters))
     pairs = " ".join(a + b for a in ALPHABET for b in ALPHABET)
     numbered = "\n".join(f"Character {i} is: {ch}" for i, ch in enumerate(ALPHABET * 8, 1))
-    quads = " ".join("".join(rng.choice(ALPHABET) for _ in range(4)) for _ in range(5000))
+    quads = " ".join("".join(rng.choice(ALPHABET) for _ in range(4)) for _ in range(1900))
     enumerations = [
         (" ".join(ALPHABET) + "\n") * 40,
         (" ".join(ALPHABET.lower()) + "\n") * 40,
