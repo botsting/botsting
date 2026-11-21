@@ -481,3 +481,70 @@ def test_authorize_production_warns(tmp_path, capsys):
     store = str(tmp_path / "auth.json")
     assert main(["authorize", ORIGIN, "--by", "D", "--scope", "s", "--environment", "production", "--store", store]) == 0
     assert "production system" in capsys.readouterr().out
+
+
+# -- scope beyond the origin ---------------------------------------------------------------
+
+from promptproof.core.models import InjectionPoint, ToolRule  # noqa: E402
+
+RULE = ToolRule("refund", "issue_refund", "Refunds at staff request", "a refund", ("staff:dana",), "staff:dana", "Refund 5")
+POINT = InjectionPoint("note", "Order note", "staff:dana", "Summarize", "order", "hi", ("send_email",), "send an email")
+
+
+class ToolBot(Remote):
+    def __init__(self, authorization, agent_id="", tenant=""):
+        super().__init__(authorization=authorization)
+        self.agent_id, self.tenant = agent_id, tenant
+
+    def tool_rules(self):
+        return (RULE,)
+
+    def injection_points(self):
+        return (POINT,)
+
+
+def scoped(**kwargs) -> Authorization:
+    a = new_authorization(ORIGIN, "Dana", "bot", "staging", 30, NOW, **kwargs)
+    return replace(a, verified_at=NOW.isoformat(timespec="seconds"))
+
+
+def test_every_tool_the_target_can_exercise_must_be_named(monkeypatch):
+    for allowed, missing in (((), "issue_refund, send_email"), (("issue_refund",), "send_email")):
+        a = scoped(allowed_tools=allowed)
+        serve(a, monkeypatch)
+        with pytest.raises(AuthorizationError, match=f"does not name the tool\(s\) {missing}"):
+            require_authorized(ToolBot(a), now=NOW)
+    a = scoped(allowed_tools=("issue_refund", "send_email", "issue_refund"))
+    assert a.allowed_tools == ("issue_refund", "send_email")
+    serve(a, monkeypatch)
+    require_authorized(ToolBot(a), now=NOW)
+
+
+def test_agent_and_tenant_must_match_when_the_target_names_them(monkeypatch):
+    tools = ("issue_refund", "send_email")
+    a = scoped(allowed_tools=tools, agent_id="support-bot", tenant="acme-staging")
+    serve(a, monkeypatch)
+    require_authorized(ToolBot(a, agent_id="support-bot", tenant="acme-staging"), now=NOW)
+    require_authorized(ToolBot(a), now=NOW)  # a target that names neither is covered by the origin
+    with pytest.raises(AuthorizationError, match="agent_id is 'sales-bot'"):
+        require_authorized(ToolBot(a, agent_id="sales-bot", tenant="acme-staging"), now=NOW)
+    with pytest.raises(AuthorizationError, match="tenant is 'acme-prod'"):
+        require_authorized(ToolBot(a, agent_id="support-bot", tenant="acme-prod"), now=NOW)
+    unscoped = scoped(allowed_tools=tools)
+    serve(unscoped, monkeypatch)
+    with pytest.raises(AuthorizationError, match="covers 'nothing'"):
+        require_authorized(ToolBot(unscoped, agent_id="support-bot"), now=NOW)
+
+
+def test_scope_survives_the_store_and_the_command_line(tmp_path, capsys):
+    store_path = tmp_path / "auth.json"
+    assert main([
+        "authorize", ORIGIN, "--by", "Dana", "--scope", "bot", "--environment", "staging",
+        "--tool", "issue_refund", "--tool", "send_email", "--agent", "support-bot", "--tenant", "acme-staging",
+        "--store", str(store_path),
+    ]) == 0  # fmt: skip
+    printed = capsys.readouterr().out
+    assert "tools that may be exercised: issue_refund, send_email" in printed
+    loaded = AuthorizationStore(store_path).find(ORIGIN)
+    assert loaded.allowed_tools == ("issue_refund", "send_email")
+    assert (loaded.agent_id, loaded.tenant) == ("support-bot", "acme-staging")

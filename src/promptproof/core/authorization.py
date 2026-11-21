@@ -77,6 +77,11 @@ class Authorization:
     expires_at: str  # ISO 8601, UTC
     token: str  # random; published by the origin to show control
     verified_at: str = ""  # when the proof was last seen in place; empty until then
+    # Narrower scope. Control of a site is not permission to fire every tool behind it,
+    # or to test every bot and customer account it serves.
+    allowed_tools: tuple[str, ...] = ()  # every tool the target declares must be named here
+    agent_id: str = ""  # if the target names its agent, it must be this one
+    tenant: str = ""  # if the target names its tenant or account, it must be this one
 
     @property
     def needs_proof(self) -> bool:
@@ -134,9 +139,13 @@ def new_authorization(
     environment: str,
     days: int,
     now: datetime | None = None,
+    allowed_tools: Iterable[str] = (),
+    agent_id: str = "",
+    tenant: str = "",
 ) -> Authorization:
     now = now or datetime.now(UTC)
     normalized = normalize_origin(origin)
+    tools = tuple(dict.fromkeys(t.strip() for t in allowed_tools if t.strip()))
     if not authorized_by.strip():
         raise ValueError("name the person who authorizes this scan")
     if not scope.strip():
@@ -155,6 +164,9 @@ def new_authorization(
         created_at=now.isoformat(timespec="seconds"),
         expires_at=(now + timedelta(days=days)).isoformat(timespec="seconds"),
         token=secrets.token_urlsafe(32),
+        allowed_tools=tools,
+        agent_id=agent_id.strip(),
+        tenant=tenant.strip(),
     )
 
 
@@ -224,7 +236,10 @@ class AuthorizationStore:
             return []
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
-            return [Authorization(**item) for item in data["authorizations"]]
+            return [
+                Authorization(**{**item, "allowed_tools": tuple(item.get("allowed_tools", ()))})
+                for item in data["authorizations"]
+            ]
         except (OSError, ValueError, KeyError, TypeError) as exc:
             raise AuthorizationError(f"could not read {self.path}: {exc}") from exc
 
@@ -270,6 +285,29 @@ def forget_checks() -> None:
     _seen.clear()
 
 
+def _require_in_scope(target: object, authorization: Authorization) -> None:
+    """The target must not reach beyond what the authorization names."""
+    rules = getattr(target, "tool_rules", None)
+    points = getattr(target, "injection_points", None)
+    tools = {rule.tool for rule in (rules() if callable(rules) else ())}
+    tools |= {tool for point in (points() if callable(points) else ()) for tool in point.forbidden_tools}
+    unnamed = sorted(tools - set(authorization.allowed_tools))
+    if unnamed:
+        raise AuthorizationError(
+            f"the authorization for {authorization.origin} does not name the tool(s) {', '.join(unnamed)}; "
+            "re-authorize with --tool for each tool that may be exercised"
+        )
+    for field in ("agent_id", "tenant"):
+        declared = getattr(target, field, "") or ""
+        allowed = getattr(authorization, field)
+        if declared and declared != allowed:
+            shown = allowed or "nothing"
+            raise AuthorizationError(
+                f"this target's {field} is {declared!r} but the authorization covers {shown!r}; "
+                f"re-authorize with --{field.replace('_id', '')} {declared}"
+            )
+
+
 def require_authorized(target: object, now: datetime | None = None) -> None:
     """Refuse to send anything to `target` unless it is permitted. Called at every entry point.
 
@@ -305,6 +343,7 @@ def require_authorized(target: object, now: datetime | None = None) -> None:
     now = now or datetime.now(UTC)
     if authorization.expired(now):
         raise AuthorizationError(f"the authorization for {normalized} expired at {authorization.expires_at}")
+    _require_in_scope(target, authorization)
     if not authorization.needs_proof:
         return
     if not authorization.verified_at:

@@ -45,6 +45,12 @@ def register(commands: argparse._SubParsersAction) -> None:  # type: ignore[type
     parser.add_argument("--scope", help="what may be tested, in a sentence")
     parser.add_argument("--environment", choices=ENVIRONMENTS, help="which environment the origin is")
     parser.add_argument("--days", type=int, default=30, help=f"how long it lasts, 1 to {MAX_DAYS} days (default 30)")
+    parser.add_argument(
+        "--tool", action="append", default=[], metavar="NAME",
+        help="a tool the scan may exercise (repeat for each); tools not named here cannot be tested",
+    )  # fmt: skip
+    parser.add_argument("--agent", default="", help="the one agent or bot id covered, if the target names one")
+    parser.add_argument("--tenant", default="", help="the one tenant or account covered, if the target names one")
     parser.add_argument("--verify", metavar="ORIGIN", help="check that the origin serves the token, and record it")
     parser.add_argument("--list", action="store_true", help="show the recorded authorizations")
     parser.add_argument("--store", default=str(DEFAULT_STORE), help=f"where they are kept (default {DEFAULT_STORE})")
@@ -69,10 +75,16 @@ def _create(store: AuthorizationStore, args: argparse.Namespace) -> int:
     if missing:
         print(f"error: also give {', '.join(missing)}", file=sys.stderr)
         return EXIT_FAILED
-    authorization = new_authorization(args.origin, args.by, args.scope, args.environment, args.days)
+    authorization = new_authorization(
+        args.origin, args.by, args.scope, args.environment, args.days,
+        allowed_tools=args.tool, agent_id=args.agent, tenant=args.tenant,
+    )  # fmt: skip
     store.add(authorization)
     print(f"Recorded: {authorization.authorized_by} authorizes testing {authorization.origin}")
     print(f"  scope: {authorization.scope}")
+    print(f"  tools that may be exercised: {', '.join(authorization.allowed_tools) or 'none'}")
+    if authorization.agent_id or authorization.tenant:
+        print(f"  agent: {authorization.agent_id or 'any'}; tenant: {authorization.tenant or 'any'}")
     print(f"  environment: {authorization.environment}, until {authorization.expires_at}")
     if authorization.environment == "production":
         print("  Note: this is a production system. Tests send hostile messages and may trigger the bot's tools.")
