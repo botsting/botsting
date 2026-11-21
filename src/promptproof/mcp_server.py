@@ -7,6 +7,7 @@ assistant (Claude Code, Cursor and others) that is connected to it can:
     find_tools             list functions in the project that look like risky tools
     check_description      check a target description and say what is wrong with it
     authorization_status   see whether a person has authorized testing an origin
+    doctor                 check the whole setup step by step and learn what to fix next
     scan                   run a scan and get the result and where the reports are
     read_report            read a finished report
 
@@ -133,8 +134,9 @@ promptproof authorize --verify https://staging.example.com
 promptproof sterile-check --env-file .env.staging   # if available: no production keys on staging
 ```
 
-## 5. Scan
-Call `scan` with target `http:staging`. Read the result with `read_report`. Explain
+## 5. Check, then scan
+Call `doctor` with target `http:staging` after each change: it says which step is not
+passed yet and what fixes it. When it says "Ready", call `scan` with the same target. Read the result with `read_report`. Explain
 each finding to the developer with its transcript, and propose a fix in the app's own
 code (a permission check at the tool or data layer, not a sentence in the prompt).
 Then scan again: a finding is fixed when its replay no longer works.
@@ -293,6 +295,17 @@ def _authorization_status(root: Path, arguments: dict[str, Any]) -> str:
     )
 
 
+def _doctor(root: Path, arguments: dict[str, Any]) -> str:
+    from promptproof.doctor import diagnose
+
+    target = str(arguments.get("target", ""))
+    if not target:
+        raise ToolError("give a target, for example http:staging")
+    lines: list[str] = []
+    diagnose(target, offline=bool(arguments.get("offline", False)), out=lines.append)
+    return "\n".join(lines)
+
+
 def _scan(root: Path, arguments: dict[str, Any]) -> str:
     from promptproof.cli import main
 
@@ -352,6 +365,19 @@ TOOLS: dict[str, tuple[str, dict[str, Any], Callable[[Path, dict[str, Any]], str
         "Say whether a person has authorized testing this origin. This server cannot create an authorization.",
         _text_schema({"origin": {"type": "string", "description": "For example https://staging.example.com"}}, ["origin"]),
         _authorization_status,
+    ),
+    "doctor": (
+        "Check a target's setup step by step (description, credentials, key, authorization, proof of control, the "
+        "harness, legitimate use) and say what to fix next. Sends nothing hostile, and nothing at all without an "
+        "authorization.",
+        _text_schema(
+            {
+                "target": {"type": "string", "description": "For example http:staging"},
+                "offline": {"type": "boolean", "description": "Only checks that need no contact with the bot"},
+            },
+            ["target"],
+        ),
+        _doctor,
     ),
     "scan": (
         "Run a scan and write the reports. Practice bots (toy:vulnerable, toy:fixed) need no permission; any other "

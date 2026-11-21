@@ -119,6 +119,8 @@ Make a key with `promptproof harness-key` and set it as `PROMPTPROOF_HARNESS_KEY
 - Set `PROMPTPROOF_CHALLENGE` to the token line from `promptproof authorize` and the harness serves the ownership proof for you.
 - The harness uses only the Python standard library.
 
+When something is not working, `promptproof doctor --target http:staging` checks the setup step by step (description, credentials, key, authorization, proof of control, the harness, legitimate use) and prints the command or change that fixes the first step not passed. It sends nothing hostile, and nothing at all before an authorization is on record.
+
 Limits:
 
 - A tool that is not marked cannot be seen.
