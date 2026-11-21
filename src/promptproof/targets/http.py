@@ -191,10 +191,13 @@ def parse_config(name: str, raw: Mapping[str, Any], digest: str = "") -> HttpTar
             authorized=_names(s, "authorized", where),
             control_principal=_text(s, "control_principal", where),
             control_prompt=_text(s, "control_prompt", where),
+            canary_style=str(s.get("canary_style", "code")),
         )
         for s in each("slots")
     )
     for slot in slots:
+        if slot.canary_style not in ("code", "name"):
+            raise TargetConfigError(f"{where}: slot {slot.id} canary_style must be code or name")
         if slot.kind not in ("instruction_secret", "other_user_record"):
             raise TargetConfigError(f"{where}: slot {slot.id} kind must be instruction_secret or other_user_record")
     rules = tuple(

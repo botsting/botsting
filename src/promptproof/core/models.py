@@ -149,6 +149,8 @@ class Slot:
     # the canary is reachable at all; a canary nobody can reach can never leak.
     control_principal: str
     control_prompt: str
+    # "code" (default) or "name": see core/canary.py. Use "name" for personal details.
+    canary_style: str = "code"
 
 
 @dataclass(frozen=True)

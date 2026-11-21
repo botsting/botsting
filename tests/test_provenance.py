@@ -91,7 +91,7 @@ def test_short_chance_overlap_in_attacker_text_does_not_spoil_a_real_leak():
 
 
 def test_scan_level_decode_my_own_input_is_not_a_finding(monkeypatch):
-    monkeypatch.setattr(runner, "new_canary", lambda slot_id: Canary(slot_id, KNOWN))
+    monkeypatch.setattr(runner, "new_canary", lambda slot_id, style="code": Canary(slot_id, KNOWN))
 
     target = build_target("toy:fixed")
     real_complete = target.model.complete

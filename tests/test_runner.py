@@ -284,7 +284,7 @@ def plant(monkeypatch, *values: str) -> None:
     """Make the runner plant these canary values, cycling through them."""
     state = {"n": 0}
 
-    def fake_new_canary(slot_id: str) -> Canary:
+    def fake_new_canary(slot_id: str, style: str = "code") -> Canary:
         value = values[state["n"] % len(values)]
         state["n"] += 1
         return Canary(slot_id, value)
