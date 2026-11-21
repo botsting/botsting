@@ -55,6 +55,16 @@ def build_target(spec: str) -> Target:
         raise SpecError("a target spec may contain only letters, digits and the characters : . _ ? = & -")
     head, _, query = spec.partition("?")
     kind, _, variant = head.partition(":")
+    if kind == "http":
+        # A bot reached over HTTP, described by name in promptproof.targets.json.
+        if query or "?" in spec:
+            raise SpecError("http targets take no options; put settings in the targets file")
+        from promptproof.targets.http import TargetConfigError, build_http_target
+
+        try:
+            return build_http_target(variant, spec)
+        except TargetConfigError as exc:
+            raise SpecError(str(exc)) from exc
     try:
         if "?" in spec and not query:
             raise ValueError("'?' must be followed by options such as model=scripted")
@@ -86,4 +96,4 @@ def build_target(spec: str) -> Target:
             f"unknown hardened variant {variant!r}; use 'hardened:keyword', 'hardened:keyword-fixed', "
             "'hardened:multiturn' or 'hardened:multiturn-fixed'"
         )
-    raise SpecError(f"unknown target kind {kind!r}; only 'toy' and 'hardened' are available")
+    raise SpecError(f"unknown target kind {kind!r}; use 'toy', 'hardened' or 'http'")

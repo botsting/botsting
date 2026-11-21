@@ -58,6 +58,7 @@ TOKEN_PREFIX = "promptproof-challenge="
 MAX_DAYS = 90
 RECHECK_SECONDS = 600.0
 _MIN_TOKEN_LENGTH = 32
+_CLOCK_SKEW = timedelta(minutes=5)  # allowance for clocks that disagree a little
 _MAX_PROOF_BYTES = 4096
 _FETCH_SECONDS = 10.0  # for the whole fetch, connection to last byte
 _USER_AGENT = "promptproof-authorization-check"
@@ -469,17 +470,20 @@ def require_authorized(target: object, now: datetime | None = None) -> Authoriza
     if reach == "network" and is_loopback_origin(normalized):
         raise AuthorizationError(f"this target says it is across a network but its origin {normalized} is on this machine")
     if not isinstance(authorization, Authorization):
+        then = "" if is_loopback_origin(normalized) else ", publish its token, and verify it"
         raise AuthorizationError(
-            f"no authorization to test {normalized}. Create one with `promptproof authorize {normalized} ...`, "
-            "publish its token, and verify it"
+            f"no authorization to test {normalized}. Create one with `promptproof authorize {normalized} ...`{then}"
         )
     validate(authorization)
     if authorization.origin != normalized:
         raise AuthorizationError(
             f"the authorization is for {authorization.origin}, not {normalized}; each origin needs its own"
         )
-    if authorization.expired(now or datetime.now(UTC)):
+    now = now or datetime.now(UTC)
+    if authorization.expired(now):
         raise AuthorizationError(f"the authorization for {normalized} expired at {authorization.expires_at}")
+    if _aware(authorization.created_at, "created_at") > now + _CLOCK_SKEW:
+        raise AuthorizationError(f"the authorization for {normalized} is dated {authorization.created_at}, in the future")
     _require_in_scope(target, authorization)
     if not authorization.needs_proof:
         return None

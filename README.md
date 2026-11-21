@@ -61,9 +61,31 @@ Exit codes: `0` no verified violations, `1` violations verified, `2` inconclusiv
 
 Known limits are listed at the end of every report.
 
+## Scanning a bot over HTTP
+
+Any bot with an HTTP chat endpoint can be scanned once it has a small *test harness*: one extra endpoint in its staging or test build that Promptproof calls before every attempt.
+
+```
+POST /your/reset/path   {"fixtures": {"<slot id>": "<fake secret>"}, "content": {"<injection point id>": "<text>"}}
+```
+
+It puts each fake secret where that slot says it lives (the system prompt, a test customer's record), puts each piece of content where the bot will read it, forgets every earlier conversation, and answers 2xx. If the bot has tools, the harness also lists in each chat response the calls its own recorder saw on the tools, and every tool must write to a test sink, never to real customers, mailboxes or money.
+
+The bot is described in `promptproof.targets.json`: where it is, how to talk to it as each user, where its reply is in the response, and what it protects. Credentials are written as `${ENV_VAR}` and read from the environment when the scan runs; they never appear in reports. Requests go only to the described origin and its two paths; redirects are not followed.
+
+To try the whole flow without a real bot, serve the practice bot over HTTP on this machine:
+
+```
+uv run promptproof practice-server --variant vulnerable --port 8765 --write-config
+uv run promptproof authorize http://127.0.0.1:8765 --by "Your Name" --scope "practice bot" --environment test --tool issue_refund
+uv run promptproof scan --target http:practice --html reports/practice.html
+```
+
+`--write-config` adds the practice bot to `promptproof.targets.json`, which is a working example of the format.
+
 ## Permission to test
 
-Promptproof sends hostile messages, so it will not send anything to a bot outside its own process without permission on record. Only the built-in practice bots run in-process today; adapters for bots reached over a network come next, and every one of them goes through this check.
+Promptproof sends hostile messages, so it will not send anything to a bot outside its own process without permission on record. The built-in practice bots run in-process and need no permission; every bot reached over HTTP goes through this check.
 
 ```
 promptproof authorize https://staging.example.com --by "Your Name" \

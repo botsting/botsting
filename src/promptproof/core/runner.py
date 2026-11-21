@@ -252,9 +252,12 @@ class Meter:
             raise _Stop(self.stop_reason)
 
     def guard(self, target: Target) -> None:
-        """From now on, check permission to reach `target` before every operation on it."""
-        if self._guard is None:
-            self._guard = lambda fresh: confirm_permitted(target, fresh)
+        """From now on, check permission to reach `target` before every operation on it.
+
+        Always replaces the previous check: a meter that is reused for another target must
+        never go on checking the first target's permission.
+        """
+        self._guard = lambda fresh: confirm_permitted(target, fresh)
 
     async def start(self, target: Target) -> None:
         """At the start of a scan or replay: fetch the proof of control afresh, within the limits.

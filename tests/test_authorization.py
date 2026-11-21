@@ -749,3 +749,51 @@ def test_a_proof_answered_from_a_cache_is_not_accepted():
     for age in ("86400", "1", "soon"):
         result = check_proof(a, cached(age))
         assert not result.ok and "cache" in result.detail, age
+
+
+# -- the reviewer's last three, found before its provider stopped it --------------------------
+
+
+def test_a_reused_meter_checks_the_new_targets_permission(monkeypatch):
+    from promptproof.core.runner import Meter
+
+    a = verified(now=datetime.now(UTC))
+    serve(a, monkeypatch)
+    meter = Meter()
+    allowed = NetworkBot(a)
+    asyncio.run(run_attempt(allowed, ATTACK, meter))
+    assert allowed.sent
+    stranger = NetworkBot(None)  # no authorization at all
+    attempt = asyncio.run(run_attempt(stranger, ATTACK, meter))
+    assert stranger.sent == [] and attempt.error and "stopped early" in attempt.error
+
+
+def test_expiry_while_the_proof_is_being_fetched_stops_the_operation(monkeypatch):
+    from promptproof.targets import base
+
+    a = verified(now=datetime.now(UTC))
+    serve(a, monkeypatch)
+    state = {"expired": False}
+    real = base.require_authorized
+
+    def expires_once_fetched(target, now=None):
+        if state["expired"]:
+            raise AuthorizationError("the authorization expired")
+        return real(target, now)
+
+    async def fetch_then_expire(authorization, fresh=False):
+        state["expired"] = True
+
+    monkeypatch.setattr(base, "require_authorized", expires_once_fetched)
+    monkeypatch.setattr(base, "confirm_proof", fetch_then_expire)
+    with pytest.raises(NotAuthorizedError, match="expired"):
+        asyncio.run(base.confirm_permitted(NetworkBot(a), fresh=True))
+
+
+def test_a_record_dated_in_the_future_is_refused(monkeypatch):
+    later = NOW + timedelta(days=3650)
+    a = verified(now=later)
+    serve(a, monkeypatch)
+    with pytest.raises(AuthorizationError, match="in the future"):
+        require_authorized(Remote(authorization=a), now=NOW)
+    require_authorized(Remote(authorization=verified(now=NOW + timedelta(minutes=2))), now=NOW)  # small clock skew

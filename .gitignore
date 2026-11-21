@@ -20,3 +20,6 @@ build/
 # Authorizations name real people and the sites they control; they stay on this machine.
 promptproof.authorizations.json
 .promptproof-auth-*
+
+# Descriptions of real bots; may name internal addresses.
+promptproof.targets.json

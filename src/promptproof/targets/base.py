@@ -127,6 +127,8 @@ async def confirm_permitted(target: Target, fresh: bool = False) -> None:
         _require_tool_declaration(target)
         if authorization is not None:
             await confirm_proof(authorization, fresh=fresh)
+            # The fetch takes time; the authorization may have expired while it ran.
+            require_authorized(target)
     except AuthorizationError as exc:
         raise NotAuthorizedError(str(exc)) from exc
 

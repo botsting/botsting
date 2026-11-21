@@ -266,6 +266,33 @@ def _benchmark(args: argparse.Namespace) -> int:
     return EXIT_NO_VERIFIED if report.passed else EXIT_VIOLATIONS
 
 
+def _practice_server(args: argparse.Namespace) -> int:
+    import time
+
+    from promptproof.practice_server import PracticeBot, practice_description, start, write_description
+    from promptproof.targets.http import targets_file
+    from promptproof.targets.registry import build_model
+
+    try:
+        bot = PracticeBot(args.variant, build_model(args.model))
+        server = start(bot, port=args.port)
+    except (SpecError, ValueError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_INCONCLUSIVE
+    port = server.server_address[1]
+    print(f"Practice bot ({args.variant}) listening on http://127.0.0.1:{port}. Press Ctrl+C to stop.")
+    if args.write_config:
+        path = targets_file()
+        write_description(path, "practice", practice_description(port, args.variant))
+        print(f"Described it as target 'practice' in {path}. Scan it with: promptproof scan --target http:practice")
+    try:
+        while True:
+            time.sleep(3600)
+    except KeyboardInterrupt:
+        server.shutdown()
+        return EXIT_NO_VERIFIED
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="promptproof",
@@ -341,6 +368,19 @@ def build_parser() -> argparse.ArgumentParser:
     from promptproof.authorize_cli import register as register_authorize
 
     register_authorize(commands)
+
+    practice = commands.add_parser(
+        "practice-server",
+        help="serve the practice bot over HTTP on this machine, to try the HTTP adapter",
+    )
+    practice.add_argument("--variant", choices=["vulnerable", "hardened", "fixed"], default="vulnerable")
+    practice.add_argument("--port", type=int, default=8765)
+    practice.add_argument("--model", default="scripted", help="scripted, or ollama:<model name>")
+    practice.add_argument(
+        "--write-config", action="store_true",
+        help="add this server as target 'practice' to the targets file (promptproof.targets.json)",
+    )  # fmt: skip
+    practice.set_defaults(handler=_practice_server)
     return parser
 
 
