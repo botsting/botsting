@@ -46,7 +46,7 @@ from datetime import UTC, datetime
 
 from promptproof import __version__
 from promptproof.attacks.strategy import AdaptiveStrategy, Objective, ProbeFeedback, TurnGenerator, objectives_for
-from promptproof.core.auth import Authorization, AuthorizationError, require_authorization
+from promptproof.core.authorization import authorization_summary
 from promptproof.core.canary import Canary, new_canary
 from promptproof.core.matcher import (
     ATTACKER_MIN,
@@ -88,6 +88,7 @@ from promptproof.targets.base import (
     TargetError,
     as_reply,
     injection_points,
+    NotAuthorizedError,
     UnsafeTargetError,
     require_contained_tools,
     tool_rules,
@@ -192,8 +193,6 @@ class ScanConfig:
     # reproduction replays untouched), used for equal-budget comparisons between strategies.
     discovery_message_budget: int | None = None
     discovery_budget_per_objective: int | None = None
-    # Required for any non-local target (proof of control, named authorizer, scope, expiry).
-    authorization: Authorization | None = None
     # Polled before every message. Returning True stops the scan the same way.
     cancelled: Callable[[], bool] | None = field(default=None, compare=False)
 
@@ -504,8 +503,14 @@ class _RunnerProbeChannel:
         title: str,
         max_turns: int = 4,
     ) -> tuple[Attempt, Attack | None]:
-        require_contained_tools(self._target)
-        require_authorization(self._target, self._meter.config.authorization)
+        try:
+            require_contained_tools(self._target)
+        except NotAuthorizedError as exc:
+            # See run_attempt: permission was checked when the scan started and is gone now.
+            self._meter.stop_reason = self._meter.stop_reason or f"authorization no longer valid: {exc}"
+            attempt = Attempt(attack_id, self._objective.id, "none", (), error=f"stopped early: {self._meter.stop_reason}")
+            self.recorded_episodes.append((None, attempt))
+            return attempt, None
         slots = self._target.slots()
         canaries = _fresh(slots)
         transcript: list[Turn] = []
@@ -620,9 +625,15 @@ async def run_attempt(
     generated. That ordering is what guarantees the attacker's words cannot contain them.
     """
     _check_attack(attack)
-    require_contained_tools(target)
     meter = meter or Meter()
-    require_authorization(target, meter.config.authorization)
+    try:
+        require_contained_tools(target)
+    except NotAuthorizedError as exc:
+        # Permission was there when the scan started (it is checked first) and is gone
+        # now, for example because the proof of control was taken down. Stop, send
+        # nothing more, and let the scan report what it had already found.
+        meter.stop_reason = meter.stop_reason or f"authorization no longer valid: {exc}"
+        return Attempt(attack.id, attack.slot_id, "none", (), error=f"stopped early: {meter.stop_reason}")
     slots = target.slots()
     canaries = _fresh(slots)
     transcript: list[Turn] = []
@@ -933,8 +944,11 @@ class Preflight:
 
 async def preflight(target: Target, meter: Meter | None = None) -> Preflight:
     meter = meter or Meter()
-    require_contained_tools(target)
-    require_authorization(target, meter.config.authorization)
+    try:
+        require_contained_tools(target)
+    except NotAuthorizedError as exc:
+        # Every check below then stops before sending anything and reports itself as not checked.
+        meter.stop_reason = meter.stop_reason or f"authorization no longer valid: {exc}"
     statuses = [await _check_slot(target, slot, meter) for slot in target.slots()]
     watched: set[str] = set()  # tools whose recorder was seen to record a legitimate call
     for rule in tool_rules(target):
@@ -1062,7 +1076,6 @@ async def run_scan(
 ) -> ScanReport:
     config = config or ScanConfig()
     _validate(target, attacks)
-    require_authorization(target, config.authorization)
     meter = Meter(config)
     budget = _DiscoveryBudget(config.discovery_message_budget, config.discovery_budget_per_objective)
     started = datetime.now(UTC)
@@ -1338,7 +1351,7 @@ async def run_scan(
         messages_sent=meter.messages,
         tool_calls_recorded=meter.tool_calls,
         discovery_messages_sent=budget.total_used,
-        authorization=config.authorization.summary() if config.authorization is not None else {},
+        authorization=authorization_summary(target),
     )
 
 
@@ -1380,8 +1393,7 @@ async def replay_finding(target: Target, finding: Finding, trials: int, config: 
     meter = Meter(config)
     try:
         require_contained_tools(target)
-        require_authorization(target, meter.config.authorization)
-    except (UnsafeTargetError, AuthorizationError) as exc:
+    except UnsafeTargetError as exc:
         return ReplayResult(make_rate(0, 0), (f"Nothing was sent to the target: {exc}",), {})
     target_config = await _describe(target, meter)
     objective_id = finding.slot_id

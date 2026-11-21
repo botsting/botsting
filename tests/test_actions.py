@@ -260,6 +260,7 @@ def call(accepted: bool = True, tool: str = "send_payment") -> ToolCall:
 
 class FakeTarget:
     spec = "fake"
+    reach = "in-process"
     attacker_principal = "customer:alice"
 
     def __init__(

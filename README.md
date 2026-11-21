@@ -38,7 +38,7 @@ uv run promptproof benchmark --budget-per-objective 8 --replays 3
 
 PyRIT is supported behind the same `AdaptiveStrategy` interface as an optional extra (`uv sync --extra pyrit`).
 
-Non-local targets refuse to start without an explicit, unexpired authorization record (`--auth auth.json`) containing proof of control, named authorizer, exact scope (`agent_id`, `tenant`, `allowed_tools`), and expiry.
+Nothing is sent to a bot outside this process without a recorded, current authorization; see "Permission to test" below.
 
 Replay a finding from a reset state with a fresh secret, or try the same attack on the fixed build:
 
@@ -60,6 +60,25 @@ Exit codes: `0` no verified violations, `1` violations verified, `2` inconclusiv
 - Two rates are reported for every finding: how often the attack worked while searching, and how often the frozen attack worked when replayed from reset. Each has its counts and a 95% Wilson interval.
 
 Known limits are listed at the end of every report.
+
+## Permission to test
+
+Promptproof sends hostile messages, so it will not send anything to a bot outside its own process without permission on record. Only the built-in practice bots run in-process today; adapters for bots reached over a network come next, and every one of them goes through this check.
+
+```
+promptproof authorize https://staging.example.com --by "Your Name" \
+    --scope "the support bot on our staging site" --environment staging --days 30
+```
+
+This records who authorizes the test, for which exact origin, what it covers and until when (at most 90 days), and prints a token. Serve that token at `https://staging.example.com/.well-known/promptproof-challenge.txt`, then:
+
+```
+promptproof authorize --verify https://staging.example.com
+```
+
+The token is fetched again whenever a scan or replay starts, and every ten minutes during a long scan; if it has been taken down, the scan stops and reports what it had found so far. A bot on your own machine (`localhost`, `127.0.0.1`) needs the record but not the token. Authorizations are kept in `promptproof.authorizations.json` in the current folder and are never sent anywhere.
+
+This shows control of what a site serves. It does not show that the person who placed the token owns everything behind it; the named person and the scope are how someone takes responsibility for that. Anyone can remove a check from open-source code; it is on by default.
 
 ## Development
 

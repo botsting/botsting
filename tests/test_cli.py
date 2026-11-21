@@ -62,6 +62,7 @@ class _SaysNo:
     spec = "toy:fixed"
     attacker_principal = "customer:alice"
     tool_safety = "no-tools"
+    reach = "in-process"
 
     def __init__(self, real) -> None:
         self._real = real

@@ -16,3 +16,7 @@ build/
 /PROJECT_BRIEF.md
 /PLAN.md
 /research/
+
+# Authorizations name real people and the sites they control; they stay on this machine.
+promptproof.authorizations.json
+.promptproof-auth-*

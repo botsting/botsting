@@ -17,7 +17,6 @@ from pathlib import Path
 from promptproof import __version__
 from promptproof.attacks.adaptive import LLMAdaptiveStrategy
 from promptproof.attacks.library import default_attacks
-from promptproof.core.auth import AuthorizationError, load_authorization
 from promptproof.core.benchmark import DEFAULT_MARGIN, compare_strategies, render_benchmark_markdown
 from promptproof.core.models import Finding, Rate, ScanReport
 from promptproof.core.runner import ScanConfig, identity_unknown, replay_finding, run_scan, run_to_completion
@@ -117,7 +116,6 @@ def _write(path: Path, text: str) -> None:
 def _scan(args: argparse.Namespace) -> int:
     try:
         target = build_target(args.target)
-        auth = load_authorization(args.auth) if args.auth else None
         limits: dict[str, object] = {
             "discovery_runs": args.discovery_runs,
             "reproduction_trials": args.replays,
@@ -125,7 +123,6 @@ def _scan(args: argparse.Namespace) -> int:
             "max_tool_calls": args.max_tool_calls,
             "max_seconds": args.max_seconds,
             "discovery_budget_per_objective": args.budget_per_objective,
-            "authorization": auth,
         }
         ScanConfig(**limits)  # type: ignore[arg-type]
         attacks = default_attacks(target) if args.strategy in ("static", "both") else []
@@ -137,7 +134,7 @@ def _scan(args: argparse.Namespace) -> int:
                 max_turns=args.max_turns,
                 max_episodes=args.max_episodes,
             )
-    except (SpecError, AuthorizationError, ValueError) as exc:
+    except (SpecError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return EXIT_INCONCLUSIVE
     try:
@@ -193,12 +190,11 @@ def _replay(args: argparse.Namespace) -> int:
         return EXIT_INCONCLUSIVE
     try:
         target = build_target(args.target or report.target)
-        auth = load_authorization(args.auth) if args.auth else None
-    except (SpecError, AuthorizationError) as exc:
+    except SpecError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return EXIT_INCONCLUSIVE
 
-    result = run_to_completion(replay_finding(target, finding, args.trials, ScanConfig(authorization=auth)))
+    result = run_to_completion(replay_finding(target, finding, args.trials))
     verb = "leaked" if finding.kind == "disclosure" else "was violated"
     print(
         f"{finding.id} ({finding.attack_id}) against {target.spec}: {finding.slot_id} {verb} in "
@@ -307,7 +303,6 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--max-messages", type=int, default=5000, help="stop after sending this many messages")
     scan.add_argument("--max-tool-calls", type=int, default=500, help="stop once more than this many tool calls were recorded")
     scan.add_argument("--max-seconds", type=float, default=3600, help="stop after this much time")
-    scan.add_argument("--auth", help="path to an authorization JSON file (required for any non-local target)")
     scan.set_defaults(handler=_scan)
 
     rep = commands.add_parser("replay", help="replay a finding from a reset state with fresh canaries")
@@ -315,7 +310,6 @@ def build_parser() -> argparse.ArgumentParser:
     rep.add_argument("--finding", required=True, help="finding id, for example F1")
     rep.add_argument("--trials", type=int, default=5)
     rep.add_argument("--target", help="replay against a different target, for example the fixed build")
-    rep.add_argument("--auth", help="path to an authorization JSON file (required for any non-local target)")
     rep.set_defaults(handler=_replay)
 
     bench = commands.add_parser(
@@ -343,6 +337,10 @@ def build_parser() -> argparse.ArgumentParser:
     bench.add_argument("--max-seconds", type=float, default=300.0)
     bench.add_argument("--out", help="optional path to write benchmark JSON")
     bench.set_defaults(handler=_benchmark)
+
+    from promptproof.authorize_cli import register as register_authorize
+
+    register_authorize(commands)
     return parser
 
 

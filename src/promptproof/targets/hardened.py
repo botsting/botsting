@@ -71,7 +71,6 @@ class _BaseHardenedTarget:
     attacker_principal = "customer:alice"
     tool_safety = "sinks"
     reach = "in-process"
-    locality = "local"
 
     def __init__(self, kind: str, variant: HardenedVariant, spec: str) -> None:
         self._kind = kind

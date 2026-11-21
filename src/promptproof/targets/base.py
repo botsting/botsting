@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Protocol
 
+from promptproof.core.authorization import AuthorizationError, require_authorized
 from promptproof.core.models import InjectionPoint, Reply, Slot, TaskCheck, ToolRule
 
 
@@ -95,12 +96,23 @@ class UnsafeTargetError(ValueError):
     """The target has not promised that an attack cannot cause real actions."""
 
 
-def require_contained_tools(target: Target) -> None:
-    """Refuse a target unless it declares that it has no tools, or that all of them are recording sinks.
+class NotAuthorizedError(UnsafeTargetError):
+    """There is no valid authorization to send anything to this target."""
 
-    Called at every entry point that sends anything to a target. A target that omits
-    the declaration is refused: saying nothing about tools is not the same as having none.
+
+def require_contained_tools(target: Target) -> None:
+    """The gate in front of every entry point that sends anything to a target.
+
+    Refuses a target unless (1) it is allowed to be reached at all: it runs in this
+    process, or there is a current, named authorization for exactly where it runs and,
+    across a network, proof of control that is still in place; and (2) it declares that
+    it has no tools, or that all of them are recording sinks. A target that omits either
+    declaration is refused: saying nothing is not the same as being harmless.
     """
+    try:
+        require_authorized(target)
+    except AuthorizationError as exc:
+        raise NotAuthorizedError(str(exc)) from exc
     declared = getattr(target, "tool_safety", None)
     if declared == "sinks":
         return
