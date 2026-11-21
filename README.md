@@ -155,3 +155,19 @@ uv run promptproof check-seal evidence.sealed.zip --seal <the printed seal>
 ```
 
 Share the seal separately from the bundle. A matching seal shows that nothing in the bundle changed since it was sealed, and the check also prints which outbound destinations the egress log shows as allowed and refused. It does not show who made the bundle; signing is a later step.
+
+## Using a report as evidence
+
+Every Markdown and HTML report includes an **About this test** block (tool version, UTC scan dates, who authorized the scan and for which origin and environment, who ran it, and their independence from the target team) and a **Framework coverage** table mapping the objective kinds actually exercised to OWASP Top 10 for LLM Applications (2026), OWASP Top 10 for Agentic Applications (2026), MITRE ATLAS (v2026.10), NIST AI 600-1 (July 2024), and AIUC-1 (Q4 2026). Each verified finding lists the framework entries for its objective kind.
+
+Record who ran the scan and their independence on the command line:
+
+```
+uv run promptproof scan --target http:staging --out runs/scan.promptproof.json \
+    --markdown runs/report.md --html runs/report.html \
+    --tester "Dana Levi, Example Audit" --independence third-party
+```
+
+`--independence` takes `self` (the team that built or operates the target, the default), `internal` (a separate team in the same organization), or `third-party` (an external assessor outside the organization).
+
+The coverage table maps only the objective kinds Promptproof tests and states plainly what the scan did not cover. A report is evidence of what those tests observed; it never claims that a target is compliant, certified, or passed for any framework. Pair the JSON, Markdown, and HTML reports with `promptproof seal` when handing evidence to an auditor or buyer.

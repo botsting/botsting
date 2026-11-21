@@ -123,6 +123,8 @@ def _scan(args: argparse.Namespace) -> int:
             "max_tool_calls": args.max_tool_calls,
             "max_seconds": args.max_seconds,
             "discovery_budget_per_objective": args.budget_per_objective,
+            "tester": args.tester,
+            "independence": args.independence,
         }
         ScanConfig(**limits)  # type: ignore[arg-type]
         attacks = default_attacks(target) if args.strategy in ("static", "both") else []
@@ -330,6 +332,17 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--max-messages", type=int, default=5000, help="stop after sending this many messages")
     scan.add_argument("--max-tool-calls", type=int, default=500, help="stop once more than this many tool calls were recorded")
     scan.add_argument("--max-seconds", type=float, default=3600, help="stop after this much time")
+    scan.add_argument(
+        "--tester",
+        default="",
+        help='who ran this scan, for example "Dana Levi, Example Audit"',
+    )
+    scan.add_argument(
+        "--independence",
+        choices=("self", "internal", "third-party"),
+        default="self",
+        help="independence of the tester from the team that built or operates the target",
+    )
     scan.set_defaults(handler=_scan)
 
     rep = commands.add_parser("replay", help="replay a finding from a reset state with fresh canaries")

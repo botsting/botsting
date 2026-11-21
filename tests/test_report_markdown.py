@@ -1,3 +1,4 @@
+import json
 from dataclasses import replace
 """Tests for render_markdown, using hand-built ScanReport fixtures. No runner imported."""
 
@@ -12,12 +13,19 @@ from promptproof.core.models import (
     TaskStatus,
     Turn,
 )
-from promptproof.report_markdown import HEADLINE_NO_VERIFIED_VIOLATIONS, _fence, render_markdown
+from promptproof.report_markdown import (
+    HEADLINE_NO_VERIFIED_VIOLATIONS,
+    INDEPENDENCE_EXPLANATION,
+    _fence,
+    render_markdown,
+)
 
-BANNED_WORDS = ("safe", "secure", "clean", "certified", "passed")
+BANNED_WORDS = ("safe", "secure", "clean", "certified", "passed", "compliant")
 
 SECTION_ORDER = (
+    "## About this test",
     "## What was tested",
+    "## Framework coverage",
     "## What was protected",
     "## Normal-task checks",
     "## Verified findings",
@@ -304,6 +312,13 @@ def test_metadata_cannot_add_markup() -> None:
         findings=(finding,),
         inconclusive_reasons=(f"reason {image}\n## injected",),
         target_config={f"key {image}": f"value {image}"},
+        tester=f"Dana Levi {image}\n## injected",
+        authorization={
+            "authorized_by": f"Dana Levi {image}",
+            "origin": f"https://staging.example.com {image}",
+            "environment": f"staging {image}",
+            "scope": f"bot {image}",
+        },
     )
     outside = _structure_outside_fences(render_markdown(report))
     for line in outside:
@@ -352,7 +367,9 @@ def test_every_section_heading_survives_after_findings_and_suspected() -> None:
     outside = _structure_outside_fences(render_markdown(report))
     headings = [line for line in outside if line.startswith("## ")]
     assert headings == [
+        "## About this test",
         "## What was tested",
+        "## Framework coverage",
         "## What was protected",
         "## Normal-task checks",
         "## Verified findings",
@@ -380,3 +397,97 @@ def test_untrusted_details_cannot_add_markup() -> None:
         opener = line.index("``` reply was [click](http://evil.example)")
         assert line.count("```", opener) == 2
     assert not any(line.startswith("## injected") for line in lines)
+
+
+# --- Audit evidence: About this test, coverage table, per-finding frameworks, compat -----
+
+
+def test_about_this_test_and_coverage_table_and_finding_frameworks() -> None:
+    report = make_report(
+        status="violations_verified",
+        slots=(
+            SlotStatus(
+                slot_id="system-prompt",
+                kind="instruction_secret",
+                description="The staff discount code in the system prompt.",
+                authorized=("staff:dana",),
+                state="reachable",
+                judged_attempts=10,
+            ),
+            SlotStatus(
+                slot_id="bob-note",
+                kind="other_user_record",
+                description="Another customer's note.",
+                authorized=("customer:bob",),
+                state="reachable",
+                judged_attempts=3,
+            ),
+        ),
+        findings=(make_finding(),),
+        tester="Dana Levi, Example Audit",
+        independence="third-party",
+        authorization={
+            "reach": "network",
+            "origin": "https://staging.example.com",
+            "authorized_by": "Dana Levi",
+            "environment": "staging",
+            "scope": "support bot",
+        },
+    )
+    text = render_markdown(report)
+    assert "## About this test" in text
+    assert "- Tool version: 0.0.1" in text
+    assert "- Scan dates: 2026-11-21T10:00:00Z to 2026-11-21T10:05:00Z (UTC)" in text
+    assert "authorized by Dana Levi for origin ` https://staging.example.com ` in ` staging ` environment" in text
+    assert "- Tester: Dana Levi, Example Audit" in text
+    assert "- Independence: ` third-party `" in text
+    assert INDEPENDENCE_EXPLANATION in text
+
+    assert "## Framework coverage" in text
+    assert "| Objective kind | Framework entries | Attempts judged | Result |" in text
+    assert "| Leak of an instruction secret |" in text
+    assert "| 10 | proven finding |" in text
+    assert "| Leak of another user's record |" in text
+    assert "| 3 | no verified violation |" in text
+    assert "This scan did not cover" in text
+
+    # Per-finding framework entries appear inside the finding section.
+    finding_section = text[text.index("### F-001:") : text.index("#### Transcript")]
+    assert "- Framework entries:" in finding_section
+    assert "LLM08:2026" in finding_section
+    assert "AML.T0085.003" in finding_section
+    assert "MS-2.7-007" in finding_section
+    assert "A008" in finding_section
+    assert_no_banned_words(text)
+
+
+def test_default_tester_and_independence_and_json_round_trip() -> None:
+    report = make_report(tester="Dana Levi, Internal Security", independence="internal")
+    raw = json.dumps(report.to_dict())
+    loaded = ScanReport.from_dict(json.loads(raw))
+    assert loaded.tester == "Dana Levi, Internal Security"
+    assert loaded.independence == "internal"
+
+    default_text = render_markdown(make_report())
+    assert "- Tester: not stated" in default_text
+    assert "- Independence: ` self `" in default_text
+    assert INDEPENDENCE_EXPLANATION in default_text
+    assert_no_banned_words(default_text)
+
+
+def test_old_report_json_without_audit_fields_still_loads_and_renders() -> None:
+    legacy = make_report(status="violations_verified", findings=(make_finding(),)).to_dict()
+    legacy.pop("tester", None)
+    legacy.pop("independence", None)
+    legacy.pop("authorization", None)
+    for slot in legacy["slots"]:
+        slot.pop("judged_attempts", None)
+    loaded = ScanReport.from_dict(json.loads(json.dumps(legacy)))
+    assert loaded.tester == ""
+    assert loaded.independence == "self"
+    text = render_markdown(loaded)
+    assert "## About this test" in text
+    assert "- Tester: not stated" in text
+    assert "- Independence: ` self `" in text
+    assert "## Framework coverage" in text
+    assert_no_banned_words(text)
