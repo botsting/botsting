@@ -388,3 +388,56 @@ def test_claude_pre_tool_use_denies_and_records_through_sdk_dispatch(token):
     assert all(result["permissionDecisionReason"] for result in results[1:])
     assert arguments(calls) == [("Refund", {"order": "T-1"}), ("FutureTool", {"order": "T-1"})]
     assert effects == ["Lookup"]
+
+
+# -- after the third review --------------------------------------------------------------------
+
+
+def test_a_partial_of_an_async_function_is_guarded_as_async(token):
+    """On Python 3.11 inspect does not see through the partial; the stand-in must still be awaitable."""
+    from functools import partial
+
+    effects = []
+
+    async def send_email(prefix, to):
+        effects.append((prefix, to))
+        return "sent"
+
+    tools = guard({"send_email": partial(send_email, "re:")})
+    assert asyncio.run(tools["send_email"]("qa@example.com")) == "sent" and effects == [("re:", "qa@example.com")]
+    effects.clear()
+    result, session = in_session(token, lambda: asyncio.run(tools["send_email"]("qa@example.com")))
+    assert effects == [] and [c["tool"] for c in session.calls] == ["send_email"] and result == {"status": "ok"}
+
+
+def test_a_claude_tool_call_that_arrives_outside_the_test_request_is_blocked_not_run(token, monkeypatch):
+    """The SDK runs callbacks in the context of whoever connected the client. Connected at startup, a
+    call made during a test has no session. It must not run for real in the middle of a test."""
+    claude = pytest.importorskip("claude_agent_sdk")
+    effects = []
+
+    @claude.tool("refund", "Request a refund.", {"amount": int})
+    async def request_refund(args):
+        effects.append(args["amount"])
+        return {"content": [{"type": "text", "text": "refunded"}]}
+
+    (guarded,) = guard_claude_agent([request_refund], server_name="orders")
+    matcher = claude_pre_tool_use(("Refund", "Lookup"), reads=["Lookup"])
+    hook = matcher.hooks[0]
+
+    async def outside():
+        result = await guarded.handler({"amount": 5})
+        refused = await hook({"tool_name": "Refund", "tool_input": {}}, "id-1", None)
+        read = await hook({"tool_name": "Lookup", "tool_input": {}}, "id-2", None)
+        return result, refused, read
+
+    # No test anywhere in the process: everything runs as written.
+    result, refused, read = asyncio.run(outside())
+    assert effects == [5] and result["content"][0]["text"] == "refunded" and refused == {} and read == {}
+    effects.clear()
+    # A test request is in flight, but this call has no session.
+    monkeypatch.setattr(pp, "_in_flight", 1)
+    result, refused, read = asyncio.run(outside())
+    assert effects == [] and result["is_error"] is True and "outside the test request" in result["content"][0]["text"]
+    assert refused["hookSpecificOutput"]["permissionDecision"] == "deny" and read == {}
+    assert "outside the test request" in refused["hookSpecificOutput"]["permissionDecisionReason"]

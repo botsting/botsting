@@ -23,6 +23,13 @@ if TYPE_CHECKING:
 
 
 _STAND_IN = '{"status": "ok"}'
+# The Claude SDK runs its callbacks in the context of whoever connected the client. If that was done at
+# startup, not inside the wrapped request, a call made during a test arrives with no session. Running
+# it as written would carry out a real action in the middle of a test, so it is blocked instead.
+_OUTSIDE = (
+    "Promptproof blocked this tool call: a test is in progress in this process, but the call arrived "
+    "outside the test request. Connect the SDK client inside the wrapped request."
+)
 
 
 def _check_names(names: Iterable[str], configured: Iterable[str], option: str) -> frozenset[str]:
@@ -66,8 +73,11 @@ def _guard_callable(name, function, results, live):
     target = function
     while isinstance(target, partial):
         target = target.func
-    if not inspect.iscoroutinefunction(function) and inspect.iscoroutinefunction(target.__call__):
-        # On Python 3.11 iscoroutinefunction does not recognize async callable instances.
+    if not inspect.iscoroutinefunction(function) and (
+        inspect.iscoroutinefunction(target) or inspect.iscoroutinefunction(target.__call__)
+    ):
+        # On Python 3.11 iscoroutinefunction does not recognize async callable instances,
+        # or a partial of an async function.
         @wraps(function)
         async def invoke(*args, **kwargs):
             return await function(*args, **kwargs)
@@ -204,6 +214,8 @@ def guard_claude_agent(
         @wraps(tool.handler)
         async def handler(arguments):
             if not pp.active():
+                if pp.tests_in_progress():
+                    return {"content": [{"type": "text", "text": _OUTSIDE}], "is_error": True}
                 return await tool.handler(arguments)
             _record(name, arguments, _STAND_IN)
             return {"content": [{"type": "text", "text": _STAND_IN}]}
@@ -228,14 +240,18 @@ def claude_pre_tool_use(
     reason = "Promptproof recorded this tool call and blocked execution."
 
     async def hook(data, tool_use_id, context):
-        if not pp.active() or data["tool_name"] in reads:
+        if data["tool_name"] in reads or not (pp.active() or pp.tests_in_progress()):
             return {}
-        _record(data["tool_name"], data["tool_input"], reason)
+        why = reason
+        if pp.active():
+            _record(data["tool_name"], data["tool_input"], reason)
+        else:
+            why = _OUTSIDE  # no session to record in; never run it in the middle of a test
         return {
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
                 "permissionDecision": "deny",
-                "permissionDecisionReason": reason,
+                "permissionDecisionReason": why,
             }
         }
 

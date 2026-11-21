@@ -135,3 +135,59 @@ def test_production_keys_on_a_test_deployment_stop_it_and_no_value_is_shown(stag
     assert diagnose("http:staging", out=lines.append, env_files=(str(settings),))
     assert any("ok    deployment settings" in line for line in lines)
     assert main(["doctor", "--target", "http:staging", "--offline", "--env-file", str(settings)]) == 0
+
+
+def test_doctor_checks_a_bot_built_in_a_no_code_builder(tmp_path, monkeypatch):
+    """The "inputs" harness needs no key and no harness on the bot; the legitimate-use step is the check."""
+    import json
+    import threading
+    from wsgiref.simple_server import WSGIRequestHandler, make_server
+
+    from promptproof.presets import build
+
+    class Quiet(WSGIRequestHandler):
+        def log_message(self, *args):
+            pass
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PROMPTPROOF_TARGETS_FILE", str(tmp_path / "promptproof.targets.json"))
+    monkeypatch.setenv("DIFY_APP_KEY", "test-key")
+    auth.forget_checks()
+    state = {"phrase": "", "declared": True}
+
+    def dify(environ, start_response):
+        body = json.loads(environ["wsgi.input"].read(int(environ.get("CONTENT_LENGTH") or 0)))
+        value = body["inputs"]["pp_reference"] if state["declared"] else ""  # Dify drops undeclared inputs
+        if "opening hours" in body["query"]:
+            answer = "We are open every day."
+        elif state["phrase"] in body["query"]:
+            answer = f"The internal reference is {value}."
+        else:
+            answer = "I can't share that."
+        data = json.dumps({"answer": answer, "conversation_id": body["conversation_id"] or "conv-1"}).encode()
+        start_response("200 OK", [("Content-Type", "application/json"), ("Content-Length", str(len(data)))])
+        return [data]
+
+    server = make_server("127.0.0.1", 0, dify, handler_class=Quiet)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        origin = f"http://127.0.0.1:{server.server_address[1]}"
+        raw, _, line = build("dify", origin)
+        state["phrase"] = line.split('pass phrase "')[1].split('"')[0]
+        write_description(tmp_path / "promptproof.targets.json", "support", raw)
+        record = new_authorization(origin, "Dana Levi", "the bot", "test", 1, datetime.now(UTC))
+        AuthorizationStore().add(record)
+
+        ready, text = run("http:support")
+        assert not ready and "FIX   normal use" in text  # the REPLACE THIS placeholder was not replaced
+        raw["task_checks"][0].update(prompt="What are your opening hours?", expect_substring="open")
+        write_description(tmp_path / "promptproof.targets.json", "support", raw)
+        ready, text = run("http:support")
+        assert ready and "harness key" not in text and "ok    legitimate use of pp_reference" in text
+
+        state["declared"] = False  # the owner forgot to declare the variable in the builder
+        ready, text = run("http:support")
+        assert not ready and "FIX   legitimate use of pp_reference" in text
+    finally:
+        server.shutdown()
+        server.server_close()

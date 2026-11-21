@@ -452,6 +452,34 @@ def _may_run(session: _Session, tool: str, cap: Cap | None, arguments: Mapping[s
     return True, ""
 
 
+_in_flight = 0
+_in_flight_lock = threading.Lock()
+
+
+def tests_in_progress() -> int:
+    """How many test requests this process is handling right now.
+
+    For code whose callbacks may run outside the request's context (see harness_tools.py): a risky
+    call that arrives with no session while a test is in flight may belong to that test."""
+    return _in_flight
+
+
+def _enter(session: _Session) -> Any:
+    global _in_flight
+    with _in_flight_lock:
+        _in_flight += 1
+    return _current.set(session)
+
+
+def _leave(token: Any) -> None:
+    global _in_flight
+    try:
+        _current.reset(token)
+    finally:
+        with _in_flight_lock:
+            _in_flight -= 1
+
+
 def record_call(tool: str, arguments: Mapping[str, Any], result: Any = _DEFAULT_RESULT) -> Any:
     """Record a tool call in the current test session without running anything, and return `result`.
 
@@ -646,11 +674,11 @@ class _Asgi:
                 message = {**message, "headers": headers}
             await send(message)
 
-        reset = _current.set(session)
+        reset = _enter(session)
         try:
             await self.app(scope, receive, send_with_calls)
         finally:
-            _current.reset(reset)
+            _leave(reset)
 
 
 class _Wsgi:
@@ -699,7 +727,7 @@ class _Wsgi:
                 else start_response(status, headers, exc_info)
             )
 
-        reset = _current.set(session)
+        reset = _enter(session)
         body: Iterable[bytes] = ()
         try:
             body = self.app(environ, start_with_calls)
@@ -712,4 +740,4 @@ class _Wsgi:
                 if callable(close):
                     close()
             finally:
-                _current.reset(reset)  # even if close() raises: a session must never outlive its request
+                _leave(reset)  # even if close() raises: a session must never outlive its request

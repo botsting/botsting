@@ -1000,6 +1000,40 @@ async def _check_tasks(target: Target, meter: Meter) -> list[TaskStatus]:
     return results
 
 
+_REPEATED = "the planted value came back in the reply to an ordinary request"
+
+
+async def _repeated_slots(target: Target, meter: Meter) -> dict[str, str]:
+    """For a target whose fake secrets travel in each request: slots whose value comes back unasked.
+
+    On such a target a bot that repeats its request variables would hand every attacker "the secret",
+    though it is only the attacker's own request coming back and says nothing about what the bot keeps
+    in its instructions. An ordinary request, sent as someone not allowed the value, tells the two apart.
+    """
+    if not getattr(target, "secrets_travel_in_requests", False):
+        return {}
+    found: dict[str, str] = {}
+    for task in target.task_checks():
+        canaries = _fresh(target.slots())
+        try:
+            await meter.reset(target, _values(canaries))
+            session = await meter.open(target, task.principal)
+            reply = await meter.send(session, task.prompt)
+        except (TargetError, _Stop):
+            continue  # the normal-task check reports a target that does not answer
+        for slot in target.slots():
+            if task.principal in slot.authorized or slot.id in found:
+                continue
+            match = find_canary(canaries[slot.id], [reply.text])
+            if match is not None and match.full:
+                found[slot.id] = (
+                    f"{_REPEATED} ({task.id}, sent as {task.principal}). On this target the value travels in "
+                    "each request, so the bot is either repeating its request variables or giving the value to "
+                    "anyone; a finding here could not be told apart from that, so no attack was run on this slot"
+                )
+    return found
+
+
 @dataclass(frozen=True)
 class Preflight:
     slots: tuple[SlotStatus, ...]  # canary slots, then tool rules, then injection points
@@ -1015,6 +1049,11 @@ async def preflight(target: Target, meter: Meter | None = None) -> Preflight:
         # Every check below then stops before sending anything and reports itself as not checked.
         meter.stop_reason = meter.stop_reason or f"authorization no longer valid: {exc}"
     statuses = [await _check_slot(target, slot, meter) for slot in target.slots()]
+    repeated = await _repeated_slots(target, meter)
+    statuses = [
+        _status(s.slot_id, s.kind, s.description, s.authorized, "error", repeated[s.slot_id]) if s.slot_id in repeated else s
+        for s in statuses
+    ]
     watched: set[str] = set()  # tools whose recorder was seen to record a legitimate call
     for rule in tool_rules(target):
         status = await _check_rule(target, rule, meter)
@@ -1119,6 +1158,9 @@ def _validate(target: Target, attacks: Sequence[Attack]) -> None:
             raise ValueError(f"{attack.kind} attack {attack.id} is aimed at {attack.slot_id}, which the target does not declare")
 
 
+REQUEST_BORNE = "sent with each request"  # a target's describe()["secrets"] when the canary travels in requests
+
+
 def _limitations_for(strategy: AdaptiveStrategy | None, target_config: dict[str, str]) -> tuple[str, ...]:
     items = list(LIMITATIONS)
     if strategy is not None:
@@ -1132,6 +1174,14 @@ def _limitations_for(strategy: AdaptiveStrategy | None, target_config: dict[str,
             )
             for item in items
         ]
+    if target_config.get("secrets") == REQUEST_BORNE:
+        items.append(
+            "On this target the fake secret travelled in each chat request, in a variable the bot puts into its "
+            "instructions. A finding shows the bot can be talked into repeating that part of its instructions. "
+            "The scan checked with an ordinary request that the bot does not simply repeat its request "
+            "variables; a bot that repeats them only in some other situation would still produce a finding "
+            "that is not a leak of what it stores."
+        )
     return tuple(items) + _identity_note(target_config)
 
 
@@ -1158,6 +1208,7 @@ async def run_scan(
 
     # Discovery.
     unattributable = {s.slot_id for s in checks.slots if s.kind == "injection_point" and s.state != "reachable"}
+    repeated = {s.slot_id for s in checks.slots if s.state == "error" and s.detail.startswith(_REPEATED)}
     ordered_attacks: list[Attack] = []
     by_attack: dict[str, list[Attempt]] = {}
     all_runs: list[Attempt] = []
@@ -1169,6 +1220,8 @@ async def run_scan(
             # so a tool call under attack could not be pinned on the planted text. Running
             # the attack would only produce a finding nobody should believe.
             continue
+        if attack.slot_id in repeated:
+            continue  # the bot repeats what it is sent: a "leak" would be the request coming back
         if budget.exhausted(attack.slot_id):
             continue
         runs: list[Attempt] = []

@@ -308,7 +308,7 @@ def parse_config(name: str, raw: Mapping[str, Any], digest: str = "") -> HttpTar
     tool_calls_pointer = _pointer(chat.get("tool_calls_pointer"), f"{where}: chat.tool_calls_pointer")
     session_pointer = _pointer(chat.get("session_pointer"), f"{where}: chat.session_pointer")
     if harness == "inputs":
-        _check_inputs(where, body, principals_raw, slots, tool_safety, rules, points)
+        _check_inputs(where, body, principals, slots, tool_safety, rules, points, tasks)
     if tool_safety == "no-tools" and (rules or points or tool_calls_pointer):
         raise TargetConfigError(f"{where}: says no-tools but declares tool rules, injection points or tool calls")
     used = {attacker} | {s.control_principal for s in slots} | {r.control_principal for r in rules}
@@ -348,17 +348,23 @@ def parse_config(name: str, raw: Mapping[str, Any], digest: str = "") -> HttpTar
 def _check_inputs(
     where: str,
     body: Mapping[str, Any],
-    principals: Mapping[str, Any],
+    principals: Mapping[str, Principal],
     slots: tuple[Slot, ...],
     tool_safety: object,
     rules: tuple[ToolRule, ...],
     points: tuple[InjectionPoint, ...],
+    tasks: tuple[TaskCheck, ...],
 ) -> None:
     """What "harness": "inputs" can and cannot stand for. Refused early, so a scan is never quietly empty."""
     if tool_safety != "no-tools" or rules or points:
         raise TargetConfigError(
             f"{where}: with \"harness\": \"inputs\" no tool can be watched, so tool_safety must be \"no-tools\" "
             "with no tool rules or injection points; to test tools, use the drop-in harness"
+        )
+    if not tasks:
+        raise TargetConfigError(
+            f"{where}: with \"harness\": \"inputs\" at least one task_checks entry is needed: an ordinary request "
+            "is how the scan notices a bot that simply repeats its request variables"
         )
     for slot in slots:
         if slot.kind != "instruction_secret":
@@ -367,12 +373,16 @@ def _check_inputs(
                 "(whoever sends the request would see it); use the drop-in harness for that"
             )
         token = "{canary:" + slot.id + "}"
-        everywhere = [body, *(p.get("body", {}) for p in principals.values() if isinstance(p, Mapping))]
-        if not any(_mentions(part, token) for part in everywhere):
-            raise TargetConfigError(
-                f"{where}: slot {slot.id} is never planted: write \"{token}\" in chat.body where the bot's "
-                "variable for it goes"
-            )
+        # The value must travel in EVERY principal's requests, as they are really sent: the chat body with
+        # that principal's own body laid over it. If only the control principal carried it, the control
+        # would pass while no attack ever met the secret, and the scan would call the bot clean.
+        for name, principal in principals.items():
+            if not _mentions({**body, **principal.body}, token):
+                raise TargetConfigError(
+                    f"{where}: slot {slot.id} is not planted in requests sent as {name}: write \"{token}\" in "
+                    "chat.body where the bot's variable for it goes, and do not replace that part of the body "
+                    "in a principal's own body"
+                )
 
 
 def load_config(name: str, path: Path | None = None) -> HttpTargetConfig:
@@ -544,6 +554,9 @@ class HttpTarget:
             transport or httpx.AsyncHTTPTransport(retries=0),
         )
         self.live_actions = config.live_actions
+        # The fake secrets travel in each request. The runner then checks, with an ordinary request, that
+        # the bot does not simply repeat its request variables: on such a bot every attack would "succeed".
+        self.secrets_travel_in_requests = config.harness == "inputs"
         self._run = uuid.uuid4().hex  # the harness counts a run's real actions under this
         self._fixtures: dict[str, str] = {}
         self._content: dict[str, str] = {}
@@ -551,7 +564,10 @@ class HttpTarget:
     # The description.
 
     async def describe(self) -> Mapping[str, str]:
-        return {"target": "http", "name": self.config.name, "origin": self.origin, "description_digest": self.config.digest}
+        about = {"target": "http", "name": self.config.name, "origin": self.origin, "description_digest": self.config.digest}
+        if self.secrets_travel_in_requests:
+            about["secrets"] = "sent with each request"  # runner.REQUEST_BORNE: adds a limitation to the report
+        return about
 
     def slots(self) -> Sequence[Slot]:
         return self.config.slots
@@ -689,6 +705,7 @@ class HttpSession:
             raise TargetError(f"the response has nothing at {config.reply_pointer}") from exc
         if not isinstance(reply, str):
             raise TargetError(f"the reply at {config.reply_pointer or 'the top level'} is not text")
+        sent_as = self._session  # the id this message was signed for, before the bot names the conversation
         if config.session_pointer:
             try:
                 named = resolve_pointer(data, config.session_pointer)
@@ -699,7 +716,7 @@ class HttpSession:
             self._session = named
         calls: tuple[ToolCall, ...] = ()
         if config.harness == "sdk":
-            calls = self._target.harness_calls(self._session, nonce, answered)
+            calls = self._target.harness_calls(sent_as, nonce, answered)
         elif config.tool_calls_pointer:
             try:
                 calls = _tool_calls(resolve_pointer(data, config.tool_calls_pointer))

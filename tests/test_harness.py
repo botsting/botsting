@@ -675,3 +675,64 @@ def test_record_call_is_the_public_way_to_record_from_elsewhere(key):
         {"id": "call-1", "tool": "issue_refund", "arguments": {"amount": "5", "order": '{"id": "A-1"}'},
          "accepted": True, "result": "queued"}
     ]  # fmt: skip
+
+
+# -- after the third review --------------------------------------------------------------------
+
+
+def test_a_bot_that_names_the_conversation_itself_still_has_its_first_record_verified(key):
+    """The record is signed for the id the message was sent under, not the one the bot then hands back."""
+    real_refunds.clear()
+
+    async def bot(scope, receive, send):
+        await receive()
+        issue_refund("A-1", 3)
+        body = json.dumps({"reply": "Done.", "conversation": "named-by-the-bot"}).encode()
+        await send({"type": "http.response.start", "status": 200, "headers": [(b"content-type", b"application/json")]})
+        await send({"type": "http.response.body", "body": body})
+
+    raw = {
+        "origin": "https://bot.example.com",
+        "harness": "sdk",
+        "chat": {
+            "path": "/chat", "body": {"message": "{message}", "conversation": "{session}"},
+            "reply_pointer": "/reply", "session_pointer": "/conversation",
+        },
+        "attacker_principal": "customer:alice",
+        "principals": {"customer:alice": {}},
+        "tool_safety": "sinks",
+    }  # fmt: skip
+    target = HttpTarget(parse_config("bot", raw), "http:bot", None, transport=httpx.ASGITransport(app=pp.wrap(bot)))
+
+    async def talk():
+        await target.reset({})
+        session = await target.open_session("customer:alice")
+        return await session.send("a refund please"), await session.send("another")
+
+    first, second = asyncio.run(talk())
+    assert [c.tool for c in first.tool_calls] == ["issue_refund"] and [c.tool for c in second.tool_calls] == ["issue_refund"]
+    assert real_refunds == []
+
+
+def test_the_harness_knows_when_a_test_request_is_in_flight(key):
+    seen = []
+
+    async def bot(scope, receive, send):
+        seen.append((pp.active(), pp.tests_in_progress()))
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"{}"})
+
+    app = pp.wrap(bot)
+    token = pp.make_session_token(KEY, "s1", {})
+    assert pp.tests_in_progress() == 0
+    post(app, headers={pp.SESSION_HEADER: token})
+    post(app)  # an ordinary request
+    assert seen == [(True, 1), (False, 0)] and pp.tests_in_progress() == 0
+
+    def failing(environ, start_response):
+        raise RuntimeError("the app crashed")
+
+    environ = {"REQUEST_METHOD": "POST", "PATH_INFO": "/chat", "HTTP_PROMPTPROOF_SESSION": token}
+    with pytest.raises(RuntimeError):
+        pp.wrap(failing)(environ, lambda status, headers: None)
+    assert pp.tests_in_progress() == 0 and not pp.active()

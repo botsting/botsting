@@ -220,6 +220,8 @@ def _check_command(args: argparse.Namespace) -> int:
         chain = egress.get("chain", "absent")
         if chain == "intact" and egress.get("closed"):
             print("Outbound log: every line is chained to the one before, and it ends with the trap's stop line.")
+            print("  (This shows no line was edited or dropped on its own. A log rewritten in full before sealing would")
+            print("  also check; the seal shared when the run ended is what rules that out.)")
         elif chain == "intact":
             print("Outbound log: chained, BUT it has no stop line: it may have been cut short.")
         elif chain == "absent":

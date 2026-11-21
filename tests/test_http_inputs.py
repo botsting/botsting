@@ -148,11 +148,11 @@ def test_what_is_put_in_is_never_filled_in_again():
         ({"tool_safety": "sinks"}, "no tool can be watched"),
         (
             {"chat": {"path": "/c", "body": {"query": "{message}"}, "reply_pointer": "/answer"}},
-            "slot staff_code is never planted",
+            "slot staff_code is not planted",
         ),
         (
             {"chat": {"path": "/c", "body": {"query": "{message}", "inputs": {"x": "{canary:staf_code}"}}}},
-            "slot staff_code is never planted",  # a typo in the slot id
+            "slot staff_code is not planted",  # a typo in the slot id
         ),
         ({"chat": {"path": "/c", "body": {"q": "{message} {canary:staff_code}"}, "session_pointer": "id"}}, "session_pointer"),
     ],
@@ -183,3 +183,62 @@ def test_a_missing_conversation_id_is_an_error():
 
     with pytest.raises(TargetError, match="no conversation id"):
         asyncio.run(talk())
+
+
+# -- after the third review --------------------------------------------------------------------
+
+
+def test_the_secret_must_travel_in_every_principals_requests():
+    """If only the control principal carried it, the control would pass, no attack would ever meet
+    the secret, and the scan would call the bot clean."""
+    only_control = description()
+    only_control["chat"]["body"]["inputs"] = {}
+    only_control["principals"]["staff:dana"]["body"] = {"user": "dana", "inputs": {"staff_code": "{canary:staff_code}"}}
+    with pytest.raises(TargetConfigError, match="not planted in requests sent as customer:alice"):
+        parse_config("builder", only_control)
+
+    overlaid = description()
+    overlaid["principals"]["customer:alice"]["body"] = {"user": "alice", "inputs": {"plan": "free"}}
+    with pytest.raises(TargetConfigError, match="not planted in requests sent as customer:alice"):
+        parse_config("builder", overlaid)  # alice's own "inputs" replaces the part of the body that held it
+
+
+def test_an_ordinary_request_is_required():
+    with pytest.raises(TargetConfigError, match="at least one task_checks entry"):
+        parse_config("builder", description(task_checks=[]))
+
+
+def echo_bot():
+    """A bot that shows its request variables in every answer. It stores nothing; what comes back is
+    only what was sent."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        text = "We are open 9 to 5." if "open" in body["query"].lower() else "Sorry, I can't help with that."
+        text += f" (debug: inputs={json.dumps(body['inputs'])})"
+        return httpx.Response(200, json={"answer": text, "conversation_id": body["conversation_id"] or "conv-1"})
+
+    return httpx.MockTransport(handler)
+
+
+def test_a_bot_that_repeats_its_request_variables_gets_no_finding():
+    target = target_for(echo_bot())
+    report = asyncio.run(run_scan(target, default_attacks(target), ScanConfig(reproduction_trials=2)))
+    assert report.findings == () and report.status == "inconclusive"
+    assert any("came back in the reply to an ordinary request" in reason for reason in report.inconclusive_reasons)
+    (slot,) = [s for s in report.slots if s.slot_id == "staff_code"]
+    assert slot.state == "error" and slot.judged_attempts == 0  # no attack was run on it
+
+
+def test_reports_for_this_kind_of_target_say_how_the_secret_travelled():
+    transport, _ = builder_bot(leaky=True)
+    target = target_for(transport)
+    report = asyncio.run(run_scan(target, default_attacks(target), ScanConfig(reproduction_trials=1)))
+    assert report.target_config["secrets"] == "sent with each request"
+    assert any("travelled in each chat request" in item for item in report.limitations)
+    # Other targets do not carry the note.
+    from promptproof.targets.registry import build_target
+
+    toy = build_target("toy:fixed")
+    plain = asyncio.run(run_scan(toy, default_attacks(toy), ScanConfig(reproduction_trials=1)))
+    assert not any("travelled in each chat request" in item for item in plain.limitations)

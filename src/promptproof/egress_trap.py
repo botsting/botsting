@@ -15,9 +15,13 @@ sees only where a tunnel goes, not what is inside it.
 The log is a chain. Every line carries its number and a hash of itself and the line
 before it, the first line records the start and the last line the stop, with the count.
 So a line that is changed, removed, added or reordered afterwards breaks the chain, and
-a log cut short has no closing line. `promptproof seal` checks both and says so. The
-chain shows the log was not edited after it was written; like the seal, it cannot show
-that the program writing it was honest.
+a log cut short has no closing line. `promptproof seal` checks both and says so.
+
+What the chain does not stop: the hashes use no secret, so someone who rewrites the
+whole log and recomputes every hash produces a log that checks. The chain catches a
+partial edit; a full rewrite is caught by the seal, made when the run ended and shared
+separately. Like the seal, the chain cannot show that the program writing the log was
+honest.
 
 Limits, stated in every report that relies on it: this catches traffic that honours
 the proxy settings (ordinary HTTP clients do, unless a program turns that off). It

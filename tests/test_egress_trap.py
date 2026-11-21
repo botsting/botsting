@@ -157,3 +157,18 @@ def test_a_seal_reports_the_state_of_the_chain(tmp_path, capsys):
     assert main(["check-seal", str(tmp_path / "edited.zip")]) == 1
     printed = capsys.readouterr().out
     assert "THE CHAIN IS BROKEN AT LINE 2" in printed and "cannot be relied on" in printed
+
+
+def test_the_chain_catches_a_partial_edit_not_a_full_rewrite(tmp_path):
+    """Pinned on purpose. The hashes use no secret, so a log rewritten in full with every hash
+    recomputed checks. The seal shared when the run ended is what rules that out. If the chain is
+    ever keyed, this test should change with it."""
+    from promptproof.egress_trap import CHAIN_START, chain_hash
+
+    lines, check_chain = a_finished_log(tmp_path)
+    forged, previous = [], CHAIN_START
+    for number, wanted in enumerate([lines[0], {"event": "stopped", "attempts": 0, "at": lines[-1]["at"]}], start=1):
+        entry = {key: value for key, value in wanted.items() if key != "chain"} | {"n": number}
+        entry["chain"] = previous = chain_hash(previous, entry)
+        forged.append(entry)
+    assert check_chain(forged) == ("intact", True)
