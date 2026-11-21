@@ -379,6 +379,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     register_ci(commands, [options])
 
+    from promptproof.mcp_server import register as register_mcp
+
+    register_mcp(commands)
+
     key = commands.add_parser("harness-key", help="make a key for the drop-in test harness (promptproof.harness)")
     key.set_defaults(handler=_harness_key)
 

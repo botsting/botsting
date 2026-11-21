@@ -182,6 +182,18 @@ On GitHub Actions, use the action in this repository:
 
 The readable report appears in the job summary, the reports and the sealed bundle are uploaded as an artifact, and the step's outputs are `status`, `findings`, `seal` and `bundle`. The scan runs on your runner; nothing is sent to Promptproof. The authorization file (`promptproof.authorizations.json`) must be present in the job, for example restored from a secret, because it names the person who allowed the test.
 
+## Let your coding assistant set it up
+
+Promptproof can be connected to a coding assistant (Claude Code, Cursor and others) over the Model Context Protocol:
+
+```
+claude mcp add promptproof -- promptproof mcp
+```
+
+Then ask the assistant to "set up Promptproof for this bot". It can read the setup guide, list functions that look like risky tools, check the target description, run a scan and read the report back to you, proposing each code change for you to approve.
+
+It cannot authorize a test. Permission is a person taking responsibility by name, so you run `promptproof authorize` yourself; without it, the assistant can only scan the built-in practice bots. It reads and writes only inside the folder it was started in. `promptproof guide` prints the same setup guide for people.
+
 ## Development
 
 ```
