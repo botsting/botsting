@@ -7,6 +7,11 @@ Its own digest, the seal, is printed: send it to the customer separately, or put
 the ticket, and the bundle can be checked against it at any time with
 `promptproof check-seal BUNDLE --seal HEX`.
 
+The egress trap's log is a hash chain (see egress_trap.py). The manifest records
+whether the chain was intact and closed when the bundle was sealed, and `check-seal`
+fails if it was broken: a bundle can be exactly what was sealed and still hold a log
+that someone edited first.
+
 What a seal proves, and what it does not: a matching seal shows the bundle is exactly
 what existed when the seal was made and shared. It does not show who made it, or that
 the evidence was complete and honest at that moment. A seal made by the customer's own
@@ -46,24 +51,37 @@ def seal_of(files: list[dict[str, Any]], egress: dict[str, Any] | None) -> str:
 
 
 def _egress_summary(lines: bytes) -> dict[str, Any]:
+    from promptproof.egress_trap import check_chain
+
     allowed: dict[str, int] = {}
     refused: dict[str, int] = {}
     unreadable = 0
+    entries: list[dict[str, Any]] = []
     for raw in lines.splitlines():
         if not raw.strip():
             continue
         try:
             entry = json.loads(raw)
+            if not isinstance(entry, dict):
+                raise TypeError("not an object")
+            entries.append(entry)
+            if "event" in entry:  # the trap's own start and stop lines
+                continue
             target = str(entry["target"])
         except (ValueError, KeyError, TypeError):
             unreadable += 1
             continue
         bucket = allowed if entry.get("allowed") == "true" else refused
         bucket[target] = bucket.get(target, 0) + 1
+    chain, closed = check_chain(entries) if not unreadable else ("broken: unreadable lines", False)
     return {
         "allowed": dict(sorted(allowed.items())),
         "refused": dict(sorted(refused.items())),
         "unreadable_lines": unreadable,
+        # "intact": no line was changed, removed, added or reordered after it was written.
+        # "closed": the log ends with the trap's stop line, so nothing was cut off the end.
+        "chain": chain,
+        "closed": closed,
     }
 
 
@@ -199,6 +217,17 @@ def _check_command(args: argparse.Namespace) -> int:
         refused = ", ".join(f"{k} ({v})" for k, v in egress["refused"].items()) or "none"
         print(f"Outbound traffic allowed: {allowed}")
         print(f"Outbound traffic refused: {refused}")
+        chain = egress.get("chain", "absent")
+        if chain == "intact" and egress.get("closed"):
+            print("Outbound log: every line is chained to the one before, and it ends with the trap's stop line.")
+        elif chain == "intact":
+            print("Outbound log: chained, BUT it has no stop line: it may have been cut short.")
+        elif chain == "absent":
+            print("Outbound log: not chained (an older version wrote it), so edits made before sealing would not show.")
+        else:
+            print(f"Outbound log: THE CHAIN IS {chain.upper()}. The log was changed after it was written.")
+            print("FAILED: the bundle is what was sealed, but its outbound log cannot be relied on.")
+            return 1
     return 0
 
 

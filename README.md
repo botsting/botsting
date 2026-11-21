@@ -222,3 +222,5 @@ uv run promptproof check-seal evidence.sealed.zip --seal <the printed seal>
 ```
 
 Share the seal separately from the bundle. A matching seal shows that nothing in the bundle changed since it was sealed, and the check also prints which outbound destinations the egress log shows as allowed and refused. It does not show who made the bundle; signing is a later step.
+
+The egress trap writes its log as a chain: each line carries a hash of itself and the line before, and the last line records the stop. The check says whether the chain is intact and closed, and fails if a line was changed, removed, added or reordered before sealing.

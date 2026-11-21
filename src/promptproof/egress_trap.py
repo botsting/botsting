@@ -12,6 +12,13 @@ A test sometimes needs one outside service, such as the bot's model API. Name it
 passed through and recorded as allowed. Everything else is still refused. The trap
 sees only where a tunnel goes, not what is inside it.
 
+The log is a chain. Every line carries its number and a hash of itself and the line
+before it, the first line records the start and the last line the stop, with the count.
+So a line that is changed, removed, added or reordered afterwards breaks the chain, and
+a log cut short has no closing line. `promptproof seal` checks both and says so. The
+chain shows the log was not edited after it was written; like the seal, it cannot show
+that the program writing it was honest.
+
 Limits, stated in every report that relies on it: this catches traffic that honours
 the proxy settings (ordinary HTTP clients do, unless a program turns that off). It
 does not see raw TCP connections such as SMTP or a database protocol, so it is used
@@ -20,6 +27,7 @@ together with a check of the bot's open connections, not instead of it.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import socket
 import threading
@@ -27,6 +35,30 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 _MAX_HEADER = 16_384
+CHAIN_START = hashlib.sha256(b"promptproof-egress/1").hexdigest()
+
+
+def chain_hash(previous: str, entry: dict[str, object]) -> str:
+    """The hash that links `entry` (without its own "chain" field) to the line before it."""
+    body = {key: value for key, value in entry.items() if key != "chain"}
+    canonical = json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256((previous + "|" + canonical).encode("ascii")).hexdigest()
+
+
+def check_chain(lines: list[dict[str, object]]) -> tuple[str, bool]:
+    """("absent" | "intact" | "broken at line N", closed). `closed` means the log ends with the trap's own
+    stop line and its count matches, so nothing was cut off the end."""
+    if not any("chain" in line for line in lines):
+        return "absent", False
+    previous = CHAIN_START
+    for number, line in enumerate(lines, start=1):
+        if line.get("n") != number or line.get("chain") != chain_hash(previous, line):
+            return f"broken at line {number}", False
+        previous = str(line["chain"])
+    first, last = lines[0], lines[-1]
+    attempts = sum(1 for line in lines if "event" not in line)
+    closed = first.get("event") == "started" and last.get("event") == "stopped" and last.get("attempts") == attempts
+    return "intact", closed
 
 
 class EgressTrap:
@@ -41,11 +73,14 @@ class EgressTrap:
                 raise ValueError(f"allow entries are host:port, got {item!r}")
         self.allow = frozenset(item.lower() for item in allow)
         self.log_path = Path(log_path)
-        self.attempts: list[dict[str, str]] = []
+        self.attempts: list[dict[str, object]] = []
         self._lock = threading.Lock()
         self._server = socket.create_server((host, port))
         self.port = self._server.getsockname()[1]
         self._stopped = threading.Event()
+        self._lines = 0
+        self._chain = CHAIN_START
+        self._write({"event": "started", "allow": sorted(self.allow)})
         threading.Thread(target=self._serve, daemon=True).start()
 
     def _serve(self) -> None:
@@ -124,11 +159,18 @@ class EgressTrap:
         entry = {"at": datetime.now(UTC).isoformat(timespec="seconds"), "method": method, "target": target}
         if allowed:
             entry["allowed"] = "true"
+        self.attempts.append(self._write(entry))
+
+    def _write(self, entry: dict[str, object]) -> dict[str, object]:
+        """Append one line, numbered and chained to the line before."""
         with self._lock:
-            self.attempts.append(entry)
+            self._lines += 1
+            entry = {"at": datetime.now(UTC).isoformat(timespec="seconds"), **entry, "n": self._lines}
+            entry["chain"] = self._chain = chain_hash(self._chain, entry)
             self.log_path.parent.mkdir(parents=True, exist_ok=True)
             with self.log_path.open("a", encoding="utf-8") as log:
-                log.write(json.dumps(entry) + "\n")
+                log.write(json.dumps(entry) + chr(10))
+            return entry
 
     def proxy_environment(self) -> dict[str, str]:
         """Environment variables that send a program's web traffic here, except to this machine."""
@@ -144,5 +186,8 @@ class EgressTrap:
         }
 
     def stop(self) -> None:
+        if self._stopped.is_set():
+            return
         self._stopped.set()
         self._server.close()
+        self._write({"event": "stopped", "attempts": len(self.attempts)})
