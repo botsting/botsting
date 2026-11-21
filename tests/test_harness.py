@@ -629,3 +629,49 @@ def test_the_ownership_proof_is_only_for_get(monkeypatch):
     monkeypatch.delenv(pp.KEY_ENV, raising=False)
     monkeypatch.setenv(pp.CHALLENGE_ENV, "promptproof-challenge=abc123")
     assert post(pp.wrap(asgi_bot), path=pp.CHALLENGE_PATH).status_code == 404  # the bot's own answer
+
+
+# -- found while building the framework adapters ------------------------------------------------
+
+
+def test_a_session_never_outlives_its_request_even_if_closing_the_body_fails(key):
+    class Body:
+        def __iter__(self):
+            yield b"ok"
+
+        def close(self):
+            raise RuntimeError("the connection was already gone")
+
+    def app(environ, start_response):
+        start_response("200 OK", [])
+        return Body()
+
+    token = pp.make_session_token(KEY, "s1", {})
+    environ = {"REQUEST_METHOD": "POST", "PATH_INFO": "/chat", "HTTP_PROMPTPROOF_SESSION": token}
+    with pytest.raises(RuntimeError):
+        pp.wrap(app)(environ, lambda status, headers: None)
+    assert not pp.active()
+    real_refunds.clear()
+    assert issue_refund("A-1", 5) == {"status": "refunded for real"}  # the next, ordinary request runs as written
+
+
+def test_an_async_stand_in_is_refused_when_the_tool_is_marked():
+    async def later(**arguments):
+        return "queued"
+
+    with pytest.raises(pp.HarnessError, match="not an async function"):
+
+        @pp.action("send_email", result=later)
+        async def send(to: str): ...
+
+
+def test_record_call_is_the_public_way_to_record_from_elsewhere(key):
+    with pytest.raises(pp.HarnessError, match="needs a Promptproof test session"):
+        pp.record_call("issue_refund", {"amount": 5})
+    token = pp.make_session_token(KEY, "s1", {})
+    result, session = in_session(token, pp.record_call, "issue_refund", {"amount": 5, "order": {"id": "A-1"}}, "queued")
+    assert result == "queued"
+    assert session.calls == [
+        {"id": "call-1", "tool": "issue_refund", "arguments": {"amount": "5", "order": '{"id": "A-1"}'},
+         "accepted": True, "result": "queued"}
+    ]  # fmt: skip

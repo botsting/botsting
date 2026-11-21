@@ -452,6 +452,27 @@ def _may_run(session: _Session, tool: str, cap: Cap | None, arguments: Mapping[s
     return True, ""
 
 
+def record_call(tool: str, arguments: Mapping[str, Any], result: Any = _DEFAULT_RESULT) -> Any:
+    """Record a tool call in the current test session without running anything, and return `result`.
+
+    For code that catches tool calls somewhere other than a decorated function, such as a
+    framework's own dispatch (see harness_tools.py). Raises HarnessError outside a test session:
+    the caller decides what to do then, which is normally to run the tool as written."""
+    session = _current.get()
+    if session is None:
+        raise HarnessError("record_call needs a Promptproof test session; check pp.active() first")
+    session.add(
+        {
+            "id": f"call-{len(session.calls) + 1}",
+            "tool": tool,
+            "arguments": {str(k): _text(v) for k, v in arguments.items()},
+            "accepted": True,
+            "result": _text(result),
+        }
+    )
+    return result
+
+
 def action(tool: str, result: Any = _DEFAULT_RESULT, live: Cap | None = None) -> Callable[[F], F]:
     """Mark a function as a risky tool. In a test session it is recorded, not run, and returns
     `result` (or `result(**arguments)` if that is callable). Outside one it runs as written.
@@ -494,6 +515,10 @@ def action(tool: str, result: Any = _DEFAULT_RESULT, live: Cap | None = None) ->
             note = f"not run: {why_not}" if why_not else ""
             record(session, arguments, outcome, note, "capped" if why_not else "")
             return outcome
+
+        if inspect.iscoroutinefunction(result):
+            # Its coroutine would be handed to the bot unawaited, and recorded as "<coroutine object ...>".
+            raise HarnessError(f"{tool}: result= must be a value or a plain function, not an async function")
 
         if inspect.iscoroutinefunction(function):
 
@@ -682,7 +707,9 @@ class _Wsgi:
             # Calls made after start_response cannot be reported; see the module notes.
             return list(body)
         finally:
-            close = getattr(body, "close", None)
-            if callable(close):
-                close()
-            _current.reset(reset)
+            try:
+                close = getattr(body, "close", None)
+                if callable(close):
+                    close()
+            finally:
+                _current.reset(reset)  # even if close() raises: a session must never outlive its request

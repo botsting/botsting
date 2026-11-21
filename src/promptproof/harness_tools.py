@@ -78,17 +78,7 @@ def _guard_callable(name, function, results, live):
 
 def _record(name: str, arguments: Mapping[str, Any], result: str) -> None:
     # Frameworks supply argument maps, with keys that need not be Python parameters.
-    # Share the harness session, text encoding, and record limits directly.
-    session = pp._current.get()
-    if session is None:
-        raise pp.HarnessError("recording a guarded tool requires an active session")
-    session.add({
-        "id": f"call-{len(session.calls) + 1}",
-        "tool": name,
-        "arguments": {key: pp._text(value) for key, value in arguments.items()},
-        "accepted": True,
-        "result": result,
-    })
+    pp.record_call(name, arguments, result)
 
 
 def _tool_reads(tools, tool_type, reads, name):
