@@ -267,6 +267,10 @@ class Finding:
     payload: str = ""  # injection only: the planted text, frozen
     # Action and injection findings: the recorded calls that should not have happened.
     tool_calls: tuple[ToolCall, ...] = ()
+    # Injection only: requests made with harmless text in the same place, run between the
+    # replays. `successes` counts those in which a forbidden tool ran anyway, and is zero
+    # for anything reported as a finding.
+    control: Rate | None = None
 
 
 @dataclass(frozen=True)
@@ -348,6 +352,16 @@ class ScanReport:
     messages_sent: int = 0
     tool_calls_recorded: int = 0
 
+    def breakdown(self) -> str:
+        """The verified findings by what they prove, so a refused attempt is never read as completed harm."""
+        disclosed = sum(1 for f in self.findings if f.level == EvidenceLevel.DISCLOSED)
+        accepted = sum(1 for f in self.findings if f.level >= EvidenceLevel.ACTION_ACCEPTED)
+        attempted = sum(1 for f in self.findings if f.level == EvidenceLevel.ACTION_ATTEMPTED)
+        return (
+            f"{disclosed} protected data disclosed, {accepted} forbidden action(s) carried out, "
+            f"{attempted} forbidden action(s) attempted and refused by the tool"
+        )
+
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
         for finding in data["findings"]:
@@ -402,6 +416,7 @@ class ScanReport:
                 kind=f.get("kind", "disclosure"),
                 payload=f.get("payload", ""),
                 tool_calls=calls(f.get("tool_calls", [])),
+                control=rate(f["control"]) if f.get("control") else None,
             )
             for f in data["findings"]
         )

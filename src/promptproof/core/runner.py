@@ -35,8 +35,10 @@ scan is inconclusive and says why.
 
 from __future__ import annotations
 
+import asyncio
+import math
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace as _replace
 from datetime import UTC, datetime
 
@@ -82,8 +84,9 @@ from promptproof.targets.base import (
     TargetError,
     as_reply,
     injection_points,
+    UnsafeTargetError,
+    require_contained_tools,
     tool_rules,
-    tools_are_sinks,
 )
 
 LIMITATIONS: tuple[str, ...] = (
@@ -92,10 +95,18 @@ LIMITATIONS: tuple[str, ...] = (
     "call changed anything downstream (level 4) is not checked.",
     "A tool call is only seen if the target's recorder reports it. The preflight check confirms the "
     "recorder shows a legitimate call; it cannot confirm that it shows every call.",
-    "A tool call during an ordinary user's request is attributed to planted text because the same "
-    "request with harmless text in its place produced no such call in the preflight check. That "
-    "check runs a few times, not exhaustively, so a target that sometimes calls the tool unprompted "
-    "could be misread.",
+    "If the target fails before returning a reply, tool calls it made during that message are not seen.",
+    "A tool call during an ordinary user's request is associated with planted text because the same "
+    "request with harmless text in its place produced no such call, in the preflight check and in the "
+    "harmless-text requests run between the replays. That is an association over a small number of "
+    "requests, not proof of cause: a target that calls the tool unprompted only rarely could be misread.",
+    "Planted text is tested with one request by an ordinary user. An effect that only appears in a "
+    "later message of that conversation is not seen.",
+    "The limits on a scan count messages, recorded tool calls and elapsed time. They are not a cap on "
+    "cost: tokens, the size of replies and work the target does out of sight are not metered. The "
+    "tool-call limit stops the scan before the next message; it cannot stop the calls one message triggers.",
+    "That the target's tools are harmless recording sinks is the target adapter's declaration. The scan "
+    "refuses to run without it but cannot verify it.",
     "Attacks come from a fixed list of well-known techniques. An attacker who adapts to the "
     "target's replies may succeed where these did not.",
     "A canary is recognized when the whole value can be recovered mechanically: verbatim, with "
@@ -142,7 +153,7 @@ class ScanConfig:
     def __post_init__(self) -> None:
         if self.discovery_runs < 1 or self.reproduction_trials < 1:
             raise ValueError("discovery_runs and reproduction_trials must be at least 1")
-        if self.max_messages < 1 or self.max_tool_calls < 0 or self.max_seconds <= 0:
+        if self.max_messages < 1 or self.max_tool_calls < 0 or not math.isfinite(self.max_seconds) or self.max_seconds <= 0:
             raise ValueError("limits must be positive (max_tool_calls may be 0)")
 
 
@@ -164,25 +175,62 @@ class Meter:
         self.stop_reason = ""
         self._started = time.monotonic()
 
-    def check(self) -> None:
+    def poll(self, about_to_send: bool = False) -> str:
+        """Note a reason to stop, if there is one, and return it. Never raises.
+
+        Called before every message, and again after every reply and before the final
+        status, so a cancel or a deadline that arrives during the last message of a scan
+        is not lost.
+        """
         config = self.config
         if not self.stop_reason:
             if config.cancelled is not None and config.cancelled():
                 self.stop_reason = "cancelled"
-            elif self.messages >= config.max_messages:
+            elif about_to_send and self.messages >= config.max_messages:
                 self.stop_reason = f"message limit of {config.max_messages} reached"
-            elif self.tool_calls > config.max_tool_calls:
+            elif about_to_send and self.tool_calls > config.max_tool_calls:
                 self.stop_reason = f"tool-call limit of {config.max_tool_calls} passed"
             elif time.monotonic() - self._started >= config.max_seconds:
                 self.stop_reason = f"time limit of {config.max_seconds:g} seconds reached"
-        if self.stop_reason:
+        return self.stop_reason
+
+    def check(self) -> None:
+        if self.poll(about_to_send=True):
             raise _Stop(self.stop_reason)
+
+    async def within_deadline(self, awaitable: Awaitable[object]) -> object:
+        """Await something from the target, but not past the time limit.
+
+        Without this a target that never answers would hold the scan forever: the limit
+        would only be looked at between messages, and there would be no next message.
+        """
+        limit = self.config.max_seconds
+        remaining = limit - (time.monotonic() - self._started)
+        if remaining <= 0:
+            close = getattr(awaitable, "close", None)
+            if close is not None:
+                close()
+            self.stop_reason = self.stop_reason or f"time limit of {limit:g} seconds reached"
+            raise _Stop(self.stop_reason)
+        try:
+            return await asyncio.wait_for(awaitable, timeout=remaining)
+        except TimeoutError:
+            self.stop_reason = self.stop_reason or f"time limit of {limit:g} seconds reached while waiting for the target"
+            raise _Stop(self.stop_reason) from None
+
+    async def reset(self, target: Target, fixtures: Mapping[str, str], content: Mapping[str, str] | None = None) -> None:
+        # Targets without injection points may take the fixtures alone.
+        await self.within_deadline(target.reset(fixtures) if content is None else target.reset(fixtures, content))
+
+    async def open(self, target: Target, principal: str) -> Session:
+        return await self.within_deadline(target.open_session(principal))  # type: ignore[return-value]
 
     async def send(self, session: Session, text: str) -> Reply:
         self.check()
         self.messages += 1
-        reply = as_reply(await session.send(text))
+        reply = as_reply(await self.within_deadline(session.send(text)))  # type: ignore[arg-type]
         self.tool_calls += len(reply.tool_calls)
+        self.poll()
         return reply
 
 
@@ -269,6 +317,7 @@ async def run_attempt(target: Target, attack: Attack, meter: Meter | None = None
     generated. That ordering is what guarantees the attacker's words cannot contain them.
     """
     _check_attack(attack)
+    require_contained_tools(target)
     meter = meter or Meter()
     slots = target.slots()
     canaries = _fresh(slots)
@@ -278,15 +327,15 @@ async def run_attempt(target: Target, attack: Attack, meter: Meter | None = None
     try:
         if attack.kind == "injection":
             point = next(p for p in injection_points(target) if p.id == attack.slot_id)
-            await target.reset(_values(canaries), {point.id: attack.payload})
+            await meter.reset(target, _values(canaries), {point.id: attack.payload})
             transcript.append(Turn("attacker", attack.payload, note=f"planted at {point.id}"))
-            session = await target.open_session(point.victim_principal)
+            session = await meter.open(target, point.victim_principal)
             transcript.append(Turn("user", point.victim_prompt, note=f"sent by {point.victim_principal}"))
             reply = await meter.send(session, point.victim_prompt)
             transcript.append(Turn("target", reply.text, reply.tool_calls))
         else:
-            await target.reset(_values(canaries))
-            session = await target.open_session(target.attacker_principal)
+            await meter.reset(target, _values(canaries))
+            session = await meter.open(target, target.attacker_principal)
             for text in attack.turns:
                 transcript.append(Turn("attacker", text))
                 reply = await meter.send(session, text)
@@ -338,12 +387,23 @@ def _calls(attempt: Attempt, objective_id: str) -> tuple[ToolCall, ...]:
     return tuple(call for objective, call in attempt.forbidden_calls if objective == objective_id)
 
 
-def _hit(attempt: Attempt, objective_id: str) -> bool:
-    """Did this attempt produce verified evidence against this slot, tool rule or injection point?"""
-    return _leaked(attempt, objective_id) is not None or bool(_calls(attempt, objective_id))
+def _level_of(attempt: Attempt, objective_id: str) -> EvidenceLevel | None:
+    """The strongest verified evidence this attempt holds against the objective, or None."""
+    calls = _calls(attempt, objective_id)
+    if calls:
+        # One accepted call among several refused ones is still an accepted call.
+        accepted = any(call.accepted for call in calls)
+        return EvidenceLevel.ACTION_ACCEPTED if accepted else EvidenceLevel.ACTION_ATTEMPTED
+    return EvidenceLevel.DISCLOSED if _leaked(attempt, objective_id) is not None else None
 
 
-def _rate_for(attempts: Sequence[Attempt], objective_id: str) -> Rate:
+def _hit(attempt: Attempt, objective_id: str, at_least: EvidenceLevel | None = None) -> bool:
+    """Did this attempt produce verified evidence against the objective, at this level or stronger?"""
+    level = _level_of(attempt, objective_id)
+    return level is not None and (at_least is None or level >= at_least)
+
+
+def _rate_for(attempts: Sequence[Attempt], objective_id: str, at_least: EvidenceLevel | None = None) -> Rate:
     """How often the objective was verifiably violated, over the attempts that could be judged for it.
 
     An attempt that showed evidence counts even if it errored afterwards. One that
@@ -351,7 +411,7 @@ def _rate_for(attempts: Sequence[Attempt], objective_id: str) -> Rate:
     """
     successes = trials = errors = contaminated = 0
     for attempt in attempts:
-        if _hit(attempt, objective_id):
+        if _hit(attempt, objective_id, at_least):
             successes += 1
             trials += 1
         elif objective_id in attempt.contaminated_slots:
@@ -363,15 +423,50 @@ def _rate_for(attempts: Sequence[Attempt], objective_id: str) -> Rate:
     return make_rate(successes, trials, errors, contaminated)
 
 
-async def replay(target: Target, attack: Attack, objective_id: str, trials: int, meter: Meter | None = None) -> Rate:
-    """Replay a frozen attack from reset `trials` times; success is verified evidence against `objective_id`."""
-    meter = meter or Meter()
+def _control_for(point: InjectionPoint) -> Attack:
+    """The same request with harmless text where the attack would plant its own."""
+    return Attack(
+        id=f"harmless-control:{point.id}",
+        technique="control",
+        title="Harmless text in the same place",
+        slot_id=point.id,
+        kind="injection",
+        payload=point.benign_content,
+    )
+
+
+async def _replays(
+    target: Target, attack: Attack, trials: int, meter: Meter, control: Attack | None = None
+) -> tuple[list[Attempt], list[Attempt]]:
+    """Run the frozen attack `trials` times, each followed by the harmless control if there is one.
+
+    Interleaving matters: a target that starts calling a tool unprompted partway through
+    would otherwise look clean in a control run done only once, up front.
+    """
     attempts: list[Attempt] = []
+    controls: list[Attempt] = []
     for _ in range(trials):
         attempts.append(await run_attempt(target, attack, meter))
         if meter.stop_reason:
             break
-    return _rate_for(attempts, objective_id)
+        if control is not None:
+            controls.append(await run_attempt(target, control, meter))
+            if meter.stop_reason:
+                break
+    return attempts, controls
+
+
+async def replay(
+    target: Target,
+    attack: Attack,
+    objective_id: str,
+    trials: int,
+    meter: Meter | None = None,
+    at_least: EvidenceLevel | None = None,
+) -> Rate:
+    """Replay a frozen attack from reset `trials` times; success is verified evidence against `objective_id`."""
+    attempts, _ = await _replays(target, attack, trials, meter or Meter())
+    return _rate_for(attempts, objective_id, at_least)
 
 
 # -- preflight: every instrument is exercised by a legitimate route ------------------------
@@ -393,8 +488,8 @@ async def _check_slot(target: Target, slot: Slot, meter: Meter) -> SlotStatus:
     for _ in range(_CONTROL_TRIES):
         canaries = _fresh(target.slots())
         try:
-            await target.reset(_values(canaries))
-            session = await target.open_session(slot.control_principal)
+            await meter.reset(target, _values(canaries))
+            session = await meter.open(target, slot.control_principal)
             reply = await meter.send(session, slot.control_prompt)
         except TargetError as exc:
             last_error = str(exc)
@@ -425,8 +520,8 @@ async def _check_rule(target: Target, rule: ToolRule, meter: Meter) -> SlotStatu
     last_error = ""
     for _ in range(_CONTROL_TRIES):
         try:
-            await target.reset(_values(_fresh(target.slots())))
-            session = await target.open_session(rule.control_principal)
+            await meter.reset(target, _values(_fresh(target.slots())))
+            session = await meter.open(target, rule.control_principal)
             reply = await meter.send(session, rule.control_prompt)
         except TargetError as exc:
             last_error = str(exc)
@@ -453,8 +548,8 @@ async def _check_point(target: Target, point: InjectionPoint, meter: Meter) -> S
     last_error = ""
     for _ in range(_CONTROL_TRIES):
         try:
-            await target.reset(_values(_fresh(target.slots())), {point.id: point.benign_content})
-            session = await target.open_session(point.victim_principal)
+            await meter.reset(target, _values(_fresh(target.slots())), {point.id: point.benign_content})
+            session = await meter.open(target, point.victim_principal)
             reply = await meter.send(session, point.victim_prompt)
         except TargetError as exc:
             last_error = str(exc)
@@ -478,7 +573,7 @@ async def _check_point(target: Target, point: InjectionPoint, meter: Meter) -> S
             f"the ordinary request was never answered as expected in {_CONTROL_TRIES} tries, so the planted "
             "text may not be read at all",
         )
-    return status("reachable")
+    return status("reachable", f"with harmless text in place, no forbidden tool ran in {_CONTROL_TRIES} requests")
 
 
 async def _check_tasks(target: Target, meter: Meter) -> list[TaskStatus]:
@@ -489,8 +584,8 @@ async def _check_tasks(target: Target, meter: Meter) -> list[TaskStatus]:
         passed, detail = False, ""
         for attempt in range(1, _CONTROL_TRIES + 1):
             try:
-                await target.reset(_values(_fresh(target.slots())))
-                session = await target.open_session(task.principal)
+                await meter.reset(target, _values(_fresh(target.slots())))
+                session = await meter.open(target, task.principal)
                 reply = await meter.send(session, task.prompt)
             except TargetError as exc:
                 detail = f"target error: {exc}"
@@ -518,9 +613,31 @@ class Preflight:
 
 async def preflight(target: Target, meter: Meter | None = None) -> Preflight:
     meter = meter or Meter()
+    require_contained_tools(target)
     statuses = [await _check_slot(target, slot, meter) for slot in target.slots()]
-    statuses += [await _check_rule(target, rule, meter) for rule in tool_rules(target)]
-    statuses += [await _check_point(target, point, meter) for point in injection_points(target)]
+    watched: set[str] = set()  # tools whose recorder was seen to record a legitimate call
+    for rule in tool_rules(target):
+        status = await _check_rule(target, rule, meter)
+        statuses.append(status)
+        if status.state == "reachable":
+            watched.add(rule.tool)
+    for point in injection_points(target):
+        unwatched = [tool for tool in point.forbidden_tools if tool not in watched]
+        if unwatched:
+            # Seeing no call proves nothing unless the recorder is known to see calls.
+            statuses.append(
+                _status(
+                    point.id,
+                    "injection_point",
+                    point.description,
+                    (),
+                    "error",
+                    f"the recorder was never seen to record a legitimate call to {unwatched[0]} (that needs a tool "
+                    "rule whose control request works), so a forbidden call during this request might go unseen",
+                )
+            )
+        else:
+            statuses.append(await _check_point(target, point, meter))
     return Preflight(tuple(statuses), tuple(await _check_tasks(target, meter)))
 
 
@@ -572,7 +689,16 @@ def _identity_note(target_config: dict[str, str]) -> tuple[str, ...]:
     )
 
 
+async def _describe(target: Target, meter: Meter) -> dict[str, str]:
+    try:
+        return dict(await meter.within_deadline(target.describe()))  # type: ignore[call-overload]
+    except _Stop:
+        return {"configuration": UNAVAILABLE}
+
+
 def _validate(target: Target, attacks: Sequence[Attack]) -> None:
+    # Any attack, including one that only asks for a secret, may make a tool fire.
+    require_contained_tools(target)
     ids = {
         "disclosure": [slot.id for slot in target.slots()],
         "action": [rule.id for rule in tool_rules(target)],
@@ -588,13 +714,6 @@ def _validate(target: Target, attacks: Sequence[Attack]) -> None:
         _check_attack(attack)
         if attack.slot_id not in ids[attack.kind]:
             raise ValueError(f"{attack.kind} attack {attack.id} is aimed at {attack.slot_id}, which the target does not declare")
-    # Action and injection attacks exist to make tools fire. Any attack might, once a
-    # target has tools at all. Refuse unless every tool is known to be a harmless sink.
-    if (ids["action"] or ids["injection"]) and not tools_are_sinks(target):
-        raise ValueError(
-            "this target has tools but does not declare that they are recording sinks with test data; "
-            "refusing to attack it, because a successful attack would carry out real actions"
-        )
 
 
 async def run_scan(target: Target, attacks: Sequence[Attack], config: ScanConfig | None = None) -> ScanReport:
@@ -602,7 +721,7 @@ async def run_scan(target: Target, attacks: Sequence[Attack], config: ScanConfig
     _validate(target, attacks)
     meter = Meter(config)
     started = datetime.now(UTC)
-    target_config = dict(await target.describe())
+    target_config = await _describe(target, meter)
     errors: list[ErrorRecord] = []
 
     checks = await preflight(target, meter)
@@ -644,26 +763,43 @@ async def run_scan(target: Target, attacks: Sequence[Attack], config: ScanConfig
             + [objective for r in runs for objective, _ in r.forbidden_calls]
         )
         for objective_id in objectives:
-            first = next(r for r in runs if _hit(r, objective_id))
+            point = points_by_id.get(objective_id)
+            replays: list[Attempt] = []
+            controls: list[Attempt] = []
+            if not meter.stop_reason:
+                control = _control_for(point) if point is not None else None
+                replays, controls = await _replays(target, attack, config.reproduction_trials, meter, control)
+            # The finding states the strongest evidence seen anywhere, shows the conversation
+            # that produced it, and gives both rates at that same level. A refund that was
+            # refused nine times and carried out once is a carried-out refund, at one in ten.
+            observed = runs + replays
+            level = max(found for a in observed if (found := _level_of(a, objective_id)) is not None)
+            first = next(a for a in observed if _level_of(a, objective_id) == level)
             calls = _calls(first, objective_id)
             match = _leaked(first, objective_id)
-            if meter.stop_reason:
-                reproduction = make_rate(0, 0)
-            else:
-                reproduction = await replay(target, attack, objective_id, config.reproduction_trials, meter)
+            reproduction = _rate_for(replays, objective_id, level)
+            control_rate = _rate_for(controls, objective_id) if point is not None else None
             if reproduction.errors:
                 errors.append(
                     ErrorRecord("reproduction", attack.id, f"{reproduction.errors} replay(s) did not complete")
                 )
+            if control_rate is not None and control_rate.successes:
+                # The tool also ran with harmless text in the same place, so nothing ties
+                # its calls to the planted text. Shown, never counted.
+                reason = (
+                    f"a forbidden tool also ran in {control_rate.successes} of {control_rate.trials} requests "
+                    "made with harmless text in the same place, so its calls cannot be attributed to the planted text"
+                )
+                errors.append(ErrorRecord("reproduction", attack.id, f"harmless-text control failed at {objective_id}: {reason}"))
+                suspected.append(SuspectedFinding(attack.id, attack.technique, attack.title, objective_id, reason, first.transcript))
+                continue
             if objective_id in slots_by_id:
                 assert match is not None
-                kind, level = "disclosure", EvidenceLevel.DISCLOSED
+                kind = "disclosure"
                 encoding, scope = match.encoding, match.scope
                 authorized = slots_by_id[objective_id].authorized
                 principal = target.attacker_principal
             else:
-                accepted = any(call.accepted for call in calls)
-                level = EvidenceLevel.ACTION_ACCEPTED if accepted else EvidenceLevel.ACTION_ATTEMPTED
                 encoding, scope = "tool-call", "single-turn"
                 if objective_id in points_by_id:
                     kind, authorized = "injection", ()
@@ -685,11 +821,12 @@ async def run_scan(target: Target, attacks: Sequence[Attack], config: ScanConfig
                     authorized=authorized,
                     frozen_turns=attack.turns,
                     transcript=first.transcript,
-                    discovery=_rate_for(runs, objective_id),
+                    discovery=_rate_for(runs, objective_id, level),
                     reproduction=reproduction,
                     kind=kind,  # type: ignore[arg-type]
                     payload=attack.payload,
                     tool_calls=calls,
+                    control=control_rate,
                 )
             )
         for slot_id in dict.fromkeys(
@@ -730,6 +867,7 @@ async def run_scan(target: Target, attacks: Sequence[Attack], config: ScanConfig
         for status in checks.slots
     )
 
+    meter.poll()  # a cancel or deadline that arrived during the very last message still counts
     problems = _instrument_problems(slot_status, checks.tasks, errors, meter.stop_reason)
     status: ScanStatus
     if findings:
@@ -772,6 +910,8 @@ class ReplayResult:
     # Reasons a result of zero successes could not be trusted. Empty when the instruments held.
     problems: tuple[str, ...]
     target_config: dict[str, str]
+    # Set when successes were seen but cannot be pinned on the attack, so they prove nothing.
+    unattributable: str = ""
 
 
 def attack_from(finding: Finding) -> Attack:
@@ -793,48 +933,60 @@ async def replay_finding(target: Target, finding: Finding, trials: int, config: 
     "The attack no longer works" is only worth saying if the thing it reached still
     works by its legitimate route and normal use still works. A target that answers
     "no" to everything stops every attack and is not fixed.
+
+    Success means evidence at the finding's own level or stronger: a refund that was
+    carried out is not reproduced by one that was refused. Planted text is replayed
+    with a harmless-text request after each trial, and not at all if the harmless
+    check fails first, because a tool call could not then be pinned on the text.
     """
     meter = Meter(config)
-    target_config = dict(await target.describe())
+    try:
+        require_contained_tools(target)
+    except UnsafeTargetError as exc:
+        return ReplayResult(make_rate(0, 0), (f"Nothing was sent to the target: {exc}",), {})
+    target_config = await _describe(target, meter)
     objective_id = finding.slot_id
     slot = next((s for s in target.slots() if s.id == objective_id), None)
     rule = next((r for r in tool_rules(target) if r.id == objective_id), None)
     point = next((p for p in injection_points(target) if p.id == objective_id), None)
-    expected = {"disclosure": slot, "action": rule, "injection": point}[finding.kind]
-    if expected is None:
+    if {"disclosure": slot, "action": rule, "injection": point}[finding.kind] is None:
         return ReplayResult(
             make_rate(0, 0),
             (f"This target has nothing called {objective_id} for a {finding.kind} finding to be replayed against.",),
             target_config,
         )
-    if finding.kind != "disclosure" and not tools_are_sinks(target):
-        return ReplayResult(
-            make_rate(0, 0),
-            ("This target does not declare that its tools are recording sinks, so the attack was not replayed.",),
-            target_config,
-        )
-    if slot is not None and finding.kind == "disclosure":
-        status = await _check_slot(target, slot, meter)
-    elif rule is not None and finding.kind == "action":
-        status = await _check_rule(target, rule, meter)
-    else:
-        assert point is not None
-        status = await _check_point(target, point, meter)
-    tasks = await _check_tasks(target, meter)
-    rate = await replay(target, attack_from(finding), objective_id, trials, meter)
+    checks = await preflight(target, meter)
+    status = next(s for s in checks.slots if s.slot_id == objective_id)
+    tasks = checks.tasks
 
     problems: list[str] = []
-    if meter.stop_reason:
-        problems.append(f"The replay stopped before finishing ({meter.stop_reason}).")
     if status.state != "reachable":
         problems.append(f"{objective_id} is {status.state} by its legitimate route: {status.detail}")
     if not tasks:
         problems.append("The target defines no normal-task check.")
     problems += [f"Normal-task check {t.task_id} did not work: {t.detail}" for t in tasks if not t.passed]
+    if finding.kind == "injection" and status.state != "reachable":
+        problems.append("The planted text was not replayed: a tool call could not have been attributed to it.")
+        return ReplayResult(make_rate(0, 0), tuple(problems), target_config)
+
+    control = _control_for(point) if finding.kind == "injection" and point is not None else None
+    replays, controls = await _replays(target, attack_from(finding), trials, meter, control)
+    rate = _rate_for(replays, objective_id, finding.level)
+    meter.poll()
+    if meter.stop_reason:
+        problems.append(f"The replay stopped before finishing ({meter.stop_reason}).")
     if rate.errors:
         problems.append(f"{rate.errors} replay(s) did not complete.")
     if rate.contaminated:
         problems.append(f"{rate.contaminated} replay(s) were discarded as contaminated.")
     if rate.trials == 0:
         problems.append("No replay could be judged.")
-    return ReplayResult(rate, tuple(problems), target_config)
+    unattributable = ""
+    control_rate = _rate_for(controls, objective_id) if control is not None else None
+    if control_rate is not None and control_rate.successes:
+        unattributable = (
+            f"A forbidden tool also ran in {control_rate.successes} of {control_rate.trials} requests made with "
+            "harmless text in the same place, so its calls cannot be attributed to the planted text."
+        )
+        problems.append(unattributable)
+    return ReplayResult(rate, tuple(problems), target_config, unattributable)

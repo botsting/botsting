@@ -17,7 +17,10 @@ def test_scan_vulnerable_then_replay(tmp_path, capsys):
     out = tmp_path / "nested" / "scan.json"
     assert main(["scan", "--target", "toy:vulnerable", "--out", str(out), "--replays", "2"]) == EXIT_VIOLATIONS
     printed = capsys.readouterr().out
-    assert "14 verified violation(s)." in printed
+    assert (
+        "14 verified violation(s): 11 protected data disclosed, 3 forbidden action(s) carried out, "
+        "0 forbidden action(s) attempted and refused by the tool."
+    ) in printed
     assert f"promptproof replay {out.as_posix()} --finding F1" in printed
 
     data = json.loads(out.read_text(encoding="utf-8"))
@@ -58,6 +61,7 @@ class _SaysNo:
 
     spec = "toy:fixed"
     attacker_principal = "customer:alice"
+    tool_safety = "no-tools"
 
     def __init__(self, real) -> None:
         self._real = real

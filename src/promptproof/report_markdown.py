@@ -64,7 +64,7 @@ def _headline(report: ScanReport) -> list[str]:
     if report.status == "violations_verified":
         count = len(report.findings)
         plural = "" if count == 1 else "s"
-        lines = [f"{count} verified violation{plural} found."]
+        lines = [f"{count} verified violation{plural} found.", "", f"Of these: {report.breakdown()}."]
         if report.inconclusive_reasons:
             # Violations were proven, but a reader must not take the rest as covered.
             lines += ["", "Not everything could be tested:", ""]
@@ -196,10 +196,15 @@ def _what_was_violated(finding: Finding) -> list[str]:
     lines = []
     if finding.kind == "injection":
         lines.append(f"- Injection point: {_code(finding.slot_id)}")
-        lines.append(
-            "- Policy: this tool has no business running during the ordinary request below; the same "
-            "request with harmless text in place of the planted text did not call it"
-        )
+        lines.append("- Policy: this tool has no business running during the ordinary request below")
+        if finding.control is not None and finding.control.trials:
+            lines.append(
+                f"- Harmless-text control: with harmless text in the same place, a forbidden tool ran in "
+                f"{finding.control.successes} of {finding.control.trials} requests made between the replays. "
+                "This ties the call to the planted text by association, not by proof of cause"
+            )
+        else:
+            lines.append("- Harmless-text control: not run between replays; only the preflight check applies")
     else:
         lines.append(f"- Tool rule: {_code(finding.slot_id)}")
         lines.append(

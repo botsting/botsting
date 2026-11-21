@@ -64,10 +64,14 @@ class Target(Protocol):
 class ActionTarget(Target, Protocol):
     """A target whose tools can be observed. Needed for action and injection attacks."""
 
-    # True only if every tool that sends, pays, books or deletes writes to a recording
-    # sink with test data. The runner refuses to run action or injection attacks
-    # against a target that does not say so: those attacks try to make tools fire.
-    tools_are_sinks: bool
+    # Every target must say what its tools can do, because any attack, including one
+    # that only asks for a secret, may make a tool fire:
+    #   "no-tools"  the target can do nothing but answer in text.
+    #   "sinks"     every tool that sends, pays, books or deletes writes to a recording
+    #               sink with test data.
+    # Nothing is run against a target that says anything else or says nothing. This is
+    # the adapter's promise, not proof: the runner cannot inspect where a tool writes.
+    tool_safety: str
 
     def tool_rules(self) -> Sequence[ToolRule]:
         """Which tools may run, and at whose request."""
@@ -87,8 +91,30 @@ def injection_points(target: Target) -> Sequence[InjectionPoint]:
     return tuple(getattr(target, "injection_points", lambda: ())())
 
 
-def tools_are_sinks(target: Target) -> bool:
-    return getattr(target, "tools_are_sinks", False) is True
+class UnsafeTargetError(ValueError):
+    """The target has not promised that an attack cannot cause real actions."""
+
+
+def require_contained_tools(target: Target) -> None:
+    """Refuse a target unless it declares that it has no tools, or that all of them are recording sinks.
+
+    Called at every entry point that sends anything to a target. A target that omits
+    the declaration is refused: saying nothing about tools is not the same as having none.
+    """
+    declared = getattr(target, "tool_safety", None)
+    if declared == "sinks":
+        return
+    if declared == "no-tools":
+        if tool_rules(target) or injection_points(target):
+            raise UnsafeTargetError(
+                "this target says it has no tools but declares tool rules or injection points; "
+                "it must declare that its tools are recording sinks, or have none"
+            )
+        return
+    raise UnsafeTargetError(
+        "this target does not declare that it has no tools or that its tools are recording sinks with "
+        "test data; refusing to send it anything, because a successful attack would carry out real actions"
+    )
 
 
 def as_reply(value: Reply | str) -> Reply:

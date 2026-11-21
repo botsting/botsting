@@ -47,7 +47,7 @@ def describe_rate(rate: Rate, noun: str) -> str:
 def _summary(report: ScanReport) -> str:
     lines: list[str] = []
     if report.status == "violations_verified":
-        lines.append(f"{len(report.findings)} verified violation(s).")
+        lines.append(f"{len(report.findings)} verified violation(s): {report.breakdown()}.")
     elif report.status == "no_verified_violations":
         lines.append(NO_VERIFIED_HEADLINE)
     else:
@@ -77,8 +77,11 @@ def what_happened(finding: Finding) -> str:
         return f"{finding.slot_id} leaked ({finding.encoding}, {finding.scope})"
     tools = ", ".join(dict.fromkeys(call.tool for call in finding.tool_calls)) or "a forbidden tool"
     fate = "and the tool carried it out" if any(call.accepted for call in finding.tool_calls) else "which the tool refused"
-    how = "planted text caused a call to" if finding.kind == "injection" else "the attacker caused a call to"
-    return f"{finding.slot_id}: {how} {tools}, {fate}"
+    if finding.kind == "injection":
+        # Association, not proof of cause: the tool ran with the planted text in place and
+        # did not run with harmless text there.
+        return f"{finding.slot_id}: with planted text in place, {tools} was called, {fate}"
+    return f"{finding.slot_id}: the attacker's conversation led to a call to {tools}, {fate}"
 
 
 def _run_until_done_or_cancelled(start: Callable[[Callable[[], bool]], object]) -> object:
@@ -190,6 +193,10 @@ def _replay(args: argparse.Namespace) -> int:
             f"Note: the target's {', '.join(unknown)} could not be read, then or now, so it is not known "
             "whether this is the configuration that was scanned."
         )
+    if result.unattributable:
+        print("Inconclusive: the tool ran, but that cannot be pinned on the planted text:")
+        print(f"  {result.unattributable}")
+        return EXIT_INCONCLUSIVE
     if result.rate.successes:
         return EXIT_VIOLATIONS
     if result.problems:

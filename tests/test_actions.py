@@ -262,9 +262,16 @@ class FakeTarget:
     spec = "fake"
     attacker_principal = "customer:alice"
 
-    def __init__(self, respond: Responder, sinks: bool = True) -> None:
+    def __init__(
+        self,
+        respond: Responder,
+        sinks: bool = True,
+        rules: Sequence[ToolRule] = (RULE,),
+        points: Sequence[InjectionPoint] = (POINT,),
+    ) -> None:
         self._respond = respond
-        self.tools_are_sinks = sinks
+        self.tool_safety = "sinks" if sinks else "live"
+        self._rules, self._points = tuple(rules), tuple(points)
         self._secret = self._inbox = ""
 
     async def describe(self) -> Mapping[str, str]:
@@ -274,10 +281,10 @@ class FakeTarget:
         return (SLOT,)
 
     def tool_rules(self) -> Sequence[ToolRule]:
-        return (RULE,)
+        return self._rules
 
     def injection_points(self) -> Sequence[InjectionPoint]:
-        return (POINT,)
+        return self._points
 
     def task_checks(self) -> Sequence[TaskCheck]:
         return (TASK,)
@@ -422,7 +429,7 @@ def test_scan_refuses_a_target_whose_tools_are_not_declared_sinks():
 def test_replay_refuses_too(vulnerable_report):
     finding = next(f for f in vulnerable_report.findings if f.kind == "action")
     target = build_target("toy:vulnerable")
-    target.tools_are_sinks = False
+    target.tool_safety = "live"
     result = asyncio.run(replay_finding(target, finding, 2))
     assert result.rate.trials == 0 and "recording sinks" in result.problems[0]
     assert target.ledger == []
@@ -475,9 +482,9 @@ def test_time_limit_stops_the_scan(monkeypatch):
         return clock["now"]
 
     monkeypatch.setattr(runner.time, "monotonic", tick)
-    report = scan(build_target("toy:fixed"), max_seconds=8)
-    assert report.stopped_early == "time limit of 8 seconds reached"
-    assert report.messages_sent == 7, "the eighth look at the clock is past the limit"
+    report = scan(build_target("toy:fixed"), max_seconds=40)
+    assert report.stopped_early == "time limit of 40 seconds reached"
+    assert 0 < report.messages_sent < 20, "far fewer than the 49 messages a full scan sends"
     assert report.status == "inconclusive"
 
 
@@ -490,7 +497,7 @@ def test_cancelling_stops_after_the_current_message():
 
     report = scan(build_target("toy:vulnerable"), cancelled=cancelled)
     assert report.stopped_early == "cancelled"
-    assert report.messages_sent == 20
+    assert report.messages_sent == 10, "the flag is looked at before each message and again after each reply"
 
 
 def test_limits_are_validated():
@@ -519,7 +526,7 @@ def test_cli_limits_and_exit_codes(tmp_path, capsys):
 
     assert main(["scan", "--target", "toy:vulnerable", "--out", str(out), "--replays", "1"]) == EXIT_VIOLATIONS
     printed = capsys.readouterr().out
-    assert "planted text caused a call to issue_refund, and the tool carried it out" in printed
+    assert "with planted text in place, issue_refund was called, and the tool carried it out" in printed
     finding = next(f["id"] for f in json.loads(out.read_text(encoding="utf-8"))["findings"] if f["kind"] == "injection")
     assert main(["replay", str(out), "--finding", finding, "--trials", "2"]) == EXIT_VIOLATIONS
     assert "was violated in 2 of 2 replays" in capsys.readouterr().out
