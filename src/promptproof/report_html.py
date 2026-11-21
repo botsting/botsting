@@ -112,6 +112,9 @@ def _tested(report: ScanReport) -> list[str]:
         ("Spent", f"{_e(report.messages_sent)} messages sent, {_e(report.tool_calls_recorded)} tool calls recorded"),
         ("Tool version", _e(report.tool_version)),
     ]
+    if report.authorization:
+        auth_text = ", ".join(f"{_e(k)} {_code(v)}" for k, v in sorted(report.authorization.items()))
+        rows.append(("Authorization", auth_text))
     if report.stopped_early:
         rows.append(("Stopped early", _e(report.stopped_early)))
     return ["<h2>What was tested</h2>", "<dl>"] + [f"<dt>{k}</dt><dd>{v}</dd>" for k, v in rows] + ["</dl>"]

@@ -351,6 +351,9 @@ class ScanReport:
     stopped_early: str = ""
     messages_sent: int = 0
     tool_calls_recorded: int = 0
+    discovery_messages_sent: int = 0
+    # Non-sensitive summary of the authorization record (for non-local scans); empty for local targets.
+    authorization: dict[str, str] = field(default_factory=dict)
 
     def breakdown(self) -> str:
         """The verified findings by what they prove, so a refused attempt is never read as completed harm."""
@@ -456,4 +459,6 @@ class ScanReport:
             stopped_early=data.get("stopped_early", ""),
             messages_sent=data.get("messages_sent", 0),
             tool_calls_recorded=data.get("tool_calls_recorded", 0),
+            discovery_messages_sent=data.get("discovery_messages_sent", 0),
+            authorization=dict(data.get("authorization", {})),
         )

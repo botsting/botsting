@@ -15,11 +15,14 @@ from collections.abc import Callable
 from pathlib import Path
 
 from promptproof import __version__
+from promptproof.attacks.adaptive import LLMAdaptiveStrategy
 from promptproof.attacks.library import default_attacks
+from promptproof.core.auth import AuthorizationError, load_authorization
+from promptproof.core.benchmark import DEFAULT_MARGIN, compare_strategies, render_benchmark_markdown
 from promptproof.core.models import Finding, Rate, ScanReport
 from promptproof.core.runner import ScanConfig, identity_unknown, replay_finding, run_scan, run_to_completion
 from promptproof.shell import replay_command
-from promptproof.targets.registry import SpecError, build_target
+from promptproof.targets.registry import SpecError, build_model, build_target
 
 EXIT_NO_VERIFIED = 0
 EXIT_VIOLATIONS = 1
@@ -114,21 +117,37 @@ def _write(path: Path, text: str) -> None:
 def _scan(args: argparse.Namespace) -> int:
     try:
         target = build_target(args.target)
-        limits = {
+        auth = load_authorization(args.auth) if args.auth else None
+        limits: dict[str, object] = {
             "discovery_runs": args.discovery_runs,
             "reproduction_trials": args.replays,
             "max_messages": args.max_messages,
             "max_tool_calls": args.max_tool_calls,
             "max_seconds": args.max_seconds,
+            "discovery_budget_per_objective": args.budget_per_objective,
+            "authorization": auth,
         }
-        ScanConfig(**limits)  # validate before anything runs
-        attacks = default_attacks(target)
-    except (SpecError, ValueError) as exc:
+        ScanConfig(**limits)  # type: ignore[arg-type]
+        attacks = default_attacks(target) if args.strategy in ("static", "both") else []
+        strategy = None
+        if args.strategy in ("adaptive", "both"):
+            attacker_model = build_model(args.attacker_model)
+            strategy = LLMAdaptiveStrategy(
+                model=attacker_model,
+                max_turns=args.max_turns,
+                max_episodes=args.max_episodes,
+            )
+    except (SpecError, AuthorizationError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return EXIT_INCONCLUSIVE
     try:
         report = _run_until_done_or_cancelled(
-            lambda cancelled: run_scan(target, attacks, ScanConfig(**limits, cancelled=cancelled))
+            lambda cancelled: run_scan(
+                target,
+                attacks,
+                ScanConfig(**limits, cancelled=cancelled),  # type: ignore[arg-type]
+                strategy=strategy,
+            )
         )
     except ValueError as exc:  # the runner refused the target or the attack list
         print(f"error: {exc}", file=sys.stderr)
@@ -174,11 +193,12 @@ def _replay(args: argparse.Namespace) -> int:
         return EXIT_INCONCLUSIVE
     try:
         target = build_target(args.target or report.target)
-    except SpecError as exc:
+        auth = load_authorization(args.auth) if args.auth else None
+    except (SpecError, AuthorizationError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return EXIT_INCONCLUSIVE
 
-    result = run_to_completion(replay_finding(target, finding, args.trials))
+    result = run_to_completion(replay_finding(target, finding, args.trials, ScanConfig(authorization=auth)))
     verb = "leaked" if finding.kind == "disclosure" else "was violated"
     print(
         f"{finding.id} ({finding.attack_id}) against {target.spec}: {finding.slot_id} {verb} in "
@@ -212,6 +232,44 @@ def _replay(args: argparse.Namespace) -> int:
     return EXIT_NO_VERIFIED
 
 
+def _benchmark(args: argparse.Namespace) -> int:
+    try:
+        hardened = [build_target(spec) for spec in args.hardened]
+        controls = [build_target(spec) for spec in args.controls]
+        attacker_model = build_model(args.attacker_model)
+        strategy = LLMAdaptiveStrategy(
+            model=attacker_model,
+            max_turns=args.max_turns,
+            max_episodes=args.max_episodes,
+        )
+    except (SpecError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_INCONCLUSIVE
+
+    try:
+        report = run_to_completion(
+            compare_strategies(
+                hardened,
+                controls,
+                strategy,
+                budget_per_objective=args.budget_per_objective,
+                reproduction_trials=args.replays,
+                required_margin=args.margin,
+                max_seconds=args.max_seconds,
+            )
+        )
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_INCONCLUSIVE
+
+    text = render_benchmark_markdown(report)
+    print(text, end="")
+    if args.out:
+        _write(Path(args.out), json.dumps(report.to_dict(), indent=2))
+        print(f"Benchmark JSON: {args.out}")
+    return EXIT_NO_VERIFIED if report.passed else EXIT_VIOLATIONS
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="promptproof",
@@ -225,11 +283,31 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--out", default="reports/scan.promptproof.json", help="where to write the JSON report")
     scan.add_argument("--markdown", help="also write a readable report to this path")
     scan.add_argument("--html", help="also write a self-contained report to open in a browser or print")
+    scan.add_argument(
+        "--strategy",
+        choices=("static", "adaptive", "both"),
+        default="static",
+        help="run the static attack list, the adaptive attacker, or both",
+    )
+    scan.add_argument(
+        "--attacker-model",
+        default="scripted-attacker",
+        help="model driving the adaptive attacker (scripted-attacker or ollama:<model>)",
+    )
+    scan.add_argument("--max-turns", type=int, default=3, help="maximum turns per adaptive conversation episode")
+    scan.add_argument("--max-episodes", type=int, default=4, help="maximum adaptive episodes per objective")
+    scan.add_argument(
+        "--budget-per-objective",
+        type=int,
+        default=None,
+        help="optional cap on discovery target messages per objective",
+    )
     scan.add_argument("--discovery-runs", type=int, default=1, help="attempts per attack while searching")
     scan.add_argument("--replays", type=int, default=5, help="replays of each attack that worked")
     scan.add_argument("--max-messages", type=int, default=5000, help="stop after sending this many messages")
     scan.add_argument("--max-tool-calls", type=int, default=500, help="stop once more than this many tool calls were recorded")
     scan.add_argument("--max-seconds", type=float, default=3600, help="stop after this much time")
+    scan.add_argument("--auth", help="path to an authorization JSON file (required for any non-local target)")
     scan.set_defaults(handler=_scan)
 
     rep = commands.add_parser("replay", help="replay a finding from a reset state with fresh canaries")
@@ -237,7 +315,34 @@ def build_parser() -> argparse.ArgumentParser:
     rep.add_argument("--finding", required=True, help="finding id, for example F1")
     rep.add_argument("--trials", type=int, default=5)
     rep.add_argument("--target", help="replay against a different target, for example the fixed build")
+    rep.add_argument("--auth", help="path to an authorization JSON file (required for any non-local target)")
     rep.set_defaults(handler=_replay)
+
+    bench = commands.add_parser(
+        "benchmark",
+        help="compare static vs. adaptive attacks at equal per-objective target-message budgets",
+    )
+    bench.add_argument(
+        "--hardened",
+        nargs="+",
+        default=["hardened:keyword", "hardened:multiturn"],
+        help="held-out hardened target specs",
+    )
+    bench.add_argument(
+        "--controls",
+        nargs="*",
+        default=["hardened:keyword-fixed", "hardened:multiturn-fixed"],
+        help="fixed control target specs that must return no verified violations",
+    )
+    bench.add_argument("--attacker-model", default="scripted-attacker")
+    bench.add_argument("--budget-per-objective", type=int, default=8)
+    bench.add_argument("--max-turns", type=int, default=3)
+    bench.add_argument("--max-episodes", type=int, default=4)
+    bench.add_argument("--replays", type=int, default=3)
+    bench.add_argument("--margin", type=float, default=DEFAULT_MARGIN)
+    bench.add_argument("--max-seconds", type=float, default=300.0)
+    bench.add_argument("--out", help="optional path to write benchmark JSON")
+    bench.set_defaults(handler=_benchmark)
     return parser
 
 

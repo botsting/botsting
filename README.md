@@ -26,8 +26,19 @@ To run the same bot on a real local model, install [Ollama](https://ollama.com),
 
 ```
 ollama pull llama3.2
-uv run promptproof scan --target "toy:vulnerable?model=ollama:llama3.2" --discovery-runs 3
+uv run promptproof scan --target "toy:vulnerable?model=ollama:llama3.2" --discovery-runs 3 --html reports/live.html
 ```
+
+Run the adaptive attacker (Milestone 3) or compare static vs. adaptive at equal per-objective target-message budgets on the held-out hardened targets:
+
+```
+uv run promptproof scan --target hardened:keyword --strategy adaptive --html reports/hardened.html
+uv run promptproof benchmark --budget-per-objective 8 --replays 3
+```
+
+PyRIT is supported behind the same `AdaptiveStrategy` interface as an optional extra (`uv sync --extra pyrit`).
+
+Non-local targets refuse to start without an explicit, unexpired authorization record (`--auth auth.json`) containing proof of control, named authorizer, exact scope (`agent_id`, `tenant`, `allowed_tools`), and expiry.
 
 Replay a finding from a reset state with a fresh secret, or try the same attack on the fixed build:
 

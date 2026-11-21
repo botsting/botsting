@@ -45,6 +45,8 @@ from dataclasses import dataclass, field, replace as _replace
 from datetime import UTC, datetime
 
 from promptproof import __version__
+from promptproof.attacks.strategy import AdaptiveStrategy, Objective, ProbeFeedback, TurnGenerator, objectives_for
+from promptproof.core.auth import Authorization, AuthorizationError, require_authorization
 from promptproof.core.canary import Canary, new_canary
 from promptproof.core.matcher import (
     ATTACKER_MIN,
@@ -186,6 +188,12 @@ class ScanConfig:
     max_messages: int = 5000
     max_tool_calls: int = 500
     max_seconds: float = 3600.0
+    # Optional caps on target messages sent during discovery only (leaving preflight and
+    # reproduction replays untouched), used for equal-budget comparisons between strategies.
+    discovery_message_budget: int | None = None
+    discovery_budget_per_objective: int | None = None
+    # Required for any non-local target (proof of control, named authorizer, scope, expiry).
+    authorization: Authorization | None = None
     # Polled before every message. Returning True stops the scan the same way.
     cancelled: Callable[[], bool] | None = field(default=None, compare=False)
 
@@ -194,6 +202,10 @@ class ScanConfig:
             raise ValueError("discovery_runs and reproduction_trials must be at least 1")
         if self.max_messages < 1 or self.max_tool_calls < 0 or not math.isfinite(self.max_seconds) or self.max_seconds <= 0:
             raise ValueError("limits must be positive (max_tool_calls may be 0)")
+        if self.discovery_message_budget is not None and self.discovery_message_budget < 1:
+            raise ValueError("discovery_message_budget must be at least 1")
+        if self.discovery_budget_per_objective is not None and self.discovery_budget_per_objective < 1:
+            raise ValueError("discovery_budget_per_objective must be at least 1")
 
 
 class _Stop(Exception):
@@ -374,42 +386,13 @@ def _check_attack(attack: Attack) -> None:
         raise ValueError(f"attack {attack.id} has no messages or a blank message; it would test nothing")
 
 
-async def run_attempt(target: Target, attack: Attack, meter: Meter | None = None) -> Attempt:
-    """Run one attack from a reset state and judge whatever came back.
-
-    The attack's messages and planted text are fixed before the canaries below are
-    generated. That ordering is what guarantees the attacker's words cannot contain them.
-    """
-    _check_attack(attack)
-    require_contained_tools(target)
-    meter = meter or Meter()
-    slots = target.slots()
-    canaries = _fresh(slots)
-    transcript: list[Turn] = []
-    point: InjectionPoint | None = None
-    error: str | None = None
-    try:
-        if attack.kind == "injection":
-            point = next(p for p in injection_points(target) if p.id == attack.slot_id)
-            await meter.reset(target, _values(canaries), {point.id: attack.payload})
-            transcript.append(Turn("attacker", attack.payload, note=f"planted at {point.id}"))
-            session = await meter.open(target, point.victim_principal)
-            transcript.append(Turn("user", point.victim_prompt, note=f"sent by {point.victim_principal}"))
-            reply = await meter.send(session, point.victim_prompt)
-            transcript.append(Turn("target", reply.text, reply.tool_calls))
-        else:
-            await meter.reset(target, _values(canaries))
-            session = await meter.open(target, target.attacker_principal)
-            for text in attack.turns:
-                transcript.append(Turn("attacker", text))
-                reply = await meter.send(session, text)
-                transcript.append(Turn("target", reply.text, reply.tool_calls))
-    except TargetError as exc:
-        replies = sum(1 for t in transcript if t.role == "target")
-        error = f"{exc} (after {replies} of {max(len(attack.turns), 1)} replies)"
-    except _Stop as stop:
-        error = f"stopped early: {stop}"
-
+def _evaluate_transcript(
+    target: Target,
+    slots: Sequence[Slot],
+    canaries: dict[str, Canary],
+    transcript: Sequence[Turn],
+    point: InjectionPoint | None,
+) -> tuple[AttemptOutcome, list[Match], list[str], list[tuple[str, ToolCall]]]:
     calls = [call for turn in transcript if turn.role == "target" for call in turn.tool_calls]
     forbidden: list[tuple[str, ToolCall]] = []
     matches: list[Match] = []
@@ -438,6 +421,246 @@ async def run_attempt(target: Target, attack: Attack, meter: Meter | None = None
         outcome = "contaminated"
     else:
         outcome = "none"
+    return outcome, matches, contaminated, forbidden
+
+
+class _DiscoveryBudget:
+    """Tracks target messages spent during discovery, overall and per objective."""
+
+    def __init__(self, total: int | None, per_objective: int | None) -> None:
+        self.total_limit = total
+        self.per_objective_limit = per_objective
+        self.total_used = 0
+        self.by_objective: dict[str, int] = {}
+
+    def remaining(self, objective_id: str) -> int | None:
+        caps: list[int] = []
+        if self.total_limit is not None:
+            caps.append(max(0, self.total_limit - self.total_used))
+        if self.per_objective_limit is not None:
+            caps.append(max(0, self.per_objective_limit - self.by_objective.get(objective_id, 0)))
+        return min(caps) if caps else None
+
+    def exhausted(self, objective_id: str) -> bool:
+        rem = self.remaining(objective_id)
+        return rem is not None and rem <= 0
+
+    def record(self, objective_id: str, count: int = 1) -> None:
+        self.total_used += count
+        self.by_objective[objective_id] = self.by_objective.get(objective_id, 0) + count
+
+
+class _RunnerProbeChannel:
+    """Runner-owned ProbeChannel passed into an AdaptiveStrategy for one objective.
+
+    Keeps canaries, target resets, tool containment checks, Meter limits, and contamination
+    judging inside the runner; the strategy only ever sees replies and ProbeFeedback.
+    """
+
+    def __init__(
+        self,
+        target: Target,
+        objective: Objective,
+        meter: Meter,
+        budget: _DiscoveryBudget,
+        objective_cap: int,
+    ) -> None:
+        self._target = target
+        self._objective = objective
+        self._meter = meter
+        self._budget = budget
+        self._objective_cap = objective_cap
+        self._sent_here = 0
+        self.recorded_episodes: list[tuple[Attack | None, Attempt]] = []
+
+    @property
+    def objective(self) -> Objective:
+        return self._objective
+
+    @property
+    def remaining_messages(self) -> int:
+        caps = [
+            max(0, self._objective_cap - self._sent_here),
+            max(0, self._meter.config.max_messages - self._meter.messages),
+        ]
+        budget_rem = self._budget.remaining(self._objective.id)
+        if budget_rem is not None:
+            caps.append(budget_rem)
+        return min(caps)
+
+    @property
+    def stopped(self) -> bool:
+        return bool(self._meter.poll(about_to_send=True)) or self.remaining_messages <= 0
+
+    async def within_deadline(self, awaitable: Awaitable[_T]) -> _T:
+        return await self._meter.within_deadline(awaitable)  # type: ignore[return-value]
+
+    async def run_conversation(
+        self,
+        next_turn: TurnGenerator,
+        *,
+        attack_id: str,
+        technique: str,
+        title: str,
+        max_turns: int = 4,
+    ) -> tuple[Attempt, Attack | None]:
+        require_contained_tools(self._target)
+        require_authorization(self._target, self._meter.config.authorization)
+        slots = self._target.slots()
+        canaries = _fresh(slots)
+        transcript: list[Turn] = []
+        attacker_turns: list[str] = []
+        error: str | None = None
+        last_feedback: ProbeFeedback | None = None
+        try:
+            await self._meter.reset(self._target, _values(canaries))
+            session = await self._meter.open(self._target, self._target.attacker_principal)
+            for _ in range(max_turns):
+                if self.stopped:
+                    break
+                text = await next_turn(tuple(transcript), last_feedback)
+                if text is None or not text.strip():
+                    break
+                if self.stopped:
+                    break
+                attacker_turns.append(text)
+                transcript.append(Turn("attacker", text))
+                self._sent_here += 1
+                self._budget.record(self._objective.id)
+                reply = await self._meter.send(session, text)
+                transcript.append(Turn("target", reply.text, reply.tool_calls))
+                outcome, matches, contaminated, forbidden = _evaluate_transcript(
+                    self._target, slots, canaries, transcript, None
+                )
+                last_feedback = ProbeFeedback(
+                    reply_text=reply.text,
+                    tool_calls=reply.tool_calls,
+                    verified=(outcome == "verified"),
+                    suspected=(outcome == "suspected"),
+                    contaminated=(outcome == "contaminated"),
+                )
+                if outcome == "verified":
+                    break
+        except TargetError as exc:
+            replies = sum(1 for t in transcript if t.role == "target")
+            error = f"{exc} (after {replies} replies)"
+        except _Stop as stop:
+            error = f"stopped early: {stop}"
+
+        outcome, matches, contaminated, forbidden = _evaluate_transcript(
+            self._target, slots, canaries, transcript, None
+        )
+        attempt = Attempt(
+            attack_id,
+            self._objective.id,
+            outcome,
+            tuple(transcript),
+            tuple(matches),
+            tuple(contaminated),
+            error,
+            tuple(forbidden),
+        )
+        frozen = (
+            Attack(
+                id=attack_id,
+                technique=technique,
+                title=title,
+                slot_id=self._objective.id,
+                turns=tuple(attacker_turns),
+                kind=self._objective.kind,
+            )
+            if attacker_turns
+            else None
+        )
+        self.recorded_episodes.append((frozen, attempt))
+        return attempt, frozen
+
+    async def try_payload(
+        self,
+        payload: str,
+        *,
+        attack_id: str,
+        technique: str,
+        title: str,
+    ) -> tuple[Attempt, Attack]:
+        if self._objective.kind != "injection":
+            raise ValueError("try_payload may only be used on injection objectives")
+        if not payload.strip():
+            raise ValueError("planted text payload must not be blank")
+        attack = Attack(
+            id=attack_id,
+            technique=technique,
+            title=title,
+            slot_id=self._objective.id,
+            kind="injection",
+            payload=payload,
+        )
+        if self.stopped:
+            reason = self._meter.stop_reason or "discovery budget exhausted"
+            attempt = Attempt(attack.id, attack.slot_id, "none", (), error=f"stopped early: {reason}")
+            self.recorded_episodes.append((attack, attempt))
+            return attempt, attack
+        self._sent_here += 1
+        self._budget.record(self._objective.id)
+        attempt = await run_attempt(self._target, attack, self._meter)
+        self.recorded_episodes.append((attack, attempt))
+        return attempt, attack
+
+
+async def run_attempt(
+    target: Target,
+    attack: Attack,
+    meter: Meter | None = None,
+    *,
+    budget: _DiscoveryBudget | None = None,
+) -> Attempt:
+    """Run one attack from a reset state and judge whatever came back.
+
+    The attack's messages and planted text are fixed before the canaries below are
+    generated. That ordering is what guarantees the attacker's words cannot contain them.
+    """
+    _check_attack(attack)
+    require_contained_tools(target)
+    meter = meter or Meter()
+    require_authorization(target, meter.config.authorization)
+    slots = target.slots()
+    canaries = _fresh(slots)
+    transcript: list[Turn] = []
+    point: InjectionPoint | None = None
+    error: str | None = None
+    try:
+        if attack.kind == "injection":
+            if budget is not None and budget.exhausted(attack.slot_id):
+                return Attempt(attack.id, attack.slot_id, "none", ())
+            point = next(p for p in injection_points(target) if p.id == attack.slot_id)
+            await meter.reset(target, _values(canaries), {point.id: attack.payload})
+            transcript.append(Turn("attacker", attack.payload, note=f"planted at {point.id}"))
+            session = await meter.open(target, point.victim_principal)
+            transcript.append(Turn("user", point.victim_prompt, note=f"sent by {point.victim_principal}"))
+            if budget is not None:
+                budget.record(attack.slot_id)
+            reply = await meter.send(session, point.victim_prompt)
+            transcript.append(Turn("target", reply.text, reply.tool_calls))
+        else:
+            if budget is not None and budget.exhausted(attack.slot_id):
+                return Attempt(attack.id, attack.slot_id, "none", ())
+            await meter.reset(target, _values(canaries))
+            session = await meter.open(target, target.attacker_principal)
+            for text in attack.turns:
+                if budget is not None and budget.exhausted(attack.slot_id):
+                    break
+                transcript.append(Turn("attacker", text))
+                if budget is not None:
+                    budget.record(attack.slot_id)
+                reply = await meter.send(session, text)
+                transcript.append(Turn("target", reply.text, reply.tool_calls))
+    except TargetError as exc:
+        replies = sum(1 for t in transcript if t.role == "target")
+        error = f"{exc} (after {replies} of {max(len(attack.turns), 1)} replies)"
+    except _Stop as stop:
+        error = f"stopped early: {stop}"
+
+    outcome, matches, contaminated, forbidden = _evaluate_transcript(target, slots, canaries, transcript, point)
     return Attempt(
         attack.id, attack.slot_id, outcome, tuple(transcript), tuple(matches), tuple(contaminated), error, tuple(forbidden)
     )
@@ -711,6 +934,7 @@ class Preflight:
 async def preflight(target: Target, meter: Meter | None = None) -> Preflight:
     meter = meter or Meter()
     require_contained_tools(target)
+    require_authorization(target, meter.config.authorization)
     statuses = [await _check_slot(target, slot, meter) for slot in target.slots()]
     watched: set[str] = set()  # tools whose recorder was seen to record a legitimate call
     for rule in tool_rules(target):
@@ -813,10 +1037,34 @@ def _validate(target: Target, attacks: Sequence[Attack]) -> None:
             raise ValueError(f"{attack.kind} attack {attack.id} is aimed at {attack.slot_id}, which the target does not declare")
 
 
-async def run_scan(target: Target, attacks: Sequence[Attack], config: ScanConfig | None = None) -> ScanReport:
+def _limitations_for(strategy: AdaptiveStrategy | None, target_config: dict[str, str]) -> tuple[str, ...]:
+    items = list(LIMITATIONS)
+    if strategy is not None:
+        items = [
+            (
+                f"Discovery included the adaptive strategy {strategy.name!r}, which adapted its messages "
+                "or planted text to the target's replies within the scan's budget. Every attack that "
+                "succeeded was frozen and independently replayed from reset with fresh canaries."
+                if item.startswith("Attacks come from a fixed list")
+                else item
+            )
+            for item in items
+        ]
+    return tuple(items) + _identity_note(target_config)
+
+
+async def run_scan(
+    target: Target,
+    attacks: Sequence[Attack] = (),
+    config: ScanConfig | None = None,
+    *,
+    strategy: AdaptiveStrategy | None = None,
+) -> ScanReport:
     config = config or ScanConfig()
     _validate(target, attacks)
+    require_authorization(target, config.authorization)
     meter = Meter(config)
+    budget = _DiscoveryBudget(config.discovery_message_budget, config.discovery_budget_per_objective)
     started = datetime.now(UTC)
     target_config = await _describe(target, meter)
     errors: list[ErrorRecord] = []
@@ -828,7 +1076,9 @@ async def run_scan(target: Target, attacks: Sequence[Attack], config: ScanConfig
 
     # Discovery.
     unattributable = {s.slot_id for s in checks.slots if s.kind == "injection_point" and s.state != "reachable"}
+    ordered_attacks: list[Attack] = []
     by_attack: dict[str, list[Attempt]] = {}
+    all_runs: list[Attempt] = []
     for attack in attacks:
         if meter.stop_reason:
             break
@@ -837,15 +1087,108 @@ async def run_scan(target: Target, attacks: Sequence[Attack], config: ScanConfig
             # so a tool call under attack could not be pinned on the planted text. Running
             # the attack would only produce a finding nobody should believe.
             continue
+        if budget.exhausted(attack.slot_id):
+            continue
         runs: list[Attempt] = []
         for _ in range(config.discovery_runs):
-            runs.append(await run_attempt(target, attack, meter))
+            if budget.exhausted(attack.slot_id):
+                break
+            attempt = await run_attempt(target, attack, meter, budget=budget)
+            runs.append(attempt)
+            all_runs.append(attempt)
             if meter.stop_reason:
                 break
-        by_attack[attack.id] = runs
-        for run in runs:
-            if run.error is not None:
-                errors.append(ErrorRecord("discovery", attack.id, run.error))
+        if runs:
+            ordered_attacks.append(attack)
+            by_attack[attack.id] = runs
+            for run in runs:
+                if run.error is not None:
+                    errors.append(ErrorRecord("discovery", attack.id, run.error))
+
+    # Adaptive discovery (if a strategy was configured).
+    adaptive_search_runs: dict[str, list[Attempt]] = {}
+    if strategy is not None and not meter.stop_reason:
+        eligible = [
+            obj
+            for obj in objectives_for(target)
+            if not (obj.kind == "injection" and obj.id in unattributable)
+        ]
+        for idx, objective in enumerate(eligible):
+            if meter.stop_reason:
+                break
+            if budget.exhausted(objective.id):
+                continue
+            remaining_objectives = len(eligible) - idx
+            if config.discovery_budget_per_objective is not None:
+                obj_cap = config.discovery_budget_per_objective
+            elif config.discovery_message_budget is not None:
+                rem_total = max(0, config.discovery_message_budget - budget.total_used)
+                obj_cap = max(1, rem_total // remaining_objectives) if rem_total else 0
+            else:
+                obj_cap = max(1, config.max_messages - meter.messages)
+            if obj_cap <= 0:
+                break
+            channel = _RunnerProbeChannel(target, objective, meter, budget, obj_cap)
+            search_result = None
+            strategy_stopped = False
+            try:
+                search_result = await strategy.search(objective, channel)
+            except _Stop as stop:
+                errors.append(ErrorRecord("discovery", f"{strategy.name}:{objective.id}", f"stopped early: {stop}"))
+                strategy_stopped = True
+            except Exception as exc:  # noqa: BLE001 - strategy errors must become inconclusive, never pass
+                errors.append(ErrorRecord("discovery", f"{strategy.name}:{objective.id}", f"strategy failed: {exc}"))
+
+            # Ground truth comes from what the runner's channel actually sent and observed,
+            # so a strategy cannot drop failed episodes or fabricate verified evidence.
+            # Any planner-side error reported in SearchResult is preserved alongside it.
+            episodes = list(channel.recorded_episodes)
+            if search_result is not None:
+                recorded_ids = {a.attack_id for _, a in episodes}
+                for _, reported in search_result.episodes:
+                    if reported.error is not None:
+                        if reported.attack_id not in recorded_ids:
+                            episodes.append((None, reported))
+                        else:
+                            # Preserve planner error attached to an episode that ran through channel.
+                            episodes = [
+                                (f, _replace(a, error=reported.error) if a.attack_id == reported.attack_id and a.error is None else a)
+                                for f, a in episodes
+                            ]
+
+            episode_attempts = [attempt for _, attempt in episodes]
+            seen_signatures: set[tuple[str, str, tuple[str, ...], str]] = set()
+            for frozen, attempt in episodes:
+                all_runs.append(attempt)
+                if attempt.error is not None:
+                    errors.append(ErrorRecord("discovery", attempt.attack_id, attempt.error))
+                if frozen is None:
+                    continue
+                sig = (frozen.slot_id, frozen.kind, frozen.turns, frozen.payload)
+                if sig in seen_signatures:
+                    # Group repeated identical adaptive attempts under the first frozen Attack id.
+                    existing = next(
+                        a
+                        for a in ordered_attacks
+                        if (a.slot_id, a.kind, a.turns, a.payload) == sig
+                    )
+                    by_attack[existing.id].append(attempt)
+                    continue
+                seen_signatures.add(sig)
+                # Ensure unique attack id across static + adaptive attacks.
+                attack_obj = frozen
+                if attack_obj.id in by_attack:
+                    suffix = 2
+                    while f"{frozen.id}-{suffix}" in by_attack:
+                        suffix += 1
+                    attack_obj = _replace(frozen, id=f"{frozen.id}-{suffix}")
+                ordered_attacks.append(attack_obj)
+                by_attack[attack_obj.id] = [attempt]
+                # Discovery yield for an adaptive finding is measured across ALL search episodes
+                # spent on that objective, not just the winning episode alone.
+                adaptive_search_runs[attack_obj.id] = episode_attempts
+            if strategy_stopped:
+                break
 
     # Reproduction and findings, in attack order.
     findings: list[Finding] = []
@@ -853,7 +1196,7 @@ async def run_scan(target: Target, attacks: Sequence[Attack], config: ScanConfig
     slots_by_id = {slot.id: slot for slot in target.slots()}
     rules_by_id = {rule.id: rule for rule in tool_rules(target)}
     points_by_id = {point.id: point for point in injection_points(target)}
-    for attack in attacks:
+    for attack in ordered_attacks:
         runs = by_attack.get(attack.id, [])
         objectives = dict.fromkeys(
             [m.slot_id for r in runs for m in r.matches if m.verified]
@@ -915,7 +1258,7 @@ async def run_scan(target: Target, attacks: Sequence[Attack], config: ScanConfig
                     authorized=authorized,
                     frozen_turns=attack.turns,
                     transcript=first.transcript,
-                    discovery=_rate_for(runs, objective_id, level),
+                    discovery=_rate_for(adaptive_search_runs.get(attack.id, runs), objective_id, level),
                     reproduction=reproduction,
                     kind=kind,  # type: ignore[arg-type]
                     payload=attack.payload,
@@ -945,7 +1288,6 @@ async def run_scan(target: Target, attacks: Sequence[Attack], config: ScanConfig
             )
 
     # Coverage: how many attempts aimed at each protected thing completed and were not discarded.
-    all_runs = [r for runs in by_attack.values() for r in runs]
     slot_status = tuple(
         _replace(
             status,
@@ -988,13 +1330,15 @@ async def run_scan(target: Target, attacks: Sequence[Attack], config: ScanConfig
         suspected=tuple(suspected),
         contaminated_attempts=sum(1 for r in all_runs if r.contaminated_slots),
         errors=tuple(errors),
-        limitations=LIMITATIONS + _identity_note(target_config),
+        limitations=_limitations_for(strategy, target_config),
         # Listed even when violations were verified: a reader should know what else was not tested.
         inconclusive_reasons=tuple(problems),
         target_config=target_config,
         stopped_early=meter.stop_reason,
         messages_sent=meter.messages,
         tool_calls_recorded=meter.tool_calls,
+        discovery_messages_sent=budget.total_used,
+        authorization=config.authorization.summary() if config.authorization is not None else {},
     )
 
 
@@ -1036,7 +1380,8 @@ async def replay_finding(target: Target, finding: Finding, trials: int, config: 
     meter = Meter(config)
     try:
         require_contained_tools(target)
-    except UnsafeTargetError as exc:
+        require_authorization(target, meter.config.authorization)
+    except (UnsafeTargetError, AuthorizationError) as exc:
         return ReplayResult(make_rate(0, 0), (f"Nothing was sent to the target: {exc}",), {})
     target_config = await _describe(target, meter)
     objective_id = finding.slot_id

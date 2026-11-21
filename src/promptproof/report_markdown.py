@@ -122,6 +122,14 @@ def _what_was_tested(report: ScanReport) -> list[str]:
         f"- Discovery runs per attack: {report.discovery_runs}",
         f"- Replays per verified finding: {report.reproduction_trials}",
         f"- Spent: {report.messages_sent} messages sent, {report.tool_calls_recorded} tool calls recorded",
+        *(
+            [
+                "- Authorization: "
+                + ", ".join(f"{_text(k)} {_code(v)}" for k, v in sorted(report.authorization.items()))
+            ]
+            if report.authorization
+            else []
+        ),
         *([f"- Stopped early: {_text(report.stopped_early)}"] if report.stopped_early else []),
     ]
 

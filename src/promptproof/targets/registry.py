@@ -1,7 +1,12 @@
 """Turn a target spec string into a target.
 
     toy:vulnerable                       scripted stand-in model, no LLM needed
-    toy:fixed?model=ollama:llama3.2      a local model served by Ollama
+    toy:hardened?model=ollama:llama3.2   prompt-hardened Acorn bot on a local Ollama model
+    toy:fixed?model=ollama:llama3.2      application-code-fixed Acorn bot on Ollama
+    hardened:keyword                     held-out keyword-filtered hardened target
+    hardened:keyword-fixed               application-code-fixed control for hardened:keyword
+    hardened:multiturn                   held-out multi-turn intake hardened target
+    hardened:multiturn-fixed             application-code-fixed control for hardened:multiturn
 
 Only local practice targets exist so far. Remote targets arrive together with the
 authorization gate, not before it.
@@ -15,6 +20,7 @@ from urllib.parse import parse_qsl
 from promptproof.llm.base import ChatModel
 from promptproof.llm.scripted import ScriptedModel
 from promptproof.targets.base import Target
+from promptproof.targets.hardened import KeywordHardenedTarget, MultiTurnHardenedTarget
 from promptproof.targets.toy import ToyTarget
 
 
@@ -22,14 +28,21 @@ class SpecError(ValueError):
     """The target spec could not be understood."""
 
 
-def _build_model(name: str) -> ChatModel:
+def build_model(name: str) -> ChatModel:
     if name == "scripted":
         return ScriptedModel()
+    if name == "scripted-attacker":
+        from promptproof.attacks.adaptive import ScriptedAttackerModel
+
+        return ScriptedAttackerModel()
     if name.startswith("ollama:") and len(name) > len("ollama:"):
         from promptproof.llm.ollama import OllamaModel
 
         return OllamaModel(model=name.removeprefix("ollama:"))
-    raise SpecError(f"unknown model {name!r}; use 'scripted' or 'ollama:<model name>'")
+    raise SpecError(f"unknown model {name!r}; use 'scripted', 'scripted-attacker', or 'ollama:<model name>'")
+
+
+_build_model = build_model
 
 
 _SPEC = re.compile(r"[A-Za-z0-9:._?=&-]+")
@@ -51,9 +64,26 @@ def build_target(spec: str) -> Target:
     unknown = set(options) - {"model"}
     if unknown:
         raise SpecError(f"unknown option(s) in target spec: {sorted(unknown)}")
-    if kind != "toy":
-        raise SpecError(f"unknown target kind {kind!r}; only 'toy' is available")
-    if variant not in ("vulnerable", "fixed"):
-        raise SpecError(f"unknown toy variant {variant!r}; use 'toy:vulnerable' or 'toy:fixed'")
-    model = _build_model(options.get("model", "scripted"))
-    return ToyTarget(variant=variant, model=model, spec=spec)  # type: ignore[arg-type]
+    if kind == "toy":
+        if variant not in ("vulnerable", "hardened", "fixed"):
+            raise SpecError(
+                f"unknown toy variant {variant!r}; use 'toy:vulnerable', 'toy:hardened' or 'toy:fixed'"
+            )
+        model = build_model(options.get("model", "scripted"))
+        return ToyTarget(variant=variant, model=model, spec=spec)  # type: ignore[arg-type]
+    if kind == "hardened":
+        if options:
+            raise SpecError(f"hardened targets do not take options: {sorted(options)}")
+        if variant == "keyword":
+            return KeywordHardenedTarget(variant="hardened", spec=spec)
+        if variant == "keyword-fixed":
+            return KeywordHardenedTarget(variant="fixed", spec=spec)
+        if variant == "multiturn":
+            return MultiTurnHardenedTarget(variant="hardened", spec=spec)
+        if variant == "multiturn-fixed":
+            return MultiTurnHardenedTarget(variant="fixed", spec=spec)
+        raise SpecError(
+            f"unknown hardened variant {variant!r}; use 'hardened:keyword', 'hardened:keyword-fixed', "
+            "'hardened:multiturn' or 'hardened:multiturn-fixed'"
+        )
+    raise SpecError(f"unknown target kind {kind!r}; only 'toy' and 'hardened' are available")
