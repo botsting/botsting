@@ -18,7 +18,7 @@ def test_scan_vulnerable_then_replay(tmp_path, capsys):
     assert main(["scan", "--target", "toy:vulnerable", "--out", str(out), "--replays", "2"]) == EXIT_VIOLATIONS
     printed = capsys.readouterr().out
     assert "11 verified violation(s)." in printed
-    assert f"promptproof replay {out} --finding F1" in printed
+    assert f"promptproof replay {out.as_posix()} --finding F1" in printed
 
     data = json.loads(out.read_text(encoding="utf-8"))
     assert data["status"] == "violations_verified"
@@ -111,7 +111,7 @@ def test_replay_notes_a_changed_configuration(tmp_path, capsys):
 def test_replay_command_is_quoted_when_the_path_needs_it(tmp_path, capsys):
     out = tmp_path / "my reports" / "scan.json"
     main(["scan", "--target", "toy:vulnerable", "--out", str(out), "--replays", "1"])
-    assert f'promptproof replay "{out}" --finding F1' in capsys.readouterr().out
+    assert f'promptproof replay "{out.as_posix()}" --finding F1' in capsys.readouterr().out
 
 
 def test_hostile_target_specs_are_rejected(tmp_path, capsys):

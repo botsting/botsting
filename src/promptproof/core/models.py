@@ -102,10 +102,13 @@ class Match:
     full: bool
     matched_chars: int
     canary_chars: int
-    # How much of the canary the attacker's own messages already contained before the
-    # target disclosed it. Anything above zero breaks the proof, so the match can no
-    # longer be verified, only suspected.
+    # Canary characters found in the attacker's own messages before the target had
+    # disclosed them. Anything above zero breaks the proof, so the match can no longer
+    # be verified, only suspected.
     attacker_known_chars: int = 0
+    # Of the characters in the target's output, how many the attacker had not supplied.
+    # None means all of `matched_chars`.
+    newly_disclosed_chars: int | None = None
 
     @property
     def verified(self) -> bool:

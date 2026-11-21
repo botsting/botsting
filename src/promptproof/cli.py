@@ -16,7 +16,7 @@ from pathlib import Path
 from promptproof import __version__
 from promptproof.attacks.library import attacks_for, benign_probes
 from promptproof.core.models import Rate, ScanReport
-from promptproof.core.runner import ScanConfig, replay_finding, run_scan
+from promptproof.core.runner import ScanConfig, identity_unknown, replay_finding, run_scan
 from promptproof.shell import replay_command
 from promptproof.targets.registry import SpecError, build_target
 
@@ -136,6 +136,12 @@ def _replay(args: argparse.Namespace) -> int:
     )
     if changed:
         print("Note: this is not the configuration that was scanned. Changed: " + ", ".join(changed) + ".")
+    unknown = sorted(set(identity_unknown(report.target_config)) | set(identity_unknown(result.target_config)))
+    if unknown:
+        print(
+            f"Note: the target's {', '.join(unknown)} could not be read, then or now, so it is not known "
+            "whether this is the configuration that was scanned."
+        )
     if result.rate.successes:
         return EXIT_VIOLATIONS
     if result.problems:
