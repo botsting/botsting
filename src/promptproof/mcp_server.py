@@ -262,7 +262,7 @@ def _check_description(root: Path, arguments: dict[str, Any]) -> str:
         notes = []
         if not config.slots and not config.tool_rules:
             notes.append("it protects nothing: add at least one slot or tool rule, or a scan has nothing to prove")
-        if config.harness != "sdk":
+        if config.harness == "endpoint":
             notes.append('it uses a hand-written reset endpoint; "harness": "sdk" needs less code in the bot')
         if not config.task_checks:
             notes.append("no task_checks: add one normal request, so a bot that refuses everything is not called safe")
