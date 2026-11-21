@@ -369,6 +369,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     register_authorize(commands)
 
+    from promptproof.seal import register as register_seal
+
+    register_seal(commands)
+
     practice = commands.add_parser(
         "practice-server",
         help="serve the practice bot over HTTP on this machine, to try the HTTP adapter",

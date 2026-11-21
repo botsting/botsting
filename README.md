@@ -111,3 +111,14 @@ uv run pytest
 ```
 
 Licensed under Apache-2.0.
+
+## Seal the evidence
+
+A finished run's directory (reports, transcripts, the egress trap's log) can be packed into one bundle that anyone can check later:
+
+```
+uv run promptproof seal runs/2026-11-21 --out evidence.sealed.zip
+uv run promptproof check-seal evidence.sealed.zip --seal <the printed seal>
+```
+
+Share the seal separately from the bundle. A matching seal shows that nothing in the bundle changed since it was sealed, and the check also prints which outbound destinations the egress log shows as allowed and refused. It does not show who made the bundle; signing is a later step.
