@@ -71,6 +71,8 @@ POST /your/reset/path   {"fixtures": {"<slot id>": "<fake secret>"}, "content": 
 
 It puts each fake secret where that slot says it lives (the system prompt, a test customer's record), puts each piece of content where the bot will read it, forgets every earlier conversation, and answers 2xx. If the bot has tools, the harness also lists in each chat response the calls its own recorder saw on the tools, and every tool must write to a test sink, never to real customers, mailboxes or money.
 
+The scan trusts the harness: it cannot check that a reset really forgot earlier conversations, or that the reported tool calls are real. Fresh fake secrets for every attempt and the legitimate-use checks limit the damage of a harness that half-works, but one that lies can produce false findings or hide real ones.
+
 The bot is described in `promptproof.targets.json`: where it is, how to talk to it as each user, where its reply is in the response, and what it protects. Credentials are written as `${ENV_VAR}` and read from the environment when the scan runs; they never appear in reports. Requests go only to the described origin and its two paths; redirects are not followed.
 
 To try the whole flow without a real bot, serve the practice bot over HTTP on this machine:

@@ -101,9 +101,18 @@ class HttpTargetConfig:
     digest: str = ""  # of the description as written, so a replay can tell it changed
 
 
+_PLAIN_PATH = re.compile(r"(/[A-Za-z0-9._~-]+)+")
+
+
 def _path(value: object, field: str) -> str:
-    if not isinstance(value, str) or not value.startswith("/") or "//" in value or "?" in value or "#" in value:
-        raise TargetConfigError(f"{field} must be a path such as /api/chat, got {value!r}")
+    """Plain paths only: ASCII letters, digits and . _ ~ - between slashes, no "." or ".." segments,
+    no percent-encoding or backslashes. Anything else would be refused at send time anyway."""
+    if (
+        not isinstance(value, str)
+        or not _PLAIN_PATH.fullmatch(value)
+        or any(part in (".", "..") for part in value.split("/"))
+    ):
+        raise TargetConfigError(f"{field} must be a plain path such as /api/chat, got {value!r}")
     return value
 
 
@@ -359,6 +368,8 @@ class _OnlyHere(httpx.AsyncBaseTransport):
         self._inner = inner
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        if request.url.userinfo:
+            raise httpx.UnsupportedProtocol("refused: an address with a user name or password")
         try:
             origin = normalize_origin(f"{request.url.scheme}://{request.url.netloc.decode('ascii')}")
         except ValueError as exc:

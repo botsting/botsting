@@ -89,7 +89,10 @@ def _handler(bot: PracticeBot) -> type[BaseHTTPRequestHandler]:
             self.wfile.write(data)
 
         def do_POST(self) -> None:  # noqa: N802
-            length = int(self.headers.get("Content-Length", "0") or 0)
+            raw_length = self.headers.get("Content-Length", "0") or "0"
+            if not raw_length.isdigit():
+                return self._answer(400, {"error": "Content-Length must be a whole number"})
+            length = int(raw_length)
             if length > _MAX_BODY:
                 return self._answer(413, {"error": "too large"})
             try:

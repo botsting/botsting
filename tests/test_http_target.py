@@ -317,3 +317,89 @@ def test_unknown_http_targets_are_a_usage_error(practice):
     for spec in ("http:nothing", "http:practice?model=x", "http:"):
         with pytest.raises(SpecError):
             build_target(spec)
+
+
+def test_the_practice_server_answers_bad_requests_instead_of_dropping_them():
+    import http.client
+
+    bot = PracticeBot("vulnerable", ScriptedModel())
+    server = start(bot)
+    try:
+        host, port = server.server_address[:2]
+        cases = [
+            ("POST", "/chat", b"{}", {"Content-Length": "abc"}, 400),
+            ("POST", "/chat", b"not json", {}, 400),
+            ("POST", "/chat", b"[1, 2]", {}, 400),
+            ("POST", "/elsewhere", b"{}", {}, 404),
+            ("GET", "/chat", b"", {}, 404),
+            ("POST", "/chat", b"{}", {"Content-Length": "999999999"}, 413),
+        ]
+        for method, path, body, headers, expected in cases:
+            connection = http.client.HTTPConnection(host, port, timeout=5)
+            connection.putrequest(method, path)
+            if "Content-Length" not in headers:
+                headers = {**headers, "Content-Length": str(len(body))}
+            for name, value in headers.items():
+                connection.putheader(name, value)
+            connection.endheaders()
+            if headers["Content-Length"].isdigit() and int(headers["Content-Length"]) == len(body):
+                connection.send(body)
+            assert connection.getresponse().status == expected, (method, path, headers)
+            connection.close()
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_the_practice_server_will_not_listen_beyond_this_machine():
+    for host in ("0.0.0.0", "192.168.1.10"):
+        with pytest.raises(ValueError, match="only listens on this machine"):
+            start(PracticeBot("vulnerable", ScriptedModel()), host=host)
+
+
+@pytest.mark.parametrize("path", ["/chat%2Fadmin", "/chat\evil", "/chat/../x", "/./chat", "/échat", "/chat/", "/"])
+def test_odd_paths_are_refused_when_the_description_is_read(path):
+    with pytest.raises(TargetConfigError, match="plain path"):
+        parse_config("bot", minimal(chat={"path": path}))
+
+
+def test_an_address_with_a_user_name_is_refused():
+    transport, requests = recording()
+    bot = target(transport)
+
+    async def attempt():
+        async with httpx.AsyncClient(transport=bot._transport) as client:
+            await client.post("https://user:pw@bot.example.com/chat", json={})
+
+    with pytest.raises(httpx.UnsupportedProtocol, match="user name"):
+        asyncio.run(attempt())
+    assert requests == []
+
+
+def test_an_oversized_response_is_an_error(monkeypatch):
+    monkeypatch.setenv("ALICE_TOKEN", "t")
+
+    def huge(request):
+        return httpx.Response(200, content=b"x" * 1_000_001)
+
+    async def go():
+        await (await target(httpx.MockTransport(huge)).open_session("customer:alice")).send("hi")
+
+    with pytest.raises(TargetError, match="more than 1000000 bytes"):
+        asyncio.run(go())
+
+
+def test_proxy_settings_in_the_environment_are_ignored(monkeypatch):
+    """A proxy would see every message and credential; the adapter must never pick one up from the environment."""
+    seen: dict[str, bool] = {}
+    real_client = httpx.AsyncClient
+
+    def spy(*args, **kwargs):
+        seen["trust_env"] = kwargs.get("trust_env", True)
+        return real_client(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", spy)
+    monkeypatch.setenv("HTTPS_PROXY", "http://proxy.invalid:3128")
+    transport, requests = recording()
+    asyncio.run(target(transport).reset({"secret": "K7M2-Q9XA-D4T8-WZ3H"}))
+    assert seen["trust_env"] is False and len(requests) == 1
