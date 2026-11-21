@@ -82,6 +82,9 @@ note = pp.planted("bob_note", note) if user == "bob" else note    # a secret in 
 Rules:
 - Put `@pp.action` on the function that does the deed, below the app's own permission
   checks, so a call that reaches it means the app let it through.
+- For a central tool registry, pass the complete list or mapping through
+  `promptproof.harness_tools` and list only read-only tools in `reads`.
+  See "Cover every tool at once" in the README for framework examples.
 - If the work is handed to a job queue or a thread the app starts itself, mark the
   function that hands it over, not the worker.
 - `pp.planted(slot, default)` returns the default for real users. Place it where a

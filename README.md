@@ -123,10 +123,64 @@ When something is not working, `promptproof doctor --target http:staging` checks
 
 Limits:
 
-- A tool that is not marked cannot be seen.
+- The harness sees tools covered by a decorator or by a guarded tool list.
 - Calls made after a streaming reply has started are blocked but not reported.
 - The test session follows the request. Python carries it into `await`, `asyncio.to_thread` and the thread pools of Starlette and FastAPI. It is not carried into a thread you start yourself, a bare `run_in_executor`, a process pool or a job queue (Celery, RQ). A marked tool that runs there during a test runs for real. If your tools run that way, mark the function that hands the work over, not the worker.
 - The signatures stop the model from faking the record. They do not stop the bot's own code from lying.
+
+#### Cover every tool at once
+
+Pass the complete Python tool registry through `promptproof.harness_tools` before giving it to the bot. During a signed test session, tools not listed in `reads` are recorded, so a forgotten tool is blocked, not run. A typo in `reads` raises an error at setup. Keep the request wrapped with `pp.wrap`.
+
+For a mapping of ordinary Python functions, use `guard`. It also accepts `results` for stand-ins and `live` for opt-in caps, both keyed by tool name.
+
+```python
+from promptproof.harness_tools import guard
+
+tools = guard({"lookup_order": lookup_order, "issue_refund": issue_refund}, reads=["lookup_order"])
+```
+
+For **OpenAI Agents SDK**, install `promptproof[agents]` and pass the guarded `FunctionTool` objects to the agent. Use qualified names for namespaced tools. Guarding a tool with a callable `needs_approval` policy raises an error to preserve the SDK's approval checks.
+
+```python
+from agents import Agent
+from promptproof.harness_tools import guard_agents
+
+agent = Agent(name="Orders", tools=guard_agents(all_function_tools, reads=["lookup_order"]))
+```
+
+For **LangChain or LangGraph**, install `promptproof[langchain]` and use the guarded tools for model binding and execution.
+
+```python
+from promptproof.harness_tools import guard_langchain
+
+tools = guard_langchain(all_base_tools, reads=["lookup_order"])
+```
+
+For **Claude Agent SDK**, install `promptproof[claude-agent]` and pass the guarded in-process tool definitions to the SDK server. Connect the SDK client and finish its tool calls inside the wrapped request so the callbacks inherit its session.
+
+```python
+from claude_agent_sdk import create_sdk_mcp_server
+from promptproof.harness_tools import guard_claude_agent
+
+tools = guard_claude_agent(all_sdk_tools, reads=["lookup_order"], server_name="orders")
+server = create_sdk_mcp_server("orders", tools=tools)
+```
+
+To cover Claude tools dispatched by Claude Code, use the hook as an alternative. Register it in `ClaudeAgentOptions` before connecting inside the wrapped request. Claude receives the denial reason and can continue.
+
+```python
+from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
+from promptproof.harness_tools import claude_pre_tool_use
+
+options = ClaudeAgentOptions(
+    hooks={"PreToolUse": [claude_pre_tool_use(["Read", "Write"], reads=["Read"])]},
+)
+
+async def handle_chat():  # called inside the wrapped request
+    async with ClaudeSDKClient(options=options) as client:
+        ...  # handle the conversation here
+```
 
 ### Bots built in a no-code builder
 
