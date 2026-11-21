@@ -204,6 +204,25 @@ Then ask the assistant to "set up Promptproof for this bot". It can read the set
 
 It cannot authorize a test. Permission is a person taking responsibility by name, so you run `promptproof authorize` yourself; without it, the assistant can only scan the built-in practice bots. It reads and writes only inside the folder it was started in. `promptproof guide` prints the same setup guide for people.
 
+## Check a test deployment is not wired to production
+
+Before scanning staging or preview, run the check on an env export from that deployment:
+
+```
+promptproof sterile-check --env-file staging.env
+```
+
+Use `--environment` to check the current process environment, including when the
+command runs inside the deployment. You can check multiple files and the process
+environment together. Each source is checked independently. The report shows
+variable names and public rule details without exposing credential values.
+
+Exit status 1 means the check found a live signal. Review any `unknown` findings
+too, since many provider keys reveal nothing about the environment they can
+access. After reviewing a finding, you can mark it with `--allow NAME`. Use
+`--json` for automation. Exit status 0 means no unallowed live signal matched in
+the configuration you supplied. Exit status 2 means the check could not run.
+
 ## Development
 
 ```
