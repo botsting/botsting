@@ -281,6 +281,10 @@ async def check_proof_async(
                     return ProofResult(False, f"{url} answered with a redirect; redirects are not followed")
                 if response.status_code != 200:
                     return ProofResult(False, f"{url} answered HTTP {response.status_code}")
+                age = response.headers.get("age", "0").strip()
+                if not age.isdigit() or int(age) > 0:
+                    # A cache answered, so the token may already have been taken down at the origin.
+                    return ProofResult(False, f"{url} was answered from a cache (Age: {age}); serve it uncached")
                 kind = response.headers.get("content-type", "").split(";")[0].strip().lower()
                 if kind != "text/plain":
                     return ProofResult(False, f"{url} must be served as text/plain, not {kind or 'no content type'}")

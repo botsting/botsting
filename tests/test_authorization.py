@@ -734,3 +734,18 @@ def test_a_network_target_cannot_claim_a_loopback_origin():
     record = new_authorization("http://127.0.0.1:8080", "Dana", "x", "test", 7, NOW)
     with pytest.raises(AuthorizationError, match="across a network"):
         require_authorized(Remote(reach="network", origin="http://127.0.0.1:8080", authorization=record), now=NOW)
+
+
+def test_a_proof_answered_from_a_cache_is_not_accepted():
+    a = verified()
+
+    def cached(age: str):
+        def handler(request):
+            return httpx.Response(200, text=a.challenge_line(), headers={"Age": age})
+
+        return httpx.MockTransport(handler)
+
+    assert check_proof(a, cached("0")).ok
+    for age in ("86400", "1", "soon"):
+        result = check_proof(a, cached(age))
+        assert not result.ok and "cache" in result.detail, age
