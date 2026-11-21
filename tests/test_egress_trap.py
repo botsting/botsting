@@ -40,3 +40,41 @@ def test_the_proxy_environment_exempts_only_this_machine(tmp_path):
         assert env["NO_PROXY"] == "localhost,127.0.0.1,::1"
     finally:
         trap.stop()
+
+
+def test_an_allowed_tunnel_is_passed_through_and_everything_else_still_refused(tmp_path):
+    import socket
+    import threading
+
+    upstream = socket.create_server(("127.0.0.1", 0))
+    port = upstream.getsockname()[1]
+
+    def echo():
+        connection, _ = upstream.accept()
+        with connection:
+            while data := connection.recv(1024):
+                connection.sendall(b"echo:" + data)
+
+    threading.Thread(target=echo, daemon=True).start()
+    trap = EgressTrap(tmp_path / "egress.jsonl", allow=(f"127.0.0.1:{port}",))
+    try:
+        with socket.create_connection(("127.0.0.1", trap.port), timeout=5) as client:
+            client.sendall(f"CONNECT 127.0.0.1:{port} HTTP/1.1\r\nHost: x\r\n\r\n".encode())
+            assert client.recv(1024).startswith(b"HTTP/1.1 200")
+            client.sendall(b"hello")
+            assert client.recv(1024) == b"echo:hello"
+        with socket.create_connection(("127.0.0.1", trap.port), timeout=5) as client:
+            client.sendall(f"CONNECT 127.0.0.1:{port + 1} HTTP/1.1\r\n\r\n".encode())
+            assert client.recv(1024).startswith(b"HTTP/1.1 403")
+        assert [(a["target"], a.get("allowed")) for a in trap.attempts] == [
+            (f"127.0.0.1:{port}", "true"),
+            (f"127.0.0.1:{port + 1}", None),
+        ]
+    finally:
+        trap.stop()
+        upstream.close()
+
+
+def test_allow_entries_must_name_host_and_port(tmp_path):
+    with pytest.raises(ValueError, match="host:port"):
+        EgressTrap(tmp_path / "x.jsonl", allow=("api.anthropic.com",))

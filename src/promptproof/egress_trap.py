@@ -7,6 +7,11 @@ and writes one JSON line per attempt to its log, so after the test the log shows
 exactly what the bot tried to reach. An empty log is the evidence that it reached
 for nothing.
 
+A test sometimes needs one outside service, such as the bot's model API. Name it in
+`allow` as "host:port"; an encrypted tunnel (CONNECT) to exactly that address is then
+passed through and recorded as allowed. Everything else is still refused. The trap
+sees only where a tunnel goes, not what is inside it.
+
 Limits, stated in every report that relies on it: this catches traffic that honours
 the proxy settings (ordinary HTTP clients do, unless a program turns that off). It
 does not see raw TCP connections such as SMTP or a database protocol, so it is used
@@ -25,9 +30,16 @@ _MAX_HEADER = 16_384
 
 
 class EgressTrap:
-    def __init__(self, log_path: Path, host: str = "127.0.0.1", port: int = 0) -> None:
+    def __init__(
+        self, log_path: Path, host: str = "127.0.0.1", port: int = 0, allow: tuple[str, ...] = ()
+    ) -> None:
         if host not in ("127.0.0.1", "::1", "localhost"):
             raise ValueError("the trap only listens on this machine")
+        for item in allow:
+            name, _, number = item.rpartition(":")
+            if not name or not number.isdigit():
+                raise ValueError(f"allow entries are host:port, got {item!r}")
+        self.allow = frozenset(item.lower() for item in allow)
         self.log_path = Path(log_path)
         self.attempts: list[dict[str, str]] = []
         self._lock = threading.Lock()
@@ -62,6 +74,11 @@ class EgressTrap:
             first = data.split(b"\r\n", 1)[0].decode("latin-1", "replace")
             method, _, rest = first.partition(" ")
             target = rest.rsplit(" ", 1)[0] if " " in rest else rest
+            if method == "CONNECT" and target.lower() in self.allow:
+                self._record(method, target, allowed=True)
+                head, _, early = data.partition(b"\r\n\r\n")
+                self._tunnel(connection, target, early)
+                return
             self._record(method or "(nothing)", target or "(nothing)")
             try:
                 connection.sendall(
@@ -70,8 +87,43 @@ class EgressTrap:
             except OSError:
                 pass
 
-    def _record(self, method: str, target: str) -> None:
+    def _tunnel(self, client: socket.socket, target: str, early: bytes) -> None:
+        """Pass an encrypted tunnel through to an allowed address, untouched, until either side closes."""
+        host, _, port = target.rpartition(":")
+        try:
+            upstream = socket.create_connection((host, int(port)), timeout=15)
+        except OSError:
+            client.sendall(b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            return
+        with upstream:
+            client.sendall(b"HTTP/1.1 200 Connection established\r\n\r\n")
+            if early:
+                upstream.sendall(early)
+            client.settimeout(None)
+            upstream.settimeout(None)
+
+            def pump(source: socket.socket, sink: socket.socket) -> None:
+                try:
+                    while chunk := source.recv(65536):
+                        sink.sendall(chunk)
+                except OSError:
+                    pass
+                finally:
+                    for side in (source, sink):
+                        try:
+                            side.shutdown(socket.SHUT_RDWR)
+                        except OSError:
+                            pass
+
+            back = threading.Thread(target=pump, args=(upstream, client), daemon=True)
+            back.start()
+            pump(client, upstream)
+            back.join(timeout=5)
+
+    def _record(self, method: str, target: str, allowed: bool = False) -> None:
         entry = {"at": datetime.now(UTC).isoformat(timespec="seconds"), "method": method, "target": target}
+        if allowed:
+            entry["allowed"] = "true"
         with self._lock:
             self.attempts.append(entry)
             self.log_path.parent.mkdir(parents=True, exist_ok=True)

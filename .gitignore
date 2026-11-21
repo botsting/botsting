@@ -23,3 +23,6 @@ promptproof.authorizations.json
 
 # Descriptions of real bots; may name internal addresses.
 promptproof.targets.json
+
+# Adapters and runs for the owner's own systems; internal, never published.
+/local/
