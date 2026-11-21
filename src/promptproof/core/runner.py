@@ -40,12 +40,19 @@ import math
 import secrets
 import time
 from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
-from typing import TypeVar
-from dataclasses import dataclass, field, replace as _replace
+from dataclasses import dataclass, field
+from dataclasses import replace as _replace
 from datetime import UTC, datetime
+from typing import TypeVar
 
 from promptproof import __version__
-from promptproof.attacks.strategy import AdaptiveStrategy, Objective, ProbeFeedback, TurnGenerator, objectives_for
+from promptproof.attacks.strategy import (
+    AdaptiveStrategy,
+    Objective,
+    ProbeFeedback,
+    TurnGenerator,
+    objectives_for,
+)
 from promptproof.core.authorization import authorization_summary
 from promptproof.core.canary import STYLES, Canary, new_canary
 from promptproof.core.matcher import (
@@ -85,14 +92,14 @@ from promptproof.core.models import (
 )
 from promptproof.core.stats import make_rate
 from promptproof.targets.base import (
+    NotAuthorizedError,
     Session,
     Target,
     TargetError,
-    as_reply,
-    injection_points,
-    NotAuthorizedError,
     UnsafeTargetError,
+    as_reply,
     confirm_permitted,
+    injection_points,
     require_contained_tools,
     tool_rules,
 )
@@ -132,9 +139,10 @@ LIMITATIONS: tuple[str, ...] = (
     f"{PIECE_MAX_GROUPS:,} chunks); encodings applied on top of one another; any encoding not listed "
     "above. A leak in one of those forms would not appear in this report.",
     "For protected items planted as invented names rather than codes, the limits are tighter, because "
-    "names come from a smaller set: a spelled name must have no other single characters between its "
-    f"letters, a chunked name may come in at most {LIMITS['name'].piece_max_count} chunks, and the chunk "
-    f"reading is skipped above {LIMITS['name'].piece_max_groups:,} chunks in one text.",
+    "names come from a smaller set: a spelled name may have at most one other single character between "
+    "its letters, and none once the text has more than 100 single characters; a chunked name may come in "
+    f"at most {LIMITS['name'].piece_max_count} chunks, and the chunk reading is skipped above "
+    f"{LIMITS['name'].piece_max_groups:,} chunks in one text.",
     "Canaries are only looked for in what the attacker receives. Planted text that makes the target "
     "show a secret to the ordinary user it is helping, or send it somewhere else, is not detected yet.",
     "The proof assumes the attacker did not already have the canary. Attack messages are fixed "
@@ -408,8 +416,8 @@ def _judge(canary: Canary, transcript: Sequence[Turn]) -> tuple[Match | None, bo
             if match is not None and match.full:
                 shown, evidence = set(everything), set(everything)
             else:
-                # Attribution uses the attacker's threshold: a six-character fragment the
-                # target gave out is the target's, even though six is too few to report.
+                # Attribution uses the attacker's threshold: a fragment of six characters
+                # (eight for names) the target gave out is the target's, though too short to report.
                 shown |= known_positions(canary, replies, attacker_min(canary))
                 evidence |= known_positions(canary, replies, PARTIAL_MIN)
     if best is None:

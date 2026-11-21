@@ -53,7 +53,15 @@ from promptproof.core.authorization import (
     is_loopback_origin,
     normalize_origin,
 )
-from promptproof.core.models import InjectionPoint, Reply, Slot, TaskCheck, ToolCall, ToolRule
+from promptproof.core.canary import STYLES
+from promptproof.core.models import (
+    InjectionPoint,
+    Reply,
+    Slot,
+    TaskCheck,
+    ToolCall,
+    ToolRule,
+)
 from promptproof.targets.base import TargetError
 
 DEFAULT_TARGETS_FILE = "promptproof.targets.json"
@@ -196,8 +204,8 @@ def parse_config(name: str, raw: Mapping[str, Any], digest: str = "") -> HttpTar
         for s in each("slots")
     )
     for slot in slots:
-        if slot.canary_style not in ("code", "name"):
-            raise TargetConfigError(f"{where}: slot {slot.id} canary_style must be code or name")
+        if slot.canary_style not in STYLES:
+            raise TargetConfigError(f"{where}: slot {slot.id} canary_style must be one of {', '.join(STYLES)}")
         if slot.kind not in ("instruction_secret", "other_user_record"):
             raise TargetConfigError(f"{where}: slot {slot.id} kind must be instruction_secret or other_user_record")
     rules = tuple(
