@@ -95,7 +95,7 @@ uv run promptproof scan --target http:practice --html reports/practice.html
 
 ### The drop-in harness (Python and JavaScript bots)
 
-Instead of writing the reset endpoint and recorders yourself, add a few lines to the bot. This is the Python package; the JavaScript one in `js/harness` does the same for Node, Express and fetch-style handlers (Next.js, Hono), and the same scanner scans both. It records tools and does not yet carry out capped real actions.
+Instead of writing the reset endpoint and recorders yourself, add a few lines to the bot. This is the Python package; the JavaScript one in `js/harness` does the same for Node, Express and fetch-style handlers (Next.js, Hono), and the same scanner scans both. Each records tools, and each can carry out capped real actions where all four switches agree (below).
 
 ```python
 import promptproof.harness as pp
@@ -237,6 +237,8 @@ In a test, the tool runs for real only when all four of these agree, and is reco
 A call outside the limits is still evidence. If the bot is talked into a refund of 500, the report shows the attempt and the cap that stopped it, and no money moves.
 
 `max` and `only` are exact. `total` and `calls` are counted in each server process's memory, so a deployment with several worker processes can reach that many times the per-scan limits, and whoever holds the harness key can start a new scan with a new allowance; rely on `max` and `only` for what must never be exceeded. `only` compares exactly: `1`, `1.0`, `True` and `"1"` are four different values. Attacks that change what other users see (shared memory, a knowledge base, public posts) should be tested in a copy, not live.
+
+The JavaScript harness carries the same caps as `pp.cap({ max, only, total, calls })` behind the same `live` option, the same `PROMPTPROOF_LIVE_ACTIONS` switch and the same limits.
 
 ## Permission to test
 

@@ -28,6 +28,12 @@
 // session and that one message so the record cannot be made up, moved to another
 // conversation or reused for a later message.
 //
+// Small real actions, under caps: a tool wrapped with action(..., { live: cap(...) })
+// may be carried out for real during a test session, only when four things agree —
+// the cap in this code, the deployment switch PROMPTPROOF_LIVE_ACTIONS, the scan's
+// signed session naming the tool and its run, and the call being inside every limit.
+// Otherwise it is recorded and not run, exactly as without `live`. See README.md.
+//
 // The signatures are byte-identical to the Python harness: the MAC input is
 // domain + json.dumps(list_of_parts) with Python's default separators (", ") and
 // ASCII escaping, reproduced exactly by the py* helpers below.
@@ -42,6 +48,7 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 
 export const KEY_ENV = "PROMPTPROOF_HARNESS_KEY";
 export const CHALLENGE_ENV = "PROMPTPROOF_CHALLENGE";
+export const LIVE_ENV = "PROMPTPROOF_LIVE_ACTIONS";
 export const CHALLENGE_PATH = "/.well-known/promptproof-challenge.txt";
 export const READY_PATH = "/.well-known/promptproof-harness";
 export const SESSION_HEADER = "Promptproof-Session";
@@ -51,6 +58,8 @@ export const MAX_TOKEN_BYTES = 6000; // most servers refuse headers much larger 
 export const MAX_CALLS = 100;
 export const MAX_RECORD_BYTES = 24_000; // of recorded calls in one reply; the record travels in a header
 export const MAX_LIFETIME_SECONDS = 900;
+export const MAX_RUNS_REMEMBERED = 64; // runs whose real calls this process keeps count of
+export const RUN_MEMORY_SECONDS = 24 * 3600; // far longer than any scan; a run's count is never dropped while it could go on
 
 const SESSION_DOMAIN = Buffer.from("promptproof-session/1\n");
 const CALLS_DOMAIN = Buffer.from("promptproof-calls/1\n");
@@ -100,6 +109,37 @@ function pyEscape(value) {
 function pyNumber(value) {
   if (Number.isInteger(value) && Math.abs(value) < 1e21) return String(value);
   return String(value); // JS and Python both print the shortest round-trip form for common values
+}
+
+function pyG(value) {
+  // Python's f"{value:g}": at most 6 significant digits, trailing zeros stripped,
+  // exponential form when the leading digit sits at 1e6 or beyond 1e-5 (1.23457e+06, 1e-05).
+  if (Number.isNaN(value)) return "nan";
+  if (value === Infinity) return "inf";
+  if (value === -Infinity) return "-inf";
+  const neg = value < 0 || Object.is(value, -0);
+  const x = Math.abs(value);
+  if (x === 0) return neg ? "-0" : "0";
+  const exponentOf = (v) => parseInt(v.slice(v.indexOf("e") + 1), 10);
+  const strip = (s) => (s.includes(".") ? s.replace(/0+$/, "").replace(/\.$/, "") : s);
+  const e = exponentOf(x.toExponential()); // where the leading digit sits, before rounding
+  let digits = strip(x.toPrecision(6));
+  let exponent = 0;
+  if (digits.includes("e")) {
+    // rounding carried into a new decade (999999.6 -> 1e+06)
+    const [mantissa, exp] = digits.split("e");
+    digits = strip(mantissa);
+    exponent = parseInt(exp, 10);
+  }
+  if (exponent !== 0 || e < -4 || e >= 6) {
+    if (exponent === 0) {
+      exponent = e;
+      digits = strip(x.toExponential(5).split("e")[0]);
+    }
+    const sign = exponent < 0 ? "-" : "+";
+    return (neg ? "-" : "") + digits + "e" + sign + String(Math.abs(exponent)).padStart(2, "0");
+  }
+  return (neg ? "-" : "") + digits;
 }
 
 function pyCmp(a, b) {
@@ -201,7 +241,7 @@ export function makeSessionToken(
   sessionId,
   fixtures,
   content = {},
-  { lifetimeSeconds = 300, now = null, nonce = "" } = {}
+  { lifetimeSeconds = 300, now = null, nonce = "", live = [], run = "" } = {}
 ) {
   // What the scanner puts in the Promptproof-Session header of each message. The
   // nonce should be new for every message: the harness signs it into that message's
@@ -218,6 +258,13 @@ export function makeSessionToken(
     fixtures: { ...fixtures },
     content: { ...content },
   };
+  const liveTools = [...(live ?? [])];
+  if (liveTools.length > 0) {
+    // Tools the scan asks to have carried out for real, and the run their totals are counted under.
+    if (!run) throw new HarnessError("a session that asks for live actions must name its run");
+    body.live = [...new Set(liveTools)].sort(pyCmp);
+    body.run = run;
+  }
   const payload = b64(Buffer.from(pyDumps(body, { compact: true, sortKeys: true }), "utf8"));
   const token = payload + "." + mac(key, SESSION_DOMAIN, [payload]);
   if (token.length > MAX_TOKEN_BYTES) {
@@ -270,12 +317,14 @@ export function readCallsHeader(key, sessionId, value, nonce = "") {
 // -- the session -----------------------------------------------------------------------------
 
 export class Session {
-  constructor(sid, fixtures, content, key, nonce = "") {
+  constructor(sid, fixtures, content, key, nonce = "", live = new Set(), runId = "") {
     this.sid = sid;
     this.fixtures = fixtures;
     this.content = content;
     this.key = key;
     this.nonce = nonce;
+    this.live = live; // tools the scan asks to have carried out for real ("live" on the wire)
+    this.runId = runId; // the run their totals are counted under ("run" on the wire)
     this.calls = [];
     this.dropped = 0;
     this.size = 0;
@@ -325,6 +374,14 @@ function stringMap(value) {
   return out;
 }
 
+function liveSet(value) {
+  // Python list() over the JSON types: an array stays, a string becomes its characters,
+  // anything else is not iterable and the session is refused.
+  const items = Array.isArray(value) ? value : typeof value === "string" ? Array.from(value) : null;
+  if (items === null) throw new TypeError("not a list");
+  return new Set(items.map(pyStr));
+}
+
 export function openSession(token, now = null) {
   // A session for a validly signed, unexpired token; null for anything else.
   const key = envKey();
@@ -341,13 +398,16 @@ export function openSession(token, now = null) {
     var expires = pyInt(required(body, "exp")); // eslint-disable-line no-var
     var sid = pyStr(required(body, "sid")); // eslint-disable-line no-var
     var nonce = "n" in body ? pyStr(body.n) : ""; // eslint-disable-line no-var
+    var live = liveSet("live" in body ? body.live : []); // eslint-disable-line no-var
+    var runId = "run" in body ? pyStr(body.run) : ""; // eslint-disable-line no-var
     var fixtures = stringMap(required(body, "fixtures")); // eslint-disable-line no-var
     var content = stringMap("content" in body ? body.content : {}); // eslint-disable-line no-var
   } catch {
     return null;
   }
   if (body.v !== 1 || expires < (now === null ? Date.now() / 1000 : now)) return null;
-  return new Session(sid, fixtures, content, key, nonce);
+  if (live.size > 0 && !runId) return null; // a session that asks for live actions must name its run
+  return new Session(sid, fixtures, content, key, nonce, live, runId);
 }
 
 // -- what the bot's code calls ----------------------------------------------------------------
@@ -375,6 +435,139 @@ export function recordedCalls() {
   // The calls recorded so far in this request, for a bot that reports them in its own reply body.
   const session = storage.getStore();
   return session ? session.calls.map((c) => ({ ...c })) : [];
+}
+
+// -- small real actions, under caps -------------------------------------------------------------
+
+const CAP = Symbol("promptproof.cap");
+
+export function cap({ max = {}, only = {}, total = {}, calls = 1 } = {}) {
+  // Limits under which a tool may be carried out for real during a test, mirroring the
+  // Python harness's Cap. Frozen, and validated the same way: it must limit at least
+  // one argument with max or only, ceilings are numbers of 0 or more, calls a whole
+  // number of 1 or more, and an only-list is a non-empty array or Set (never a string,
+  // which would allow every substring).
+  max = { ...max };
+  total = { ...total };
+  const onlyLimits = {};
+  if (Object.keys(max).length === 0 && Object.keys(only).length === 0) {
+    throw new HarnessError("a cap must limit at least one argument with max or only");
+  }
+  if (typeof calls === "boolean" || typeof calls !== "number" || !Number.isInteger(calls) || calls < 1) {
+    throw new HarnessError("calls in a cap must be a whole number, 1 or more");
+  }
+  for (const [name, ceiling] of Object.entries({ ...max, ...total })) {
+    if (
+      typeof ceiling === "boolean" ||
+      typeof ceiling !== "number" ||
+      !Number.isFinite(ceiling) ||
+      ceiling < 0
+    ) {
+      throw new HarnessError(`the cap on '${name}' must be a number, 0 or more`);
+    }
+  }
+  for (const [name, allowed] of Object.entries(only)) {
+    const isList = allowed instanceof Set || Array.isArray(allowed);
+    const size = isList ? (allowed instanceof Set ? allowed.size : allowed.length) : 0;
+    if (!isList || size === 0) {
+      throw new HarnessError(`only on '${name}' must be a non-empty array or Set of allowed values`);
+    }
+    onlyLimits[name] = allowed instanceof Set ? new Set(allowed) : Object.freeze([...allowed]);
+  }
+  const made = {
+    max: Object.freeze(max), // argument -> highest value for one call
+    only: Object.freeze(onlyLimits), // argument -> the values allowed
+    total: Object.freeze(total), // argument -> highest sum over one run
+    calls, // real calls per run
+    names() {
+      return new Set([...Object.keys(max), ...Object.keys(onlyLimits), ...Object.keys(total)]);
+    },
+  };
+  made[CAP] = true;
+  return Object.freeze(made);
+}
+
+function number_(value) {
+  // The value as a finite number, or null. Booleans, numeric strings, BigInts, boxed
+  // numbers and objects with valueOf are not numbers here (Python: True is not 1).
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  return value;
+}
+
+function liveSwitch() {
+  // The owner's switch on this deployment: nothing runs for real unless it names the tool.
+  return new Set(
+    (process.env[LIVE_ENV] || "")
+      .split(",")
+      .map((t) => t.trim())
+      .filter((t) => t !== "")
+  );
+}
+
+// run id -> Map<tool, [real calls so far, {argument: sum so far}]>. In this process
+// only, shared with the test suite so it can be cleaned between tests.
+export const _ledger = new Map();
+export const _runFirstSeen = new Map();
+
+function mayRun(session, tool, limits, callArguments) {
+  // Whether this call is carried out for real, and why not. Reserves its share of the
+  // run's limits: the reservation happens here, synchronously before the real function
+  // is called, so concurrent calls cannot both pass a limit. Order and reason texts
+  // match the Python harness's _may_run exactly.
+  const valueOf = (name) => (Object.hasOwn(callArguments, name) ? callArguments[name] : undefined);
+  if (limits === null || !session.live.has(tool)) return [false, ""]; // an ordinary test session: record only
+  if (!liveSwitch().has(tool)) {
+    return [false, `this deployment does not allow ${tool} to run for real (${LIVE_ENV})`];
+  }
+  for (const [name, ceiling] of Object.entries(limits.max)) {
+    const value = number_(valueOf(name));
+    if (value === null) return [false, `${name} is not a number, so its cap cannot be checked`];
+    if (!(0 <= value && value <= ceiling)) {
+      return [false, `${name} ${pyG(value)} is outside the cap of 0 to ${pyG(ceiling)}`];
+    }
+  }
+  for (const [name, allowed] of Object.entries(limits.only)) {
+    const value = valueOf(name);
+    const listed = allowed instanceof Set ? allowed.has(value) : allowed.includes(value); // strict, no coercion
+    if (!listed) return [false, `${name} is not one of the values allowed for a live test`];
+  }
+  const sums = {};
+  for (const name of Object.keys(limits.total)) {
+    const value = number_(valueOf(name));
+    if (value === null || value < 0) {
+      return [false, `${name} is not a number of 0 or more, so the run's total cannot be checked`];
+    }
+    sums[name] = value;
+  }
+  const now = performance.now(); // monotonic, like Python's time.monotonic()
+  if (!_ledger.has(session.runId)) {
+    for (const [old, seen] of _runFirstSeen) {
+      if (now - seen > RUN_MEMORY_SECONDS * 1000) {
+        _ledger.delete(old);
+        _runFirstSeen.delete(old);
+      }
+    }
+    if (_ledger.size >= MAX_RUNS_REMEMBERED) {
+      // Forgetting a recent run would hand it a fresh allowance. Refuse the new one instead.
+      return [false, "too many test runs in the last day for this process to keep count of; nothing more runs for real"];
+    }
+    _ledger.set(session.runId, new Map());
+    _runFirstSeen.set(session.runId, now);
+  }
+  const run = _ledger.get(session.runId);
+  const [calls, totals] = run.get(tool) ?? [0, {}];
+  if (calls + 1 > limits.calls) {
+    return [false, `the run's limit of ${limits.calls} real call(s) to ${tool} is used up`];
+  }
+  for (const [name, value] of Object.entries(sums)) {
+    if ((totals[name] ?? 0) + value > limits.total[name]) {
+      return [false, `this would take the run's total ${name} over the cap of ${pyG(limits.total[name])}`];
+    }
+  }
+  const spent = { ...totals };
+  for (const [name, value] of Object.entries(sums)) spent[name] = (totals[name] ?? 0) + value;
+  run.set(tool, [calls + 1, spent]);
+  return [true, ""];
 }
 
 function paramNames(fn) {
@@ -431,50 +624,125 @@ function text(value) {
   return pyDumps(value, { sortKeys: true });
 }
 
-function recordCall(tool, resultOption, names, args, session) {
-  let arguments_;
-  if (names && args.length <= names.length) {
-    arguments_ = {};
-    for (let i = 0; i < args.length; i++) arguments_[names[i]] = args[i];
-    delete arguments_.self; // a method call: the bound instance is not an argument
-    delete arguments_.cls;
-  } else {
-    // more arguments than the source names, or names we could not read: Python's
-    // signature.bind would have raised, so every argument gets a generated name
-    arguments_ = {};
-    for (let i = 0; i < args.length; i++) arguments_[`arg${i}`] = args[i];
+function errorName(error) {
+  // Python records type(error).__name__, so the class's own name comes first; an
+  // explicitly set error.name is the fallback.
+  if (error !== null && typeof error === "object") {
+    const className = error.constructor?.name;
+    if (typeof className === "string" && className !== "") return className;
+    if (typeof error.name === "string" && error.name !== "") return error.name;
   }
-  const standIn = typeof resultOption === "function" ? resultOption(arguments_) : resultOption;
-  const recorded = {};
-  for (const key of Object.keys(arguments_)) recorded[key] = text(arguments_[key]);
-  session.add({
-    id: `call-${session.calls.length + 1}`,
-    tool,
-    arguments: recorded,
-    accepted: true,
-    result: text(standIn),
-  });
-  return standIn;
+  return "Error";
 }
 
 export function action(tool, fn, options = {}) {
   // Mark a function as a risky tool. In a test session it is recorded, not run, and
   // returns `options.result` (or `options.result(arguments)` if that is a function).
   // Outside one it runs as written.
+  //
+  // With `options.live` a cap made with cap(), the tool may be carried out for real in
+  // a test session, inside those limits and only where the owner has switched that on;
+  // the cap's argument names must be parameters of the function.
   const resultOption = options && options.result !== undefined ? options.result : DEFAULT_RESULT;
+  const live = options && options.live !== undefined && options.live !== null ? options.live : null;
+  if (live !== null && live[CAP] !== true) {
+    throw new HarnessError(`${tool}: live must be a cap made with cap()`);
+  }
   const names = paramNames(fn);
+  if (live !== null) {
+    if (names === null) {
+      throw new HarnessError(
+        `${tool}: the parameter names of the function cannot be read, so its cap cannot be checked`
+      );
+    }
+    const known = new Set(names);
+    const unknown = [...live.names()].filter((name) => !known.has(name)).sort(pyCmp);
+    if (unknown.length > 0) {
+      throw new HarnessError(`${tool}: the cap names ${JSON.stringify(unknown)}, which are not arguments of the function`);
+    }
+  }
   const isAsync = fn && fn.constructor && fn.constructor.name === "AsyncFunction";
+
+  function namedArguments(args) {
+    // The arguments of the call by name — Python's signature.bind — or with generated
+    // names when the source's parameter names could not be read, or when the call
+    // passed more than it names: arguments the function would reject can never be
+    // checked against a cap, so they are never carried out for real.
+    if (names && args.length <= names.length) {
+      const byName = {};
+      for (let i = 0; i < args.length; i++) byName[names[i]] = args[i];
+      delete byName.self; // a method call: the bound instance is not an argument
+      delete byName.cls;
+      return { arguments: byName, bound: true };
+    }
+    const generated = {};
+    for (let i = 0; i < args.length; i++) generated[`arg${i}`] = args[i];
+    return { arguments: generated, bound: false };
+  }
+
+  function record(session, callArguments, outcome, note, mode) {
+    const recorded = {};
+    for (const key of Object.keys(callArguments)) recorded[key] = text(callArguments[key]);
+    const call = {
+      id: `call-${session.calls.length + 1}`,
+      tool,
+      arguments: recorded,
+      accepted: true,
+      result: (note ? `[${note}] ` : "") + text(outcome),
+    };
+    if (mode) call.live = mode; // "ran" or "capped"; absent for an ordinary recorded call
+    session.add(call);
+  }
+
+  function standIn(session, callArguments, whyNot) {
+    const outcome = typeof resultOption === "function" ? resultOption(callArguments) : resultOption;
+    record(session, callArguments, outcome, whyNot ? `not run: ${whyNot}` : "", whyNot ? "capped" : "");
+    return outcome;
+  }
+
+  function decide(session, args) {
+    const named = namedArguments(args);
+    if (live === null || !named.bound) return [named.arguments, false, ""];
+    return [named.arguments, ...mayRun(session, tool, live, named.arguments)];
+  }
+
+  async function runInSessionAsync(session, thisArg, args) {
+    const [callArguments, real, whyNot] = decide(session, args); // reserves synchronously
+    if (!real) return standIn(session, callArguments, whyNot);
+    try {
+      const outcome = await fn.apply(thisArg, args);
+      record(session, callArguments, outcome, "ran for real within the caps", "ran");
+      return outcome;
+    } catch (error) {
+      record(session, callArguments, `raised ${errorName(error)}`, "ran for real within the caps", "ran");
+      throw error;
+    }
+  }
+
+  function runInSession(session, thisArg, args) {
+    const [callArguments, real, whyNot] = decide(session, args);
+    if (!real) return standIn(session, callArguments, whyNot);
+    try {
+      const outcome = fn.apply(thisArg, args);
+      record(session, callArguments, outcome, "ran for real within the caps", "ran");
+      return outcome;
+    } catch (error) {
+      record(session, callArguments, `raised ${errorName(error)}`, "ran for real within the caps", "ran");
+      throw error;
+    }
+  }
+
   if (isAsync) {
     return async function (...args) {
       const session = storage.getStore();
       if (session === undefined) return fn.apply(this, args);
-      return recordCall(tool, resultOption, names, args, session);
+      return runInSessionAsync(session, this, args);
     };
   }
   return function (...args) {
     const session = storage.getStore();
     if (session === undefined) return fn.apply(this, args);
-    return recordCall(tool, resultOption, names, args, session);
+    return runInSession(session, this, args);
   };
 }
 
