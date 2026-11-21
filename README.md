@@ -236,7 +236,7 @@ In a test, the tool runs for real only when all four of these agree, and is reco
 
 A call outside the limits is still evidence. If the bot is talked into a refund of 500, the report shows the attempt and the cap that stopped it, and no money moves.
 
-`max` and `only` are exact. `total` and `calls` are counted in each server process's memory, so a deployment with several worker processes can reach that many times the per-scan limits, and whoever holds the harness key can start a new scan with a new allowance; rely on `max` and `only` for what must never be exceeded. `only` compares exactly: `1`, `1.0`, `True` and `"1"` are four different values. Attacks that change what other users see (shared memory, a knowledge base, public posts) should be tested in a copy, not live.
+`max` and `only` are exact. `total` and `calls` are counted in each server process's memory, so a deployment with several worker processes can reach that many times the per-scan limits, and whoever holds the harness key can start a new scan with a new allowance; rely on `max` and `only` for what must never be exceeded. `only` compares exactly: `1`, `1.0`, `True` and `"1"` are four different values. Totals are added as ordinary decimal fractions, so three refunds of 0.1 come to slightly more than 0.3: write money caps in the smallest unit (cents) where you can. Attacks that change what other users see (shared memory, a knowledge base, public posts) should be tested in a copy, not live.
 
 The JavaScript harness carries the same caps as `pp.cap({ max, only, total, calls })` behind the same `live` option, the same `PROMPTPROOF_LIVE_ACTIONS` switch and the same limits.
 

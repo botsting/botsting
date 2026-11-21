@@ -483,7 +483,7 @@ def action(tool: str, result: Any = _DEFAULT_RESULT, live: Cap | None = None) ->
     def decorate(function: F) -> F:
         signature = inspect.signature(function)
         if live is not None:
-            unknown = live.names() - set(signature.parameters)
+            unknown = live.names() - (set(signature.parameters) - {"self", "cls"})
             if unknown:
                 raise HarnessError(f"{tool}: the cap names {sorted(unknown)}, which are not arguments of the function")
 

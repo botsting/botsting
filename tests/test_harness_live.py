@@ -271,6 +271,14 @@ def test_a_cap_must_name_real_arguments():
         def refund(order_id, amount): ...
 
 
+def test_a_cap_cannot_name_self():
+    with pytest.raises(pp.HarnessError, match="not arguments"):
+
+        class Billing:
+            @pp.action("refund", live=pp.Cap(only={"self": ["x"]}))
+            def refund(self, amount): ...
+
+
 def test_a_live_session_must_name_its_run():
     with pytest.raises(pp.HarnessError, match="name its run"):
         pp.make_session_token(KEY, "s1", {}, live=("issue_refund",))

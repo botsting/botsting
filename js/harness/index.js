@@ -365,21 +365,27 @@ function required(body, name) {
   return body[name];
 }
 
+// A signed token is still read strictly, as the Python harness does: the right types or nothing.
 function stringMap(value) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new TypeError("not a mapping");
   }
   const out = {};
-  for (const [k, v] of Object.entries(value)) out[pyStr(k)] = pyStr(v);
+  for (const [k, v] of Object.entries(value)) {
+    if (typeof v !== "string") throw new TypeError("not text");
+    out[k] = v;
+  }
   return out;
 }
 
+function strictText(value) {
+  if (typeof value !== "string") throw new TypeError("not text");
+  return value;
+}
+
 function liveSet(value) {
-  // Python list() over the JSON types: an array stays, a string becomes its characters,
-  // anything else is not iterable and the session is refused.
-  const items = Array.isArray(value) ? value : typeof value === "string" ? Array.from(value) : null;
-  if (items === null) throw new TypeError("not a list");
-  return new Set(items.map(pyStr));
+  if (!Array.isArray(value)) throw new TypeError("not a list");
+  return new Set(value.map(strictText));
 }
 
 export function openSession(token, now = null) {
@@ -395,11 +401,12 @@ export function openSession(token, now = null) {
   try {
     body = JSON.parse(unb64(payload).toString("utf8"));
     if (body === null || typeof body !== "object" || Array.isArray(body)) return null;
-    var expires = pyInt(required(body, "exp")); // eslint-disable-line no-var
-    var sid = pyStr(required(body, "sid")); // eslint-disable-line no-var
-    var nonce = "n" in body ? pyStr(body.n) : ""; // eslint-disable-line no-var
+    var expires = required(body, "exp"); // eslint-disable-line no-var
+    if (!Number.isInteger(expires)) return null;
+    var sid = strictText(required(body, "sid")); // eslint-disable-line no-var
+    var nonce = "n" in body ? strictText(body.n) : ""; // eslint-disable-line no-var
     var live = liveSet("live" in body ? body.live : []); // eslint-disable-line no-var
-    var runId = "run" in body ? pyStr(body.run) : ""; // eslint-disable-line no-var
+    var runId = "run" in body ? strictText(body.run) : ""; // eslint-disable-line no-var
     var fixtures = stringMap(required(body, "fixtures")); // eslint-disable-line no-var
     var content = stringMap("content" in body ? body.content : {}); // eslint-disable-line no-var
   } catch {
