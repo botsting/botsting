@@ -17,9 +17,14 @@ When is it on?
 --------------
 Only for a request that carries a valid Promptproof session, signed with the key in the
 environment variable PROMPTPROOF_HARNESS_KEY. Set that key on the staging or test
-deployment only. With no key, or for any request without a valid signature (every
-real user), everything here does nothing: tools run as written and `planted` returns
-its default.
+deployment only. A request without the Promptproof-Session header (every real user)
+is passed to the app untouched: tools run as written and `planted` returns its default.
+
+A request that carries the header but is not a valid session here (no key on this
+deployment, another key, an expired or damaged session) is refused with HTTP 403 and
+never reaches the app. Such a request says it is a test message; running it as an
+ordinary one, with real tools, is the one thing that must not happen. So a wrapped
+production deployment turns Promptproof test traffic away.
 
 What a test session does
 ------------------------
@@ -30,17 +35,29 @@ What a test session does
 - A function decorated with `@action` is not run. The call and its arguments are
   recorded, and the decorator returns the stand-in result instead.
 - The scanner first asks READY_PATH, with a signed session, and starts only if the
-  harness answers with a valid signature. Without a valid session that path is passed
-  to the app like any other, so it tells nobody else that the harness is there.
-- The recorded calls go back to the scanner in a signed response header,
-  Promptproof-Tool-Calls. Only calls made before the response headers are sent are
-  reported, so a streaming reply must finish its tool calls first.
+  harness answers with a valid signature.
+- The recorded calls go back to the scanner in a response header,
+  Promptproof-Tool-Calls, signed for that session and that one message, so a record
+  cannot be made up, moved to another conversation or reused for a later message.
+  Only calls made before the response headers are sent are reported, so a streaming
+  reply must finish its tool calls first.
 
 What it does not do
 -------------------
 It cannot see a tool that is not decorated. Every tool that sends, pays, books or
 deletes must carry `@action`; the scan's preflight checks that the recorder sees the
 calls its tool rules expect, but it cannot find a tool nobody declared.
+
+It follows the request, not the work. The test session lives in a context variable,
+which Python carries into `await`, `asyncio.to_thread` and the thread pools of
+Starlette and FastAPI. It is NOT carried into a thread you start yourself, a bare
+`loop.run_in_executor`, a process pool, or a job queue (Celery, RQ, a cron worker). A
+decorated tool that runs there during a test runs for real. If your tools run that
+way, put `@action` on the function that hands the work over (the one that enqueues),
+not on the worker.
+
+It trusts the bot's own code. The signatures stop a model, or anything a model can
+write, from faking the record. They do not stop the owner's code from lying.
 
 It uses only the standard library, so adding it to a bot adds no dependencies.
 """
@@ -69,11 +86,13 @@ CALLS_HEADER = "Promptproof-Tool-Calls"
 MIN_KEY_LENGTH = 32
 MAX_TOKEN_BYTES = 6000  # most servers refuse headers much larger than 8 KB
 MAX_CALLS = 100
+MAX_RECORD_BYTES = 24_000  # of recorded calls in one reply; the record travels in a header
 MAX_LIFETIME_SECONDS = 900
 _SESSION_DOMAIN = b"promptproof-session/1\n"
 _CALLS_DOMAIN = b"promptproof-calls/1\n"
 _DEFAULT_RESULT = {"status": "ok"}
 _READY = b"promptproof harness ready\n"
+_REFUSED = b"promptproof: this request carries a test session that is not valid here, so it was not run\n"
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -94,8 +113,13 @@ def _unb64(text: str) -> bytes:
 
 
 def _mac(key: str, domain: bytes, *parts: str) -> str:
-    message = domain + "\n".join(parts).encode("utf-8")
+    message = domain + json.dumps(list(parts)).encode("ascii")  # a list, so parts cannot run together
     return _b64(hmac.new(key.encode("utf-8"), message, hashlib.sha256).digest())
+
+
+def _same(given: str, expected: str) -> bool:
+    """Constant-time comparison that also accepts whatever bytes arrived in a header."""
+    return hmac.compare_digest(given.encode("utf-8", "replace"), expected.encode("utf-8"))
 
 
 def check_key(key: str) -> str:
@@ -119,8 +143,10 @@ def make_session_token(
     content: Mapping[str, str] | None = None,
     lifetime_seconds: float = 300.0,
     now: float | None = None,
+    nonce: str = "",
 ) -> str:
-    """What the scanner puts in the Promptproof-Session header of each message."""
+    """What the scanner puts in the Promptproof-Session header of each message. `nonce` should be
+    new for every message: the harness signs it into that message's tool-call record."""
     check_key(key)
     if not 0 < lifetime_seconds <= MAX_LIFETIME_SECONDS:
         raise HarnessError(
@@ -129,6 +155,7 @@ def make_session_token(
     body = {
         "v": 1,
         "sid": session_id,
+        "n": nonce,
         "exp": int((time.time() if now is None else now) + lifetime_seconds),
         "fixtures": dict(fixtures),
         "content": dict(content or {}),
@@ -146,21 +173,19 @@ def make_session_token(
 
 
 def read_calls_header(
-    key: str, session_id: str, value: str | None
+    key: str, session_id: str, value: str | None, nonce: str = ""
 ) -> list[dict[str, Any]]:
     """What the scanner does with the Promptproof-Tool-Calls header. Raises HarnessError if it was not
-    made by a harness holding the key for this very session, or if calls were left out."""
+    made by a harness holding the key for this very session and message, or if calls were left out."""
     if value is None:
         raise HarnessError(
             f"the reply has no {CALLS_HEADER} header: the harness did not see this as a test session "
             f"(is {KEY_ENV} the same on both sides, and is the app wrapped?)"
         )
     payload, _, mac = value.strip().partition(".")
-    if not mac or not hmac.compare_digest(
-        mac, _mac(key, _CALLS_DOMAIN, session_id, payload)
-    ):
+    if not mac or not _same(mac, _mac(key, _CALLS_DOMAIN, session_id, nonce, payload)):
         raise HarnessError(
-            "the tool-call record is not signed by the harness for this session"
+            "the tool-call record is not signed by the harness for this session and message"
         )
     try:
         record = json.loads(_unb64(payload))
@@ -171,7 +196,8 @@ def read_calls_header(
         raise HarnessError("the tool-call record must hold a list of calls")
     if dropped:
         raise HarnessError(
-            f"the bot made more than {MAX_CALLS} tool calls in one reply; {dropped} were not recorded"
+            f"the bot made more tool calls in one reply than the record holds ({MAX_CALLS} calls, "
+            f"{MAX_RECORD_BYTES} bytes); {dropped} were not recorded"
         )
     return calls
 
@@ -185,13 +211,24 @@ class _Session:
     fixtures: dict[str, str]
     content: dict[str, str]
     key: str
+    nonce: str = ""
     calls: list[dict[str, Any]] = field(default_factory=list)
     dropped: int = 0
+    size: int = 0
+
+    def add(self, call: dict[str, Any]) -> None:
+        """Record a call, or count it as dropped: the scanner treats any dropped call as an error."""
+        size = len(json.dumps(call, separators=(",", ":")))
+        if len(self.calls) >= MAX_CALLS or self.size + size > MAX_RECORD_BYTES:
+            self.dropped += 1
+            return
+        self.size += size
+        self.calls.append(call)
 
     def header_value(self) -> str:
         record = {"calls": self.calls, "dropped": self.dropped}
         payload = _b64(json.dumps(record, separators=(",", ":")).encode("utf-8"))
-        return payload + "." + _mac(self.key, _CALLS_DOMAIN, self.sid, payload)
+        return payload + "." + _mac(self.key, _CALLS_DOMAIN, self.sid, self.nonce, payload)
 
 
 _current: ContextVar[_Session | None] = ContextVar("promptproof_session", default=None)
@@ -210,19 +247,20 @@ def _open(token: str | None, now: float | None = None) -> _Session | None:
     if key is None or not token or len(token) > MAX_TOKEN_BYTES:
         return None
     payload, _, mac = token.strip().partition(".")
-    if not mac or not hmac.compare_digest(mac, _mac(key, _SESSION_DOMAIN, payload)):
+    if not mac or not _same(mac, _mac(key, _SESSION_DOMAIN, payload)):
         return None
     try:
         body = json.loads(_unb64(payload))
         expires = int(body["exp"])
         sid = str(body["sid"])
+        nonce = str(body.get("n", ""))
         fixtures = {str(k): str(v) for k, v in dict(body["fixtures"]).items()}
         content = {str(k): str(v) for k, v in dict(body.get("content", {})).items()}
     except (ValueError, KeyError, TypeError):
         return None
     if body.get("v") != 1 or expires < (time.time() if now is None else now):
         return None
-    return _Session(sid=sid, fixtures=fixtures, content=content, key=key)
+    return _Session(sid=sid, fixtures=fixtures, content=content, key=key, nonce=nonce)
 
 
 # -- what the bot's code calls ------------------------------------------------------------
@@ -274,18 +312,15 @@ def action(tool: str, result: Any = _DEFAULT_RESULT) -> Callable[[F], F]:
             except TypeError:
                 arguments = {f"arg{i}": v for i, v in enumerate(args)} | kwargs
             stand_in = result(**arguments) if callable(result) else result
-            if len(session.calls) >= MAX_CALLS:
-                session.dropped += 1
-            else:
-                session.calls.append(
-                    {
-                        "id": f"call-{len(session.calls) + 1}",
-                        "tool": tool,
-                        "arguments": {k: _text(v) for k, v in arguments.items()},
-                        "accepted": True,
-                        "result": _text(stand_in),
-                    }
-                )
+            session.add(
+                {
+                    "id": f"call-{len(session.calls) + 1}",
+                    "tool": tool,
+                    "arguments": {k: _text(v) for k, v in arguments.items()},
+                    "accepted": True,
+                    "result": _text(stand_in),
+                }
+            )
             return stand_in
 
         if inspect.iscoroutinefunction(function):
@@ -361,14 +396,16 @@ class _Asgi:
             )
             await send({"type": "http.response.body", "body": challenge + b"\n"})
             return
-        token = None
         wanted = SESSION_HEADER.lower().encode("ascii")
-        for name, value in scope.get("headers", []):
-            if name.lower() == wanted:
-                token = value.decode("latin-1")
-        session = _open(token)
+        tokens = [value.decode("latin-1") for name, value in scope.get("headers", []) if name.lower() == wanted]
+        if not tokens:
+            await self.app(scope, receive, send)  # an ordinary request
+            return
+        session = _open(tokens[0]) if len(tokens) == 1 else None
         if session is None:
-            await self.app(scope, receive, send)
+            # It says it is a test message but is not a valid session here. Never run it as an ordinary one.
+            await send({"type": "http.response.start", "status": 403, "headers": [(b"content-type", b"text/plain")]})
+            await send({"type": "http.response.body", "body": _REFUSED})
             return
         if scope.get("path") == READY_PATH:
             calls = (
@@ -416,9 +453,14 @@ class _Wsgi:
         ):
             start_response("200 OK", [("Content-Type", "text/plain")])
             return [challenge + b"\n"]
-        session = _open(environ.get("HTTP_" + SESSION_HEADER.upper().replace("-", "_")))
+        token = environ.get("HTTP_" + SESSION_HEADER.upper().replace("-", "_"))
+        if token is None:
+            return self.app(environ, start_response)  # an ordinary request
+        session = _open(token)
         if session is None:
-            return self.app(environ, start_response)
+            # It says it is a test message but is not a valid session here. Never run it as an ordinary one.
+            start_response("403 Forbidden", [("Content-Type", "text/plain")])
+            return [_REFUSED]
         if environ.get("PATH_INFO") == READY_PATH:
             length = environ.get("CONTENT_LENGTH") or "0"
             if length.isdigit() and int(length) <= 4096:

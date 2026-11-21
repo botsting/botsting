@@ -104,13 +104,19 @@ note = pp.planted("bob_note", note) if user == "bob" else note  # or in a test c
 Make a key with `promptproof harness-key` and set it as `PROMPTPROOF_HARNESS_KEY` on the staging deployment and where you run the scan. In the target description, write `"harness": "sdk"` and leave out `reset` and `tool_calls_pointer`.
 
 - Nothing changes unless a request carries a Promptproof session signed with that key. Real users, even on staging, get the bot exactly as written.
+- A request that carries a Promptproof session the bot cannot verify (no key there, another key, expired) is refused with HTTP 403 and never reaches your code. A wrapped production deployment therefore turns test traffic away.
 - In a test session, `planted` returns that session's fake secret. Nothing is written to your database, so no fake users or records are needed.
-- In a test session, a function marked `@pp.action` is recorded and not run. The record goes back to the scan in a signed header, so the model cannot fake it.
-- Before each attempt, the scan asks the harness to confirm test mode. If it does not, nothing is sent.
+- In a test session, a function marked `@pp.action` is recorded and not run. The record goes back to the scan in a header signed for that session and that message, so the model cannot fake it or reuse an old one.
+- Before each attempt, the scan asks the harness to confirm test mode. If it does not, nothing is sent, not even the fake secrets.
 - Set `PROMPTPROOF_CHALLENGE` to the token line from `promptproof authorize` and the harness serves the ownership proof for you.
 - The harness uses only the Python standard library.
 
-Limits: a tool that is not marked cannot be seen, and calls made after a streaming reply has started are not reported.
+Limits:
+
+- A tool that is not marked cannot be seen.
+- Calls made after a streaming reply has started are blocked but not reported.
+- The test session follows the request. Python carries it into `await`, `asyncio.to_thread` and the thread pools of Starlette and FastAPI. It is not carried into a thread you start yourself, a bare `run_in_executor`, a process pool or a job queue (Celery, RQ). A marked tool that runs there during a test runs for real. If your tools run that way, mark the function that hands the work over, not the worker.
+- The signatures stop the model from faking the record. They do not stop the bot's own code from lying.
 
 ## Permission to test
 

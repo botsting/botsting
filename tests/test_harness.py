@@ -477,3 +477,211 @@ def test_the_command_line_makes_a_usable_key(capsys):
     printed = capsys.readouterr()
     made = printed.out.strip()
     assert pp.check_key(made) == made and "Never set it in production" in printed.err
+
+
+# -- after the first review -------------------------------------------------------------------
+
+
+def post(app, path="/chat", headers=None, message="a refund and the code", method="POST"):
+    async def go():
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="https://bot.example.com"
+        ) as client:
+            return await client.request(method, path, json={"message": message}, headers=headers or {})
+
+    return asyncio.run(go())
+
+
+@pytest.mark.parametrize(
+    "token",
+    [
+        lambda: "eyJ2IjogMX0.\xb5\xb5\xb5\xb5",  # bytes that are not ASCII
+        lambda: "junk",
+        lambda: pp.make_session_token(OTHER_KEY, "s1", {}),
+        lambda: pp.make_session_token(KEY, "s1", {}, now=time.time() - 4000),  # signed by us, but expired
+    ],
+)
+@pytest.mark.parametrize("bot_has_key", [True, False])
+def test_a_message_that_claims_to_be_a_test_but_is_not_valid_is_refused_not_run(monkeypatch, token, bot_has_key):
+    """The one thing that must not happen: an attack message handled as an ordinary request, with real tools."""
+    if bot_has_key:
+        monkeypatch.setenv(pp.KEY_ENV, KEY)
+    else:
+        monkeypatch.delenv(pp.KEY_ENV, raising=False)
+    real_refunds.clear()
+    raw = token().encode("latin-1")
+    response = post(pp.wrap(asgi_bot), headers={pp.SESSION_HEADER: raw})
+    assert response.status_code == 403 and b"was not run" in response.content
+    assert real_refunds == [] and pp.CALLS_HEADER not in response.headers
+
+
+def test_two_session_headers_are_refused(key):
+    real_refunds.clear()
+    good = pp.make_session_token(KEY, "s1", {})
+    seen = []
+
+    async def app(scope, receive, send):
+        seen.append(scope["path"])
+        await asgi_bot(scope, receive, send)
+
+    wrapped = pp.wrap(app)
+    scope = {
+        "type": "http", "method": "POST", "path": "/chat",
+        "headers": [(b"promptproof-session", good.encode()), (b"promptproof-session", b"junk")],
+    }  # fmt: skip
+    sent = []
+
+    async def go():
+        async def receive():
+            return {"type": "http.request", "body": b'{"message": "a refund"}'}
+
+        async def send(message):
+            sent.append(message)
+
+        await wrapped(scope, receive, send)
+
+    asyncio.run(go())
+    assert sent[0]["status"] == 403 and seen == [] and real_refunds == []
+
+
+def test_the_wsgi_wrapper_refuses_the_same_way(key):
+    ran = []
+
+    def app(environ, start_response):
+        ran.append(environ["PATH_INFO"])
+        start_response("200 OK", [])
+        return [b"ok"]
+
+    wrapped = pp.wrap(app)
+    statuses = []
+    environ = {"REQUEST_METHOD": "POST", "PATH_INFO": "/chat", "HTTP_PROMPTPROOF_SESSION": "junk.\xb5"}
+    body = wrapped(environ, lambda status, headers: statuses.append(status))
+    assert statuses == ["403 Forbidden"] and ran == [] and b"was not run" in b"".join(body)
+    del environ["HTTP_PROMPTPROOF_SESSION"]
+    assert b"".join(wrapped(environ, lambda status, headers: statuses.append(status))) == b"ok" and ran == ["/chat"]
+
+
+def test_a_wsgi_view_that_runs_lazily_is_still_recorded_and_closed(key):
+    closed = []
+
+    class Lazy:
+        def __init__(self, start_response):
+            self.start_response = start_response
+
+        def __iter__(self):
+            issue_refund("A-9", 3)  # runs only when the server reads the body
+            self.start_response("200 OK", [("Content-Type", "text/plain")])
+            yield b"done"
+
+        def close(self):
+            closed.append(True)
+
+    real_refunds.clear()
+    answered = {}
+    token = pp.make_session_token(KEY, "s1", {}, nonce="n1")
+    environ = {"REQUEST_METHOD": "POST", "PATH_INFO": "/chat", "HTTP_PROMPTPROOF_SESSION": token}
+    body = pp.wrap(lambda environ, start_response: Lazy(start_response))(
+        environ, lambda status, headers: answered.update(headers)
+    )
+    assert b"".join(body) == b"done" and closed == [True] and real_refunds == [] and not pp.active()
+    calls = pp.read_calls_header(KEY, "s1", answered[pp.CALLS_HEADER], "n1")
+    assert [c["tool"] for c in calls] == ["issue_refund"]
+
+
+def test_a_record_cannot_be_reused_for_a_later_message_of_the_same_session(key):
+    first = pp._open(pp.make_session_token(KEY, "s1", {}, nonce="message-1"))
+    header = first.header_value()  # "no calls", honestly signed for message 1
+    assert pp.read_calls_header(KEY, "s1", header, "message-1") == []
+    with pytest.raises(pp.HarnessError, match="not signed"):
+        pp.read_calls_header(KEY, "s1", header, "message-2")
+
+
+def test_the_parts_of_a_signature_cannot_run_together():
+    assert pp._mac(KEY, b"d", "ab", "c") != pp._mac(KEY, b"d", "a", "bc")
+    assert pp._mac(KEY, b"d", "a\nb") != pp._mac(KEY, b"d", "a", "b")
+
+
+def test_a_scanner_survives_a_garbled_record_from_the_bot(key):
+    for value in ("x.\xb5\xb5", "nodot", "....", pp._b64(b"not json") + "." + "A" * 43):
+        with pytest.raises(pp.HarnessError):
+            pp.read_calls_header(KEY, "s1", value)
+
+
+def test_a_bot_that_sends_its_own_record_as_well_fails_closed(key):
+    async def lying_bot(scope, receive, send):
+        fake = pp._b64(b'{"calls":[],"dropped":0}') + "." + "A" * 43
+        await send({"type": "http.response.start", "status": 200,
+                    "headers": [(b"content-type", b"application/json"), (b"promptproof-tool-calls", fake.encode())]})  # fmt: skip
+        await send({"type": "http.response.body", "body": b'{"reply": "Hello."}'})
+
+    target = sdk_target(pp.wrap(lying_bot))
+
+    async def talk():
+        await target.reset({"admin_code": "WXYZ-1234"})
+        return await (await target.open_session("customer:alice")).send("hello")
+
+    with pytest.raises(TargetError, match="not signed"):
+        asyncio.run(talk())
+
+
+def test_a_very_large_tool_argument_is_an_error_not_a_silent_gap(key):
+    token = pp.make_session_token(KEY, "s1", {})
+    _, session = in_session(token, issue_refund, "A" * (pp.MAX_RECORD_BYTES + 1), 1)
+    assert session.calls == [] and session.dropped == 1
+    with pytest.raises(pp.HarnessError, match="1 were not recorded"):
+        pp.read_calls_header(KEY, "s1", session.header_value())
+
+
+def test_the_readiness_check_carries_no_canaries(key):
+    tokens = []
+    inner = httpx.ASGITransport(app=pp.wrap(asgi_bot))
+
+    class Watching(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, request):
+            tokens.append((request.url.path, request.headers[pp.SESSION_HEADER]))
+            return await inner.handle_async_request(request)
+
+    target = HttpTarget(sdk_description(), "http:bot", None, transport=Watching())
+    asyncio.run(target.reset({"admin_code": "WXYZ-1234"}))
+    ((path, token),) = tokens
+    body = json.loads(pp._unb64(token.split(".")[0]))
+    assert path == pp.READY_PATH and body["fixtures"] == {} and body["content"] == {}
+
+
+def test_calls_after_a_streaming_reply_has_started_are_blocked_but_not_reported(key):
+    """The stated limit: the record is sent with the response headers."""
+    real_refunds.clear()
+
+    async def streaming_bot(scope, receive, send):
+        issue_refund("early", 1)
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        issue_refund("late", 2)
+        await send({"type": "http.response.body", "body": b"{}"})
+
+    token = pp.make_session_token(KEY, "s1", {}, nonce="n")
+    response = post(pp.wrap(streaming_bot), headers={pp.SESSION_HEADER: token})
+    calls = pp.read_calls_header(KEY, "s1", response.headers[pp.CALLS_HEADER], "n")
+    assert [c["arguments"]["order_id"] for c in calls] == ["early"] and real_refunds == []
+
+
+def test_a_tool_run_in_a_thread_you_start_yourself_is_not_covered(key):
+    """The stated limit: the session follows the request's context. asyncio.to_thread carries it;
+    a bare thread does not, and a decorated tool there runs for real."""
+    real_refunds.clear()
+    token = pp.make_session_token(KEY, "s1", {})
+
+    def turn():
+        asyncio.run(asyncio.to_thread(issue_refund, "carried", 1))
+        thread = threading.Thread(target=issue_refund, args=("not carried", 2))
+        thread.start()
+        thread.join()
+
+    _, session = in_session(token, turn)
+    assert [c["arguments"]["order_id"] for c in session.calls] == ["carried"]
+    assert real_refunds == [("not carried", 2)]
+
+
+def test_the_ownership_proof_is_only_for_get(monkeypatch):
+    monkeypatch.delenv(pp.KEY_ENV, raising=False)
+    monkeypatch.setenv(pp.CHALLENGE_ENV, "promptproof-challenge=abc123")
+    assert post(pp.wrap(asgi_bot), path=pp.CHALLENGE_PATH).status_code == 404  # the bot's own answer
