@@ -1,0 +1,34 @@
+{
+  "name": "promptproof-harness",
+  "version": "0.1.0",
+  "description": "The Promptproof drop-in test harness for JavaScript bots: plant fake secrets, record risky tool calls, never run them during a test.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    }
+  },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://example.invalid/promptproof"
+  },
+  "keywords": [
+    "promptproof",
+    "security",
+    "testing",
+    "llm",
+    "canary"
+  ]
+}
