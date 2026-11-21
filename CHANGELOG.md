@@ -15,6 +15,8 @@ Nothing has been released yet. This lists what the first release will contain.
 - Built-in practice bots (vulnerable, hardened, fixed).
 - Any bot over HTTP, described in one JSON file.
 - A drop-in harness for Python (ASGI and WSGI) and JavaScript (Node, Express, fetch-style): mark the risky tools and where a secret lives; nothing changes for real users.
+- `harness_tools`: hand over a whole tool list (plain functions, OpenAI Agents SDK, LangChain, Claude Agent SDK); every tool not listed as read-only is recorded during a test, so a forgotten tool is blocked, not run.
+- Bots built in a no-code builder: the fake secret travels in the chat request (`"harness": "inputs"`), with nothing added to the bot.
 - `promptproof doctor` checks a setup step by step and names the fix.
 - `promptproof mcp` lets a coding assistant set a bot up, scan it and read the report. It cannot authorize a test.
 - `promptproof demo` shows the whole flow on one machine in about a minute.
