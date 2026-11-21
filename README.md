@@ -118,6 +118,34 @@ Limits:
 - The test session follows the request. Python carries it into `await`, `asyncio.to_thread` and the thread pools of Starlette and FastAPI. It is not carried into a thread you start yourself, a bare `run_in_executor`, a process pool or a job queue (Celery, RQ). A marked tool that runs there during a test runs for real. If your tools run that way, mark the function that hands the work over, not the worker.
 - The signatures stop the model from faking the record. They do not stop the bot's own code from lying.
 
+### Testing the real system
+
+A copy is never exactly the real thing: settings, data and connected services differ. The drop-in harness also works on the real deployment, at two levels. Both need an authorization recorded with `--environment production`.
+
+**Look only.** Set `PROMPTPROOF_HARNESS_KEY` on the real deployment. The real bot, prompt and data are tested; in a test session every marked tool is recorded and not run, and real users are untouched. Fake secrets exist only inside each test conversation.
+
+**Small real actions, under caps.** For a tool you want proven end to end, write the limits in the bot's code:
+
+```python
+@pp.action("issue_refund", live=pp.Cap(
+    max={"amount": 10},                 # one call: at most 10
+    only={"order_id": TEST_ORDERS},     # and only on these orders
+    total={"amount": 50}, calls=5,      # one scan: at most 50 in all, 5 calls
+))
+def issue_refund(order_id: str, amount: float): ...
+```
+
+In a test, the tool runs for real only when all four of these agree, and is recorded without running otherwise:
+
+1. the function carries a `Cap`;
+2. the deployment lists the tool in `PROMPTPROOF_LIVE_ACTIONS`;
+3. the target description lists it under `"live_actions"`, and the authorization names it with `--live-tool`;
+4. the call is inside every limit.
+
+A call outside the limits is still evidence. If the bot is talked into a refund of 500, the report shows the attempt and the cap that stopped it, and no money moves.
+
+`max` and `only` are exact. `total` and `calls` are counted in each server process's memory, so a deployment with several worker processes can reach that many times the per-scan limits; rely on `max` and `only` for what must never be exceeded. Attacks that change what other users see (shared memory, a knowledge base, public posts) should be tested in a copy, not live.
+
 ## Permission to test
 
 Promptproof sends hostile messages, so it will not send anything to a bot outside its own process without permission on record. The built-in practice bots run in-process and need no permission; every bot reached over HTTP goes through this check.

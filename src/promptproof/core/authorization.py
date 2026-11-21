@@ -89,6 +89,9 @@ class Authorization:
     # Narrower scope. Control of a site is not permission to fire every tool behind it,
     # or to test every bot and customer account it serves.
     allowed_tools: tuple[str, ...] = ()  # every tool the target declares must be named here
+    # Tools that may be carried out FOR REAL during a test, inside the caps written in the bot's
+    # own code (promptproof.harness.Cap). Empty, the default, means every tool is only recorded.
+    live_tools: tuple[str, ...] = ()
     agent_id: str = ""  # if set, the target must name this agent
     tenant: str = ""  # if set, the target must name this tenant or account
 
@@ -172,9 +175,9 @@ def validate(authorization: Authorization) -> Authorization:
     a = authorization
     for item in fields(Authorization):
         value = getattr(a, item.name)
-        if item.name == "allowed_tools":
+        if item.name in ("allowed_tools", "live_tools"):
             if not isinstance(value, tuple) or not all(isinstance(t, str) and t.strip() for t in value):
-                raise AuthorizationError("allowed_tools must be a list of tool names")
+                raise AuthorizationError(f"{item.name} must be a list of tool names")
         elif not isinstance(value, str):
             raise AuthorizationError(f"{item.name} must be text, got {value!r}")
     try:
@@ -189,6 +192,9 @@ def validate(authorization: Authorization) -> Authorization:
         raise AuthorizationError("the record does not say what may be tested")
     if a.environment not in ENVIRONMENTS:
         raise AuthorizationError(f"environment must be one of {', '.join(ENVIRONMENTS)}, got {a.environment!r}")
+    not_allowed = sorted(set(a.live_tools) - set(a.allowed_tools))
+    if not_allowed:
+        raise AuthorizationError(f"live tool(s) {', '.join(not_allowed)} must also be named as allowed tools")
     if a.needs_proof and not a.origin.startswith("https://"):
         raise AuthorizationError("a target across a network must be reached over https://")
     if len(a.token) < _MIN_TOKEN_LENGTH:
@@ -214,6 +220,7 @@ def new_authorization(
     allowed_tools: Iterable[str] = (),
     agent_id: str = "",
     tenant: str = "",
+    live_tools: Iterable[str] = (),
 ) -> Authorization:
     now = now or datetime.now(UTC)
     normalized = normalize_origin(origin)
@@ -236,6 +243,7 @@ def new_authorization(
         expires_at=(now + timedelta(days=days)).isoformat(timespec="seconds"),
         token=secrets.token_urlsafe(32),
         allowed_tools=tuple(dict.fromkeys(t.strip() for t in allowed_tools if t.strip())),
+        live_tools=tuple(dict.fromkeys(t.strip() for t in live_tools if t.strip())),
         agent_id=agent_id.strip(),
         tenant=tenant.strip(),
     )
@@ -339,10 +347,10 @@ class AuthorizationStore:
                 raise TypeError("'authorizations' must be a list")
             records = []
             for item in items:
-                tools = item.get("allowed_tools", [])
-                if not isinstance(tools, list):
-                    raise TypeError("allowed_tools must be a list")
-                records.append(Authorization(**{**item, "allowed_tools": tuple(tools)}))
+                tools, live = item.get("allowed_tools", []), item.get("live_tools", [])
+                if not isinstance(tools, list) or not isinstance(live, list):
+                    raise TypeError("allowed_tools must be a list, and so must live_tools")
+                records.append(Authorization(**{**item, "allowed_tools": tuple(tools), "live_tools": tuple(live)}))
         except (OSError, ValueError, KeyError, TypeError) as exc:
             raise AuthorizationError(f"could not read {self.path}: {exc}") from exc
         for record in records:
@@ -400,6 +408,7 @@ def authorization_summary(target: object) -> dict[str, str]:
         "proof": "token served by the origin, checked during the scan" if authorization.needs_proof else "none needed on this machine",
         "verified_at": authorization.verified_at or "not needed",
         "allowed_tools": ", ".join(authorization.allowed_tools) or "none",
+        "live_tools": ", ".join(authorization.live_tools) or "none (tools were recorded, never carried out)",
         "agent_id": authorization.agent_id or "any",
         "tenant": authorization.tenant or "any",
     }
@@ -427,6 +436,14 @@ def _require_in_scope(target: object, authorization: Authorization) -> None:
         raise AuthorizationError(
             f"the authorization for {authorization.origin} does not name the tool(s) {', '.join(unnamed)}; "
             "re-authorize with --tool for each tool that may be exercised"
+        )
+    asked = getattr(target, "live_actions", ())
+    not_live = sorted(set(asked) - set(authorization.live_tools))
+    if not_live:
+        raise AuthorizationError(
+            f"this target asks to carry out {', '.join(not_live)} for real, but the authorization for "
+            f"{authorization.origin} does not allow that; re-authorize with --live-tool for each, "
+            "or remove live_actions from the description"
         )
     for field_name, flag in (("agent_id", "--agent"), ("tenant", "--tenant")):
         declared = str(getattr(target, field_name, "") or "")

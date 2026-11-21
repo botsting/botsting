@@ -476,7 +476,7 @@ def test_the_command_line_makes_a_usable_key(capsys):
     assert main(["harness-key"]) == 0
     printed = capsys.readouterr()
     made = printed.out.strip()
-    assert pp.check_key(made) == made and "Never set it in production" in printed.err
+    assert pp.check_key(made) == made and "off production unless you mean to test the real system" in printed.err
 
 
 # -- after the first review -------------------------------------------------------------------

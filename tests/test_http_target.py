@@ -403,3 +403,20 @@ def test_proxy_settings_in_the_environment_are_ignored(monkeypatch):
     transport, requests = recording()
     asyncio.run(target(transport).reset({"secret": "K7M2-Q9XA-D4T8-WZ3H"}))
     assert seen["trust_env"] is False and len(requests) == 1
+
+
+def test_every_request_is_marked_as_test_traffic(monkeypatch):
+    """So the owner can tell a scan from real users in their logs."""
+    monkeypatch.setenv("ALICE_TOKEN", "a-token")
+    transport, requests = recording()
+    bot = target(transport)
+
+    async def talk():
+        await bot.reset({"secret": "K7M2-Q9XA-D4T8-WZ3H"})
+        session = await bot.open_session("customer:alice")
+        await session.send("hello")
+
+    asyncio.run(talk())
+    traces = {request.headers["Promptproof-Trace"] for request in requests}
+    assert len(requests) == 2 and len(traces) == 1 and len(traces.pop()) >= 16
+    assert all(request.headers["User-Agent"] == "promptproof-scan" for request in requests)

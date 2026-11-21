@@ -49,6 +49,13 @@ def register(commands: argparse._SubParsersAction) -> None:  # type: ignore[type
         "--tool", action="append", default=[], metavar="NAME",
         help="a tool the scan may exercise (repeat for each); tools not named here cannot be tested",
     )  # fmt: skip
+    parser.add_argument(
+        "--live-tool", action="append", default=[], metavar="NAME",
+        help=(
+            "a tool the test may carry out FOR REAL, inside the caps written in the bot's code "
+            "(repeat for each; implies --tool). Without this, tools are only recorded"
+        ),
+    )  # fmt: skip
     parser.add_argument("--agent", default="", help="the one agent or bot id covered, if the target names one")
     parser.add_argument("--tenant", default="", help="the one tenant or account covered, if the target names one")
     parser.add_argument("--verify", metavar="ORIGIN", help="check that the origin serves the token, and record it")
@@ -77,12 +84,16 @@ def _create(store: AuthorizationStore, args: argparse.Namespace) -> int:
         return EXIT_FAILED
     authorization = new_authorization(
         args.origin, args.by, args.scope, args.environment, args.days,
-        allowed_tools=args.tool, agent_id=args.agent, tenant=args.tenant,
+        allowed_tools=[*args.tool, *args.live_tool], agent_id=args.agent, tenant=args.tenant,
+        live_tools=args.live_tool,
     )  # fmt: skip
     store.add(authorization)
     print(f"Recorded: {authorization.authorized_by} authorizes testing {authorization.origin}")
     print(f"  scope: {authorization.scope}")
     print(f"  tools that may be exercised: {', '.join(authorization.allowed_tools) or 'none'}")
+    if authorization.live_tools:
+        print(f"  tools that may be CARRIED OUT FOR REAL, inside the bot's caps: {', '.join(authorization.live_tools)}")
+        print("  Real money, messages or records may change, up to those caps. Check the caps in the bot's code first.")
     if authorization.agent_id or authorization.tenant:
         print(f"  agent: {authorization.agent_id or 'any'}; tenant: {authorization.tenant or 'any'}")
     print(f"  environment: {authorization.environment}, until {authorization.expires_at}")

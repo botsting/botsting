@@ -396,8 +396,8 @@ def _harness_key(args: argparse.Namespace) -> int:
 
     print(new_key())
     print(
-        f"Set this as {KEY_ENV} on the staging or test deployment only, and in the environment where you run "
-        "the scan. Never set it in production.",
+        f"Set this as {KEY_ENV} on the deployment under test and in the environment where you run the scan. "
+        "Keep it off production unless you mean to test the real system (see the README).",
         file=sys.stderr,
     )
     return 0

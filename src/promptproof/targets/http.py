@@ -39,6 +39,8 @@ Safety
   off at a size limit.
 - Credentials are never written in the file: a header value like "${NAME}" is read
   from the environment variable NAME when the scan runs, and is never put in reports.
+- Every request carries a Promptproof-Trace header and the user agent
+  "promptproof-scan", so test traffic can be told apart from real users.
 """
 
 from __future__ import annotations
@@ -87,6 +89,10 @@ DEFAULT_TARGETS_FILE = "promptproof.targets.json"
 _NAME = re.compile(r"[A-Za-z0-9_-]{1,64}")
 _ENV = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 _MAX_RESPONSE_BYTES = 1_000_000
+# On every request a scan sends, so the bot's owner can tell test traffic from real users in
+# their logs and exclude it from analytics. The value is the same for one scan or replay.
+TRACE_HEADER = "Promptproof-Trace"
+_USER_AGENT = "promptproof-scan"
 
 
 class TargetConfigError(ValueError):
@@ -128,6 +134,7 @@ class HttpTargetConfig:
     digest: str = ""  # of the description as written, so a replay can tell it changed
     harness: str = "endpoint"  # "endpoint": the bot has a reset endpoint; "sdk": the drop-in harness
     harness_key_env: str = KEY_ENV
+    live_actions: tuple[str, ...] = ()  # tools the scan asks the harness to carry out for real, under its caps
 
 
 _PLAIN_PATH = re.compile(r"(/[A-Za-z0-9._~-]+)+")
@@ -197,6 +204,11 @@ def parse_config(name: str, raw: Mapping[str, Any], digest: str = "") -> HttpTar
         reset = {"path": READY_PATH}
     elif not isinstance(reset, Mapping):
         raise TargetConfigError(f"{where}: reset must describe the test-harness reset endpoint")
+    live_actions = _names(raw, "live_actions", where)
+    if live_actions and harness != "sdk":
+        raise TargetConfigError(
+            f"{where}: live_actions needs the drop-in harness (\"harness\": \"sdk\"), which enforces the caps"
+        )
     tool_safety = raw.get("tool_safety")
     if tool_safety not in ("no-tools", "sinks"):
         raise TargetConfigError(
@@ -308,6 +320,7 @@ def parse_config(name: str, raw: Mapping[str, Any], digest: str = "") -> HttpTar
         digest=digest,
         harness=str(harness),
         harness_key_env=key_env,
+        live_actions=live_actions,
     )
 
 
@@ -456,6 +469,8 @@ class HttpTarget:
             frozenset({config.chat_path, config.reset_path}),
             transport or httpx.AsyncHTTPTransport(retries=0),
         )
+        self.live_actions = config.live_actions
+        self._run = uuid.uuid4().hex  # the harness counts a run's real actions under this
         self._fixtures: dict[str, str] = {}
         self._content: dict[str, str] = {}
 
@@ -492,7 +507,8 @@ class HttpTarget:
             trust_env=False,
         ) as client:
             try:
-                async with client.stream("POST", self.origin + path, json=body, headers=dict(headers)) as response:
+                sent = {"User-Agent": _USER_AGENT, **headers, TRACE_HEADER: self._run}
+                async with client.stream("POST", self.origin + path, json=body, headers=sent) as response:
                     if response.is_redirect:
                         raise TargetError(f"{path} answered with a redirect; redirects are not followed")
                     if not 200 <= response.status_code < 300:
@@ -532,6 +548,8 @@ class HttpTarget:
                 self._content if planted else {},
                 lifetime_seconds=self.config.timeout_seconds + 60,
                 nonce=nonce,
+                live=self.live_actions if planted else (),
+                run=self._run,
             )
         except HarnessError as exc:
             raise TargetError(str(exc)) from exc

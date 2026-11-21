@@ -16,9 +16,10 @@ asked to do. This module gives all three, inside the bot's own process:
 When is it on?
 --------------
 Only for a request that carries a valid Promptproof session, signed with the key in the
-environment variable PROMPTPROOF_HARNESS_KEY. Set that key on the staging or test
-deployment only. A request without the Promptproof-Session header (every real user)
-is passed to the app untouched: tools run as written and `planted` returns its default.
+environment variable PROMPTPROOF_HARNESS_KEY. Set that key on the deployment under
+test: staging or a test copy, or the real deployment if the owner means to test the
+real system. A request without the Promptproof-Session header (every real user) is
+passed to the app untouched: tools run as written and `planted` returns its default.
 
 A request that carries the header but is not a valid session here (no key on this
 deployment, another key, an expired or damaged session) is refused with HTTP 403 and
@@ -59,6 +60,36 @@ not on the worker.
 It trusts the bot's own code. The signatures stop a model, or anything a model can
 write, from faking the record. They do not stop the owner's code from lying.
 
+Small real actions, under caps (live testing)
+---------------------------------------------
+A copy is never exactly the real system, so an owner may want a test to carry out a
+tool for real, within limits they set: a refund of at most 10, an email to one address.
+
+    @pp.action("issue_refund", live=pp.Cap(max={"amount": 10}, only={"order_id": TEST_ORDERS},
+                                           total={"amount": 50}, calls=5))
+    def issue_refund(order_id: str, amount: float) -> dict: ...
+
+In a test session the function runs for real only if ALL of these hold; otherwise it
+is recorded and not run, exactly as without `live`:
+
+1. the function carries a `Cap` (limits written in the bot's own code, where they can
+   be reviewed);
+2. the deployment names the tool in the environment variable PROMPTPROOF_LIVE_ACTIONS
+   (the owner's switch on that deployment; unset means nothing ever runs for real);
+3. the scan asked for it in the signed session, which the scanner does only when the
+   authorization on record names the tool with --live-tool;
+4. this call is inside every limit: each `max` argument is a number from 0 to its
+   ceiling, each `only` argument is one of the listed values, and the run's totals
+   and call count, including this call, stay within `total` and `calls`.
+
+A call outside the limits is still recorded, with the limit it broke: an attempt at a
+refund of 500 is proven by the record of the attempt, and no money moves.
+
+The per-call limits (`max`, `only`) are exact. The per-run limits (`total`, `calls`)
+are counted in this process's memory: a deployment with N worker processes can carry
+out up to N times those limits in one run, and a restart forgets the count. Set them
+with that in mind, and rely on `max` and `only` for what must never be exceeded.
+
 It uses only the standard library, so adding it to a bot adds no dependencies.
 """
 
@@ -70,15 +101,19 @@ import hashlib
 import hmac
 import inspect
 import json
+import math
 import os
+import threading
 import time
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Collection, Iterable, Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import Any, TypeVar
 
 KEY_ENV = "PROMPTPROOF_HARNESS_KEY"
 CHALLENGE_ENV = "PROMPTPROOF_CHALLENGE"
+LIVE_ENV = "PROMPTPROOF_LIVE_ACTIONS"
 CHALLENGE_PATH = "/.well-known/promptproof-challenge.txt"
 READY_PATH = "/.well-known/promptproof-harness"
 SESSION_HEADER = "Promptproof-Session"
@@ -144,6 +179,8 @@ def make_session_token(
     lifetime_seconds: float = 300.0,
     now: float | None = None,
     nonce: str = "",
+    live: Collection[str] = (),
+    run: str = "",
 ) -> str:
     """What the scanner puts in the Promptproof-Session header of each message. `nonce` should be
     new for every message: the harness signs it into that message's tool-call record."""
@@ -160,6 +197,12 @@ def make_session_token(
         "fixtures": dict(fixtures),
         "content": dict(content or {}),
     }
+    if live:
+        # Tools the scan asks to have carried out for real, and the run their totals are counted under.
+        if not run:
+            raise HarnessError("a session that asks for live actions must name its run")
+        body["live"] = sorted(set(live))
+        body["run"] = run
     payload = _b64(
         json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
     )
@@ -212,6 +255,8 @@ class _Session:
     content: dict[str, str]
     key: str
     nonce: str = ""
+    live: frozenset[str] = frozenset()
+    run: str = ""
     calls: list[dict[str, Any]] = field(default_factory=list)
     dropped: int = 0
     size: int = 0
@@ -254,13 +299,17 @@ def _open(token: str | None, now: float | None = None) -> _Session | None:
         expires = int(body["exp"])
         sid = str(body["sid"])
         nonce = str(body.get("n", ""))
+        live = frozenset(str(t) for t in list(body.get("live", [])))
+        run = str(body.get("run", ""))
         fixtures = {str(k): str(v) for k, v in dict(body["fixtures"]).items()}
         content = {str(k): str(v) for k, v in dict(body.get("content", {})).items()}
     except (ValueError, KeyError, TypeError):
         return None
     if body.get("v") != 1 or expires < (time.time() if now is None else now):
         return None
-    return _Session(sid=sid, fixtures=fixtures, content=content, key=key, nonce=nonce)
+    if live and not run:
+        return None
+    return _Session(sid=sid, fixtures=fixtures, content=content, key=key, nonce=nonce, live=live, run=run)
 
 
 # -- what the bot's code calls ------------------------------------------------------------
@@ -293,35 +342,132 @@ def recorded_calls() -> list[dict[str, Any]]:
     return [dict(c) for c in session.calls] if session else []
 
 
-def action(tool: str, result: Any = _DEFAULT_RESULT) -> Callable[[F], F]:
+@dataclass(frozen=True)
+class Cap:
+    """Limits under which a tool may be carried out for real during a test. See the module notes."""
+
+    max: Mapping[str, float] = field(default_factory=dict)  # argument -> highest value for one call
+    only: Mapping[str, Collection[Any]] = field(default_factory=dict)  # argument -> the values allowed
+    total: Mapping[str, float] = field(default_factory=dict)  # argument -> highest sum over one run
+    calls: int = 1  # real calls per run
+
+    def __post_init__(self) -> None:
+        if not self.max and not self.only:
+            raise HarnessError("a Cap must limit at least one argument with max= or only=")
+        if isinstance(self.calls, bool) or not isinstance(self.calls, int) or self.calls < 1:
+            raise HarnessError("Cap(calls=...) must be a whole number, 1 or more")
+        for name, ceiling in {**self.max, **self.total}.items():
+            if _number(ceiling) is None or _number(ceiling) < 0:  # type: ignore[operator]
+                raise HarnessError(f"the cap on {name!r} must be a number, 0 or more")
+        for name, allowed in self.only.items():
+            if isinstance(allowed, str | bytes) or not allowed:
+                raise HarnessError(f"only={{{name!r}: ...}} must be a non-empty list of allowed values")
+
+    def names(self) -> set[str]:
+        return set(self.max) | set(self.only) | set(self.total)
+
+
+def _number(value: Any) -> float | None:
+    """The value as a finite number, or None. True and False are not numbers here."""
+    if isinstance(value, bool) or not isinstance(value, int | float | Decimal):
+        return None
+    number = float(value)
+    return number if math.isfinite(number) else None
+
+
+# run id -> tool -> [real calls so far, {argument: sum so far}]. In this process only.
+_ledger: dict[str, dict[str, tuple[int, dict[str, float]]]] = {}
+_ledger_lock = threading.Lock()
+_MAX_RUNS_REMEMBERED = 64
+
+
+def _live_switch() -> frozenset[str]:
+    return frozenset(t.strip() for t in os.environ.get(LIVE_ENV, "").split(",") if t.strip())
+
+
+def _may_run(session: _Session, tool: str, cap: Cap | None, arguments: Mapping[str, Any]) -> tuple[bool, str]:
+    """Whether this call is carried out for real, and why not. Reserves its share of the run's limits."""
+    if cap is None or tool not in session.live:
+        return False, ""  # an ordinary test session: record only, nothing to explain
+    if tool not in _live_switch():
+        return False, f"this deployment does not allow {tool} to run for real ({LIVE_ENV})"
+    for name, ceiling in cap.max.items():
+        value = _number(arguments.get(name))
+        if value is None:
+            return False, f"{name} is not a number, so its cap cannot be checked"
+        if not 0 <= value <= float(ceiling):
+            return False, f"{name} {value:g} is outside the cap of 0 to {float(ceiling):g}"
+    for name, allowed in cap.only.items():
+        try:
+            listed = arguments.get(name) in allowed
+        except TypeError:  # a value that cannot even be compared is not on the list
+            listed = False
+        if not listed:
+            return False, f"{name} is not one of the values allowed for a live test"
+    sums: dict[str, float] = {}
+    for name in cap.total:
+        value = _number(arguments.get(name))
+        if value is None or value < 0:
+            return False, f"{name} is not a number of 0 or more, so the run's total cannot be checked"
+        sums[name] = value
+    with _ledger_lock:
+        run = _ledger.setdefault(session.run, {})
+        while len(_ledger) > _MAX_RUNS_REMEMBERED:
+            del _ledger[next(iter(_ledger))]
+        calls, totals = run.get(tool, (0, {}))
+        if calls + 1 > cap.calls:
+            return False, f"the run's limit of {cap.calls} real call(s) to {tool} is used up"
+        for name, value in sums.items():
+            if totals.get(name, 0.0) + value > float(cap.total[name]):
+                return False, f"this would take the run's total {name} over the cap of {float(cap.total[name]):g}"
+        run[tool] = (calls + 1, {name: totals.get(name, 0.0) + value for name, value in sums.items()} | {
+            name: value for name, value in totals.items() if name not in sums
+        })
+    return True, ""
+
+
+def action(tool: str, result: Any = _DEFAULT_RESULT, live: Cap | None = None) -> Callable[[F], F]:
     """Mark a function as a risky tool. In a test session it is recorded, not run, and returns
-    `result` (or `result(**arguments)` if that is callable). Outside one it runs as written."""
+    `result` (or `result(**arguments)` if that is callable). Outside one it runs as written.
+
+    With `live=Cap(...)` it may be carried out for real in a test session, inside those limits
+    and only where the owner has switched that on. See the module notes."""
 
     def decorate(function: F) -> F:
         signature = inspect.signature(function)
+        if live is not None:
+            unknown = live.names() - set(signature.parameters)
+            if unknown:
+                raise HarnessError(f"{tool}: the cap names {sorted(unknown)}, which are not arguments of the function")
 
-        def record(
-            args: tuple[Any, ...], kwargs: dict[str, Any], session: _Session
-        ) -> Any:
+        def decide(args: tuple[Any, ...], kwargs: dict[str, Any], session: _Session) -> tuple[dict[str, Any], bool, str]:
             try:
                 bound = signature.bind(*args, **kwargs)
                 bound.apply_defaults()
-                arguments = {
-                    k: v for k, v in bound.arguments.items() if k not in ("self", "cls")
-                }
+                arguments = {k: v for k, v in bound.arguments.items() if k not in ("self", "cls")}
             except TypeError:
-                arguments = {f"arg{i}": v for i, v in enumerate(args)} | kwargs
-            stand_in = result(**arguments) if callable(result) else result
-            session.add(
-                {
-                    "id": f"call-{len(session.calls) + 1}",
-                    "tool": tool,
-                    "arguments": {k: _text(v) for k, v in arguments.items()},
-                    "accepted": True,
-                    "result": _text(stand_in),
-                }
-            )
-            return stand_in
+                # Arguments the function would reject cannot be checked against a cap: never run them.
+                return {f"arg{i}": v for i, v in enumerate(args)} | kwargs, False, ""
+            real, why_not = _may_run(session, tool, live, arguments)
+            return arguments, real, why_not
+
+        def record(session: _Session, arguments: Mapping[str, Any], outcome: Any, note: str, mode: str) -> None:
+            call = {
+                "id": f"call-{len(session.calls) + 1}",
+                "tool": tool,
+                "arguments": {k: _text(v) for k, v in arguments.items()},
+                "accepted": True,
+                "result": (f"[{note}] " if note else "") + _text(outcome),
+            }
+            if mode:
+                call["live"] = mode
+            session.add(call)
+
+        def stand_in(session: _Session, arguments: Mapping[str, Any], why_not: str) -> Any:
+            outcome = result(**arguments) if callable(result) else result
+            note = f"not run: {why_not}" if why_not else ""
+            record(session, arguments, outcome, note, "capped" if why_not else "")
+            return outcome
 
         if inspect.iscoroutinefunction(function):
 
@@ -330,7 +476,16 @@ def action(tool: str, result: Any = _DEFAULT_RESULT) -> Callable[[F], F]:
                 session = _current.get()
                 if session is None:
                     return await function(*args, **kwargs)
-                return record(args, kwargs, session)
+                arguments, real, why_not = decide(args, kwargs, session)
+                if not real:
+                    return stand_in(session, arguments, why_not)
+                try:
+                    outcome = await function(*args, **kwargs)
+                except BaseException as error:
+                    record(session, arguments, f"raised {type(error).__name__}", "ran for real within the caps", "ran")
+                    raise
+                record(session, arguments, outcome, "ran for real within the caps", "ran")
+                return outcome
 
             return run_async  # type: ignore[return-value]
 
@@ -339,7 +494,16 @@ def action(tool: str, result: Any = _DEFAULT_RESULT) -> Callable[[F], F]:
             session = _current.get()
             if session is None:
                 return function(*args, **kwargs)
-            return record(args, kwargs, session)
+            arguments, real, why_not = decide(args, kwargs, session)
+            if not real:
+                return stand_in(session, arguments, why_not)
+            try:
+                outcome = function(*args, **kwargs)
+            except BaseException as error:
+                record(session, arguments, f"raised {type(error).__name__}", "ran for real within the caps", "ran")
+                raise
+            record(session, arguments, outcome, "ran for real within the caps", "ran")
+            return outcome
 
         return run  # type: ignore[return-value]
 
