@@ -97,6 +97,63 @@ const note = pp.active() ? pp.content("bob_note", note) : note;        // or tex
 In the target description, write `"harness": "sdk"` and leave out `reset` and
 `tool_calls_pointer`, exactly as for a Python bot.
 
+## Live actions under caps
+
+A copy is never exactly the real system, so you may want a test to carry out a tool for
+real, within limits written in the bot's own code, where they can be reviewed:
+
+```js
+const TEST_ORDERS = ["T-1", "T-2"];
+
+const issueRefund = pp.action(
+  "issue_refund",
+  (orderId, amount) => bank.refund(orderId, amount),
+  {
+    live: pp.cap({
+      max: { amount: 10 },               // one call: at most 10, and a real number (not "10", true or 10n)
+      only: { orderId: TEST_ORDERS },    // and only on these orders ("1" is not 1: no coercion)
+      total: { amount: 50 }, calls: 5,   // one scan: at most 50 in all, 5 calls
+    }),
+  }
+);
+```
+
+In a test session the function runs for real only if **all four** of these agree;
+otherwise it is recorded and not run, exactly as without `live`:
+
+1. the function carries a `cap` (the limits are in the bot's own code);
+2. the deployment names the tool in the environment variable `PROMPTPROOF_LIVE_ACTIONS`
+   (comma-separated tool names; unset means nothing ever runs for real);
+3. the scan asked for it in the signed session, which the scanner does only when the
+   target description lists it under `"live_actions"` and the authorization names it
+   with `--live-tool`;
+4. this call is inside every limit: each `max` argument is a number from 0 to its
+   ceiling, each `only` argument is one of the listed values, and the run's totals and
+   call count, including this call, stay within `total` and `calls`.
+
+A cap that limits nothing (`cap()` with neither `max` nor `only`), a `calls` below 1,
+a negative ceiling or a string `only`-list is refused when `cap()` is called, and a cap
+that names something that is not a parameter of the wrapped function is refused when
+`action()` is called.
+
+A call outside the limits is still evidence: it is recorded with `live: "capped"` and
+the result prefix `[not run: <the limit it broke>]` — an attempt at a refund of 500 is
+proven by the record of the attempt, and no money moves. A call that runs for real is
+recorded with `live: "ran"` and `[ran for real within the caps] `, and a real call that
+throws is recorded as `raised <ErrorName>` and still counts against `total` and `calls`.
+
+The reservation against `total` and `calls` is made synchronously before the real
+function is called, so overlapping async calls of one run cannot push past them.
+
+**The limits, exactly as the Python harness states them:** the per-call limits (`max`,
+`only`) are exact. The per-run limits (`total`, `calls`) are counted in each Node
+process's memory: a deployment with N processes (cluster workers, PM2, serverless
+instances) can carry out up to N times those limits in one run, and a restart forgets
+the count. Rely on `max` and `only` for what must never be exceeded. One process
+remembers at most **64 runs** for **24 hours**; when its memory is full it refuses live
+calls for a new run ("too many test runs in the last day...") rather than forget a
+recent run and hand it a fresh allowance.
+
 ## Limits
 
 The same as the Python harness:
@@ -112,7 +169,10 @@ The same as the Python harness:
 - The session follows AsyncLocalStorage, so work handed to a job queue or a worker
   thread is not covered. A wrapped tool that runs there during a test runs for real.
   If your tools run that way, wrap the function that hands the work over (the one that
-  enqueues), not the worker.
+  enqueues), not the worker. That includes live actions: a worker thread has its own
+  ledger, so its real calls are not counted against the run's `total` and `calls`.
+- Live actions need all four switches on (see above), and their per-run limits are
+  per process; the per-call limits `max` and `only` are exact.
 - The signatures stop the model from faking the record. They do not stop the bot's own
   code from lying.
 - A session token may live at most **900 seconds**, and its header at most **6000

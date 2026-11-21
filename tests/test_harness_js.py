@@ -74,7 +74,32 @@ def node_bot():
             proc.wait(timeout=10)
 
 
-def node_target(origin):
+@pytest.fixture
+def node_live_bot():
+    """The same Node bot, with the deployment switch for a capped real refund turned on."""
+    env = {**os.environ, pp.KEY_ENV: KEY, pp.LIVE_ENV: "issue_refund"}
+    proc = subprocess.Popen(
+        [NODE, str(JS_TEST / "bot.mjs")],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        env=env,
+    )
+    try:
+        first = proc.stdout.readline()
+        assert first.strip().isdigit(), f"the node bot did not report a port: {first!r} {proc.stderr.read()}"
+        yield f"http://127.0.0.1:{int(first.strip())}"
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=10)
+
+
+def node_target(origin, live=()):
     config = parse_config(
         "nodebot",
         {
@@ -84,6 +109,7 @@ def node_target(origin):
             "attacker_principal": "customer:alice",
             "principals": {"customer:alice": {}},
             "tool_safety": "sinks",
+            "live_actions": list(live),
         },
     )
     return HttpTarget(config, "http:nodebot", None)
@@ -166,3 +192,57 @@ def test_a_node_bot_refuses_what_it_cannot_verify_and_runs_everything_else(key, 
     assert pp.CALLS_HEADER not in refused.headers
     assert ordinary.json()["reply"] == "Refund issued." and pp.CALLS_HEADER not in ordinary.headers
     assert after.json()["reply"] == "real=1"  # exactly the ordinary refund ran, for real
+
+
+# -- live actions under caps, across languages ------------------------------------------------
+
+
+def test_a_python_live_token_is_accepted_by_the_js_harness(key):
+    """A token Python signs with live tools and a run opens there, and with the
+    deployment switch on, a refund inside the cap runs for real while one outside it
+    is recorded with the reason and not run."""
+    token = pp.make_session_token(KEY, "s1", {}, live=("issue_refund",), run="run-js-1")
+    out = run_node(
+        "interop.mjs",
+        {"token": token, "slot": "admin_code", "liveAmounts": [7, 5000]},
+        {pp.KEY_ENV: KEY, pp.LIVE_ENV: "issue_refund"},
+    )
+    assert out["session"] is True
+    assert out["runId"] == "run-js-1" and out["live"] == ["issue_refund"]
+    assert out["ranForReal"] == 1 and out["realAmounts"] == [7]  # 5000 never ran
+    calls = pp.read_calls_header(KEY, "s1", out["calls"])
+    assert [c["live"] for c in calls] == ["ran", "capped"]
+    assert calls[0]["result"].startswith("[ran for real within the caps]")
+    assert calls[0]["accepted"] is True
+    assert calls[1]["result"].startswith("[not run: amount 5000 is outside the cap of 0 to 10]")
+    # Without the deployment switch, the same token gets nothing run for real.
+    off = run_node(
+        "interop.mjs",
+        {"token": token, "slot": "admin_code", "liveAmounts": [7]},
+        {pp.KEY_ENV: KEY},
+    )
+    assert off["ranForReal"] == 0
+    refused = pp.read_calls_header(KEY, "s1", off["calls"])
+    assert refused[0]["live"] == "capped"
+    assert "this deployment does not allow issue_refund to run for real" in refused[0]["result"]
+
+
+def test_a_scan_carries_out_a_small_refund_on_a_node_bot_and_only_records_a_large_one(key, node_live_bot):
+    target = node_target(node_live_bot, live=["issue_refund"])
+
+    async def talk():
+        await target.reset({})
+        conversation = await target.open_session("customer:alice")
+        return (
+            await conversation.send("refund 7"),
+            await conversation.send("refund 5000"),
+            await conversation.send("what ran"),
+        )
+
+    small, large, ran = asyncio.run(talk())
+    assert small.tool_calls[0].result.startswith("[ran for real within the caps]")
+    assert small.tool_calls[0].accepted is True
+    assert large.tool_calls[0].accepted is True
+    assert "amount 5000 is outside the cap of 0 to 10" in large.tool_calls[0].result
+    assert large.tool_calls[0].result.startswith("[not run: ")
+    assert ran.text == 'ran=[["T-1",7]]'  # the in-memory record: only the refund inside the cap ran
