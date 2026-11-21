@@ -11,22 +11,20 @@ import json
 import threading
 import time
 from datetime import UTC, datetime
-from wsgiref.simple_server import WSGIRequestHandler, make_server
 
 import httpx
 import pytest
 
 import promptproof.harness as pp
+from promptproof import demo
 from promptproof.attacks.library import default_attacks
 from promptproof.core import authorization as auth
 from promptproof.core.authorization import AuthorizationStore, new_authorization
 from promptproof.core.runner import run_scan
-from promptproof.llm.scripted import ScriptedModel
-from promptproof.practice_server import practice_description, write_description
+from promptproof.practice_server import write_description
 from promptproof.targets.base import TargetError
 from promptproof.targets.http import HttpTarget, TargetConfigError, parse_config
 from promptproof.targets.registry import build_target
-from promptproof.targets.toy import ToyTarget
 
 KEY = "k" * 40
 OTHER_KEY = "z" * 40
@@ -357,60 +355,6 @@ def test_sdk_descriptions_are_checked():
 # -- end to end: the practice bot behind the harness, over real HTTP on this machine ------------
 
 
-@pp.action("issue_refund")
-def practice_refund(order_id: str, amount: str) -> dict:
-    raise AssertionError("a decorated tool ran during a test")
-
-
-class HarnessToy(ToyTarget):
-    """The practice bot as an owner would wire it: the refund that its own checks allow
-    goes through the decorated function; no recorder of its own is reported."""
-
-    def _issue_refund(self, authorization, order_id, amount):
-        call = super()._issue_refund(authorization, order_id, amount)
-        if call.accepted:
-            practice_refund(order_id, str(amount))
-        return call
-
-
-def harness_app(variant):
-    bot = HarnessToy(variant=variant, model=ScriptedModel(), spec=f"toy:{variant}")
-    state = {"planted": None, "sessions": {}}
-
-    def app(environ, start_response):
-        body = json.loads(
-            environ["wsgi.input"].read(int(environ.get("CONTENT_LENGTH") or 0)) or b"{}"
-        )
-        planted = (
-            {s.id: pp.planted(s.id) for s in bot.slots()},
-            {
-                p.id: pp.content(p.id)
-                for p in bot.injection_points()
-                if pp.content(p.id)
-            },
-        )
-        if planted != state["planted"]:
-            asyncio.run(bot.reset(*planted))
-            state["planted"], state["sessions"] = planted, {}
-        sessions = state["sessions"]
-        if body["session_id"] not in sessions:
-            sessions[body["session_id"]] = asyncio.run(bot.open_session(body["user"]))
-        reply = asyncio.run(sessions[body["session_id"]].send(body["message"]))
-        data = json.dumps({"reply": reply.text}).encode()
-        start_response(
-            "200 OK",
-            [("Content-Type", "application/json"), ("Content-Length", str(len(data)))],
-        )
-        return [data]
-
-    return pp.wrap(app)
-
-
-class Quiet(WSGIRequestHandler):
-    def log_message(self, *args):
-        pass
-
-
 @pytest.fixture
 def harness_practice(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
@@ -420,17 +364,16 @@ def harness_practice(tmp_path, monkeypatch):
     monkeypatch.setenv(pp.KEY_ENV, KEY)
     auth.forget_checks()
     servers = []
+    bots = []
 
     def run(variant):
-        server = make_server("127.0.0.1", 0, harness_app(variant), handler_class=Quiet)
-        threading.Thread(target=server.serve_forever, daemon=True).start()
+        bot = demo.HarnessPracticeBot(variant)
+        server = demo.serve(bot)
         servers.append(server)
+        bots.append(bot)
         port = server.server_address[1]
-        description = practice_description(port, variant)
-        del description["reset"], description["chat"]["tool_calls_pointer"]
-        description["harness"] = "sdk"
         write_description(
-            tmp_path / "promptproof.targets.json", "practice", description
+            tmp_path / "promptproof.targets.json", "practice", demo.description(port, variant)
         )
         origin = f"http://127.0.0.1:{port}"
         record = new_authorization(
@@ -449,6 +392,7 @@ def harness_practice(tmp_path, monkeypatch):
     for server in servers:
         server.shutdown()
         server.server_close()
+    assert all(bot.carried_out == [] for bot in bots)  # a marked tool never ran during a test
 
 
 def test_scanning_through_the_harness_finds_what_the_in_process_scan_finds(

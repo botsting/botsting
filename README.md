@@ -2,14 +2,22 @@
 
 Evidence-first security testing for LLM applications. Promptproof attacks a bot you own and reports only what it can prove: it plants fresh secrets ("canaries") where an attacker should never reach, then shows you the exact conversation in which one came out.
 
-Early development. It currently runs only against the built-in practice bot. Nothing here is released, and remote targets are not supported until the authorization checks exist.
+Early development: nothing here is released yet. It scans the built-in practice bots, and any bot you own that you describe and authorize (see "Scanning a bot over HTTP" and "Permission to test").
 
-## Try it
+## See it in a minute
 
 Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/).
 
 ```
 uv sync
+uv run promptproof demo
+```
+
+This serves a small support bot on your machine twice, a vulnerable build and a fixed one, wired exactly as your own bot would be, then attacks both and writes a report and a sealed evidence bundle for each in `promptproof-demo/`. Open `promptproof-demo/vulnerable/report.html` to see proven findings, each with its transcript. Nothing leaves your machine. `promptproof demo --live` shows live testing: small refunds really run (as a line in a practice ledger), and larger ones are stopped by the cap and recorded.
+
+## Try it
+
+```
 uv run promptproof scan --target toy:vulnerable --markdown reports/vulnerable.md
 uv run promptproof scan --target toy:fixed --markdown reports/fixed.md
 ```
