@@ -9,6 +9,7 @@ authorization gate, not before it.
 
 from __future__ import annotations
 
+import re
 from urllib.parse import parse_qsl
 
 from promptproof.llm.base import ChatModel
@@ -31,10 +32,22 @@ def _build_model(name: str) -> ChatModel:
     raise SpecError(f"unknown model {name!r}; use 'scripted' or 'ollama:<model name>'")
 
 
+_SPEC = re.compile(r"[A-Za-z0-9:._?=&-]+")
+
+
 def build_target(spec: str) -> Target:
+    # A spec is copied into reports and replay commands, so it is held to a plain
+    # character set: no whitespace, quotes or markup can ride along in it.
+    if not _SPEC.fullmatch(spec):
+        raise SpecError("a target spec may contain only letters, digits and the characters : . _ ? = & -")
     head, _, query = spec.partition("?")
     kind, _, variant = head.partition(":")
-    options = dict(parse_qsl(query))
+    try:
+        if "?" in spec and not query:
+            raise ValueError("'?' must be followed by options such as model=scripted")
+        options = dict(parse_qsl(query, strict_parsing=True)) if query else {}
+    except ValueError as exc:
+        raise SpecError(f"malformed options in target spec: {exc}") from exc
     unknown = set(options) - {"model"}
     if unknown:
         raise SpecError(f"unknown option(s) in target spec: {sorted(unknown)}")

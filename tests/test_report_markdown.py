@@ -151,14 +151,16 @@ def test_verified_report_shows_finding_details() -> None:
     assert "### F-001: Talked the bot into repeating the discount code" in text
     assert "Protected data disclosed" in text  # evidence level label
     assert "role-framing" in text
-    assert "principals authorized to see this slot: staff:dana" in text
-    assert "encoding `rot13`, scope `across-turns`" in text
+    assert "principals authorized to see this slot: ` staff:dana `" in text
+    assert "encoding ` rot13 `, scope ` across-turns `" in text
     assert "found in 1 of 3 search attempts" in text
     assert "1 errored run not counted" in text
     assert "95% Wilson interval 1% to 71%" in text
     assert "reproduced in 5 of 5 replays from reset (95% Wilson interval 57% to 100%)" in text
     assert "` promptproof replay <report.json> --finding F-001 `" in text
     assert "promptproof replay out/scan.json --finding F-001" in render_markdown(report, "out/scan.json")
+    # A path with a space is quoted so the command still works when pasted.
+    assert 'promptproof replay "my reports/scan.json" --finding F-001' in render_markdown(report, "my reports/scan.json")
 
 
 def test_verified_report_transcript_distinguishes_speakers() -> None:
@@ -186,7 +188,7 @@ def test_verified_report_shows_auxiliary_sections() -> None:
     assert "could be coincidence" in text
     assert "Discarded 1 attempt" in text
     assert "Target raised an exception after the second turn." in text
-    assert "[discovery] attack A-007" in text
+    assert "- discovery, attack ` A-007 `:" in text
     assert "Voice and phone channels were not tested." in text
 
 
@@ -281,7 +283,39 @@ def test_inconclusive_report_reports_slot_and_task_states_in_sections() -> None:
     )
     text = render_markdown(report)
     assert "State: unreachable — ` Control prompt got no reply before the scan was stopped. `" in text
-    assert "**normal-refund**: did not work" in text
+    assert "` normal-refund `: did not work" in text
+
+
+def test_metadata_cannot_add_markup() -> None:
+    """Target specs, ids, titles and principals come from configuration, which may be hostile."""
+    image = "![remote](https://invalid.example/pixel)"
+    finding = replace(
+        make_finding(),
+        title=f"Title {image} <b>x</b>",
+        technique=f"tech {image}",
+        attack_id=f"id {image}",
+        slot_id=f"slot {image}",
+        authorized=(f"staff {image}",),
+    )
+    report = make_report(
+        status="violations_verified",
+        target=f"toy:fixed?\n\n{image}",
+        attacker_principal=f"customer {image}",
+        findings=(finding,),
+        inconclusive_reasons=(f"reason {image}\n## injected",),
+        target_config={f"key {image}": f"value {image}"},
+    )
+    outside = _structure_outside_fences(render_markdown(report))
+    for line in outside:
+        position = 0
+        while (position := line.find("![remote]", position)) != -1:
+            before = line[:position]
+            inside_code_span = before.count("`") % 2 == 1
+            escaped = before.endswith("\\")
+            assert inside_code_span or escaped, line
+            position += 1
+    assert not any(line.startswith("## injected") for line in outside)
+    assert not any(line.startswith("![") for line in outside)
 
 
 def _structure_outside_fences(text: str) -> list[str]:

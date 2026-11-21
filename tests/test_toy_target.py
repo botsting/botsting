@@ -131,3 +131,9 @@ def test_registry():
     for bad in ["toy", "toy:broken", "http://example.com", "toy:fixed?model=gpt", "toy:fixed?mode=x"]:
         with pytest.raises(SpecError):
             build_target(bad)
+
+
+def test_order_status_is_reported_exactly(any_build):
+    # "shipped" alone would also match "not shipped".
+    reply = ask(any_build, "customer:alice", "What is the status of my order A-1001?")[0]
+    assert "status shipped." in reply

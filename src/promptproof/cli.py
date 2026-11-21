@@ -2,7 +2,7 @@
 
 Exit codes: 0 no verified violations, 1 violations verified (or reproduced, for replay),
 2 inconclusive or a usage error. A script can therefore tell "found nothing" from
-"could not tell".
+"could not tell", and a broken target can never be mistaken for a fixed one.
 """
 
 from __future__ import annotations
@@ -16,7 +16,8 @@ from pathlib import Path
 from promptproof import __version__
 from promptproof.attacks.library import attacks_for, benign_probes
 from promptproof.core.models import Rate, ScanReport
-from promptproof.core.runner import ScanConfig, replay, run_scan
+from promptproof.core.runner import ScanConfig, replay_finding, run_scan
+from promptproof.shell import replay_command
 from promptproof.targets.registry import SpecError, build_target
 
 EXIT_NO_VERIFIED = 0
@@ -35,7 +36,9 @@ def describe_rate(rate: Rate, noun: str) -> str:
     if rate.trials:
         text += f" (95% Wilson interval {_percent(rate.interval_low)} to {_percent(rate.interval_high)})"
     if rate.errors:
-        text += f", {rate.errors} errored"
+        text += f", {rate.errors} more did not complete"
+    if rate.contaminated:
+        text += f", {rate.contaminated} more discarded as contaminated"
     return text
 
 
@@ -51,12 +54,8 @@ def _summary(report: ScanReport) -> str:
         f"Target {report.target}; {report.attacks_run} attacks, {report.attempts_run} attempts, "
         f"attacker acting as {report.attacker_principal}."
     )
-    for slot in report.slots:
-        if slot.state != "reachable":
-            lines.append(f"  slot {slot.slot_id}: {slot.state}. {slot.detail}")
-    for task in report.tasks:
-        if not task.passed:
-            lines.append(f"  normal task {task.task_id} failed: {task.detail}")
+    for reason in report.inconclusive_reasons:
+        lines.append(f"  not established: {reason}")
     for finding in report.findings:
         lines.append(
             f"  {finding.id} [{finding.level.label}] {finding.attack_id}: {finding.slot_id} leaked "
@@ -68,8 +67,6 @@ def _summary(report: ScanReport) -> str:
         lines.append(f"  {len(report.suspected)} suspected finding(s), not verified and not counted.")
     if report.contaminated_attempts:
         lines.append(f"  {report.contaminated_attempts} attempt(s) discarded as contaminated.")
-    if report.errors:
-        lines.append(f"  {len(report.errors)} error(s); see the report.")
     return "\n".join(lines)
 
 
@@ -99,7 +96,7 @@ def _scan(args: argparse.Namespace) -> int:
         _write(Path(args.markdown), render_markdown(report, str(out)))
         print(f"Readable report: {args.markdown}")
     for finding in report.findings:
-        print(f"Replay {finding.id}: promptproof replay {out} --finding {finding.id}")
+        print(f"Replay {finding.id}: {replay_command(str(out), finding.id)}")
     return {
         "violations_verified": EXIT_VIOLATIONS,
         "no_verified_violations": EXIT_NO_VERIFIED,
@@ -126,14 +123,28 @@ def _replay(args: argparse.Namespace) -> int:
     except SpecError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return EXIT_INCONCLUSIVE
-    rate = asyncio.run(replay(target, finding.slot_id, finding.frozen_turns, args.trials))
+
+    result = asyncio.run(replay_finding(target, finding.slot_id, finding.frozen_turns, args.trials))
     print(
         f"{finding.id} ({finding.attack_id}) against {target.spec}: {finding.slot_id} leaked in "
-        f"{describe_rate(rate, 'replays from reset with fresh canaries')}."
+        f"{describe_rate(result.rate, 'replays from reset with fresh canaries')}."
     )
-    if rate.trials == 0:
+    changed = sorted(
+        key
+        for key in set(report.target_config) | set(result.target_config)
+        if report.target_config.get(key) != result.target_config.get(key)
+    )
+    if changed:
+        print("Note: this is not the configuration that was scanned. Changed: " + ", ".join(changed) + ".")
+    if result.rate.successes:
+        return EXIT_VIOLATIONS
+    if result.problems:
+        print("Inconclusive: no leak was observed, but that cannot be relied on:")
+        for problem in result.problems:
+            print(f"  {problem}")
         return EXIT_INCONCLUSIVE
-    return EXIT_VIOLATIONS if rate.successes else EXIT_NO_VERIFIED
+    print("The canary is still reachable by its legitimate route and normal use still works.")
+    return EXIT_NO_VERIFIED
 
 
 def build_parser() -> argparse.ArgumentParser:

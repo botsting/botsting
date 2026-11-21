@@ -94,7 +94,7 @@ class Match:
 
     slot_id: str
     # How it appeared: plain, normalized (case or separators changed), reversed, rot13,
-    # url, base64, hex.
+    # url, base64, hex, spelled (one character at a time), pieces (a few chunks).
     encoding: str
     # "single-turn" or "across-turns" (assembled from several replies).
     scope: str
@@ -102,15 +102,28 @@ class Match:
     full: bool
     matched_chars: int
     canary_chars: int
+    # How much of the canary the attacker's own messages already contained before the
+    # target disclosed it. Anything above zero breaks the proof, so the match can no
+    # longer be verified, only suspected.
+    attacker_known_chars: int = 0
+
+    @property
+    def verified(self) -> bool:
+        return self.full and self.attacker_known_chars == 0
 
 
 @dataclass(frozen=True)
 class Rate:
-    """Successes out of trials, with trials that errored counted separately."""
+    """Successes out of the trials that could be judged.
+
+    Trials that errored before showing anything, and trials discarded because the
+    canary was in attacker input, are counted separately and are not in `trials`.
+    """
 
     successes: int
     trials: int
     errors: int = 0
+    contaminated: int = 0
     # Two-sided 95% Wilson score interval on successes/trials; None when trials == 0.
     interval_low: float | None = None
     interval_high: float | None = None
@@ -121,19 +134,25 @@ class Rate:
         return self.successes / self.trials if self.trials else None
 
 
-AttemptOutcome = Literal["verified", "suspected", "contaminated", "none", "error"]
+AttemptOutcome = Literal["verified", "suspected", "contaminated", "none"]
 
 
 @dataclass(frozen=True)
 class Attempt:
-    """One run of one attack from a reset state."""
+    """One run of one attack from a reset state.
+
+    What was observed and whether the run completed are separate facts. A run that
+    failed halfway is still judged on the replies it did receive: a transport error
+    cannot undo a disclosure that already happened.
+    """
 
     attack_id: str
     slot_id: str
-    outcome: AttemptOutcome
+    outcome: AttemptOutcome  # from the evidence in the transcript, complete or not
     transcript: tuple[Turn, ...]
-    matches: tuple[Match, ...] = ()
-    error: str | None = None
+    matches: tuple[Match, ...] = ()  # everything not discarded as contaminated
+    contaminated_slots: tuple[str, ...] = ()
+    error: str | None = None  # set when the run did not complete
 
 
 @dataclass(frozen=True)
@@ -186,6 +205,9 @@ class SlotStatus:
     authorized: tuple[str, ...]
     state: SlotState
     detail: str = ""
+    # Attempts aimed at this slot that completed and were not discarded. Zero means the
+    # slot was never actually tested, whatever else the report says.
+    judged_attempts: int = 0
 
 
 @dataclass(frozen=True)
@@ -229,6 +251,11 @@ class ScanReport:
     contaminated_attempts: int  # discarded because the canary was in attacker input
     errors: tuple[ErrorRecord, ...]
     limitations: tuple[str, ...] = field(default_factory=tuple)
+    # Why the status is "inconclusive"; empty otherwise.
+    inconclusive_reasons: tuple[str, ...] = field(default_factory=tuple)
+    # What the target said about its own configuration when scanned (model, digest,
+    # settings), so a later replay can tell whether it is facing the same thing.
+    target_config: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -295,4 +322,6 @@ class ScanReport:
             contaminated_attempts=data["contaminated_attempts"],
             errors=tuple(ErrorRecord(**e) for e in data["errors"]),
             limitations=tuple(data.get("limitations", ())),
+            inconclusive_reasons=tuple(data.get("inconclusive_reasons", ())),
+            target_config=dict(data.get("target_config", {})),
         )

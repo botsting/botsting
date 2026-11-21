@@ -179,3 +179,27 @@ def test_unexpected_transport_error_is_wrapped() -> None:
     model, _ = make_model(handler)
     with pytest.raises(ModelError, match="boom"):
         complete(model)
+
+
+def test_fingerprint_reports_the_served_digest_and_settings() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/tags"
+        return httpx.Response(200, json={"models": [{"name": "other:latest", "digest": "aaa"}, {"name": "llama3.2:latest", "digest": "abc123"}]})
+
+    model = OllamaModel("llama3.2", temperature=0.2, seed=7, transport=httpx.MockTransport(handler))
+    assert asyncio.run(model.fingerprint()) == {
+        "model": "ollama:llama3.2",
+        "digest": "abc123",
+        "temperature": "0.2",
+        "max_tokens": "600",
+        "seed": "7",
+    }
+
+
+def test_fingerprint_never_raises() -> None:
+    def refuse(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused")
+
+    for transport in (httpx.MockTransport(refuse), httpx.MockTransport(lambda r: httpx.Response(500, text="oops"))):
+        fingerprint = asyncio.run(OllamaModel("llama3.2", transport=transport).fingerprint())
+        assert fingerprint["digest"] == "unavailable" and fingerprint["model"] == "ollama:llama3.2"

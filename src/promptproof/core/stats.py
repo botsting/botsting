@@ -29,13 +29,14 @@ def wilson_interval(successes: int, trials: int) -> tuple[float, float] | None:
     return (low, high)
 
 
-def make_rate(successes: int, trials: int, errors: int = 0) -> Rate:
-    """A Rate over the trials that completed. Errored trials are reported, not counted."""
+def make_rate(successes: int, trials: int, errors: int = 0, contaminated: int = 0) -> Rate:
+    """A Rate over the trials that could be judged. Errored and discarded trials are reported, not counted."""
     interval = wilson_interval(successes, trials)
     return Rate(
         successes=successes,
         trials=trials,
         errors=errors,
+        contaminated=contaminated,
         interval_low=None if interval is None else interval[0],
         interval_high=None if interval is None else interval[1],
     )

@@ -21,6 +21,7 @@ import re
 from decimal import ROUND_HALF_UP, Decimal
 
 from promptproof.core.models import Finding, Rate, ScanReport, Turn
+from promptproof.shell import replay_command
 
 HEADLINE_NO_VERIFIED_VIOLATIONS = "No verified violations observed under these tested conditions."
 
@@ -63,11 +64,19 @@ def _headline(report: ScanReport) -> list[str]:
     if report.status == "violations_verified":
         count = len(report.findings)
         plural = "" if count == 1 else "s"
-        return [f"{count} verified violation{plural} found."]
+        lines = [f"{count} verified violation{plural} found."]
+        if report.inconclusive_reasons:
+            # Violations were proven, but a reader must not take the rest as covered.
+            lines += ["", "Not everything could be tested:", ""]
+            lines.extend(f"- {_text(reason)}" for reason in report.inconclusive_reasons)
+        return lines
     if report.status == "no_verified_violations":
         return [HEADLINE_NO_VERIFIED_VIOLATIONS]
     lines = ["The scan could not reach a conclusion.", ""]
-    lines.extend(f"- {reason}" for reason in _inconclusive_reasons(report))
+    if report.inconclusive_reasons:
+        lines.extend(f"- {_text(reason)}" for reason in report.inconclusive_reasons)
+    else:
+        lines.extend(f"- {reason}" for reason in _inconclusive_reasons(report))
     return lines
 
 
@@ -104,8 +113,9 @@ def _inconclusive_reasons(report: ScanReport) -> list[str]:
 def _what_was_tested(report: ScanReport) -> list[str]:
     return [
         f"- Tool version: {report.tool_version}",
-        f"- Target: {report.target}",
-        f"- Attacker principal: {report.attacker_principal}",
+        f"- Target: {_code(report.target)}",
+        f"- Target configuration: {_config(report)}",
+        f"- Attacker principal: {_code(report.attacker_principal)}",
         f"- Scan window: {report.started_at} to {report.finished_at} (UTC)",
         f"- Attacks run: {report.attacks_run}",
         f"- Attempts run: {report.attempts_run}",
@@ -120,10 +130,10 @@ def _slots(report: ScanReport) -> list[str]:
     lines: list[str] = []
     for slot in report.slots:
         detail = f" — {_code(slot.detail)}" if slot.detail else ""
-        allowed = ", ".join(slot.authorized) if slot.authorized else "(none listed)"
-        lines.append(f"- **{slot.slot_id}** ({slot.kind}): {slot.description}")
+        lines.append(f"- {_code(slot.slot_id)} ({_text(slot.kind)}): {_text(slot.description)}")
         lines.append(f"  - State: {slot.state}{detail}")
-        lines.append(f"  - Principals authorized to see it: {allowed}")
+        lines.append(f"  - Principals authorized to see it: {_principals(slot.authorized)}")
+        lines.append(f"  - Attempts aimed at it that completed and were judged: {slot.judged_attempts}")
     return lines
 
 
@@ -134,7 +144,7 @@ def _tasks(report: ScanReport) -> list[str]:
     for task in report.tasks:
         outcome = "worked as expected" if task.passed else "did not work"
         detail = f" — {_code(task.detail)}" if task.detail else ""
-        lines.append(f"- **{task.task_id}**: {outcome}{detail}")
+        lines.append(f"- {_code(task.task_id)}: {outcome}{detail}")
     return lines
 
 
@@ -148,19 +158,21 @@ def _findings(report: ScanReport, report_path: str | None) -> list[str]:
 
 
 def _finding(finding: Finding, report_path: str | None) -> list[str]:
-    target_file = report_path if report_path else "<report.json>"
-    allowed = ", ".join(finding.authorized) if finding.authorized else "(none listed)"
+    command = replay_command(report_path or "REPORT.json", finding.id)
+    if not report_path:
+        command = command.replace("REPORT.json", "<report.json>", 1)
     lines = [
-        f"### {finding.id}: {finding.title}",
+        f"### {_text(finding.id)}: {_text(finding.title)}",
         "",
         f"- Evidence level: {finding.level.label}",
-        f"- Technique: {finding.technique}",
-        f"- Slot: {finding.slot_id}",
-        f"- Policy: principals authorized to see this slot: {allowed}",
-        f"- How the canary appeared: encoding `{finding.encoding}`, scope `{finding.scope}`",
+        f"- Technique: {_text(finding.technique)}",
+        f"- Attack: {_code(finding.attack_id)}, sent as {_code(finding.attacker_principal)}",
+        f"- Slot: {_code(finding.slot_id)}",
+        f"- Policy: principals authorized to see this slot: {_principals(finding.authorized)}",
+        f"- How the canary appeared: encoding {_code(finding.encoding)}, scope {_code(finding.scope)}",
         f"- Discovery: {_rate_text('found in', 'search attempts', finding.discovery)}",
         f"- Reproduction: {_rate_text('reproduced in', 'replays from reset', finding.reproduction)}",
-        f"- Replay: {_code(f'promptproof replay {target_file} --finding {finding.id}')}",
+        f"- Replay: {_code(command)}",
         "",
         "#### Transcript",
         "",
@@ -189,7 +201,10 @@ def _rate_text(verb: str, noun_plural: str, rate: Rate) -> str:
         low = _percent(rate.interval_low)
         high = _percent(rate.interval_high)
         interval = f" ({method} {low}% to {high}%)"
-    return f"{verb} {rate.successes} of {rate.trials} {noun_plural}{errors}{interval}"
+    discarded = (
+        f", {rate.contaminated} discarded as contaminated and not counted" if rate.contaminated else ""
+    )
+    return f"{verb} {rate.successes} of {rate.trials} {noun_plural}{errors}{discarded}{interval}"
 
 
 def _percent(value: float) -> int:
@@ -210,10 +225,10 @@ def _suspected(report: ScanReport) -> list[str]:
     for index, item in enumerate(report.suspected, start=1):
         lines.extend(
             [
-                f"### Suspected {index}: {item.title}",
+                f"### Suspected {index}: {_text(item.title)}",
                 "",
-                f"- Attack: {item.attack_id} (technique: {item.technique})",
-                f"- Slot: {item.slot_id}",
+                f"- Attack: {_code(item.attack_id)} (technique: {_text(item.technique)})",
+                f"- Slot: {_code(item.slot_id)}",
                 f"- Why it is only suspected: {_code(item.reason)}",
                 "",
                 "#### Transcript",
@@ -231,8 +246,8 @@ def _contaminated(report: ScanReport) -> list[str]:
     plural = "" if count == 1 else "s"
     return [
         f"Discarded {count} attempt{plural} because the canary appeared in "
-        "attacker-visible input; these runs prove nothing and are excluded from "
-        "every rate in this report."
+        "attacker-visible input; these runs prove nothing about the slot concerned "
+        "and are left out of its rates."
     ]
 
 
@@ -241,8 +256,8 @@ def _errors(report: ScanReport) -> list[str]:
         return [_EMPTY_SECTION]
     lines: list[str] = []
     for error in report.errors:
-        where = f"attack {error.attack_id}" if error.attack_id else "scan-wide"
-        lines.append(f"- [{error.phase}] {where}: {_code(error.message)}")
+        where = f"attack {_code(error.attack_id)}" if error.attack_id else "scan-wide"
+        lines.append(f"- {_text(error.phase)}, {where}: {_code(error.message)}")
     return lines
 
 
@@ -266,6 +281,25 @@ def _transcript_lines(transcript: tuple[Turn, ...]) -> list[str]:
         lines.append(fence)
         lines.append("")
     return lines  # ends with a blank line; callers trim the one after their last item
+
+
+_MARKUP = frozenset("\\`*_[]<>#!|")
+
+
+def _text(text: str) -> str:
+    """`text` as plain prose on one line: nothing in it can act as Markdown or HTML."""
+    flat = " ".join(str(text).split())
+    return "".join("\\" + ch if ch in _MARKUP else ch for ch in flat)
+
+
+def _principals(principals: tuple[str, ...]) -> str:
+    return ", ".join(_code(p) for p in principals) if principals else "(none listed)"
+
+
+def _config(report: ScanReport) -> str:
+    if not report.target_config:
+        return "not recorded"
+    return ", ".join(f"{_text(key)} {_code(value)}" for key, value in sorted(report.target_config.items()))
 
 
 def _code(text: str) -> str:

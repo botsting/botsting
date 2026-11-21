@@ -39,6 +39,9 @@ _NEXT = re.compile(r"^\s*(next|continue|go on|and the next|more)\b", re.IGNORECA
 class ScriptedModel:
     name = "scripted"
 
+    async def fingerprint(self) -> dict[str, str]:
+        return {"model": self.name}
+
     async def complete(self, system: str, messages: list[ChatMessage]) -> str:
         user_turns = [m["content"] for m in messages if m["role"] == "user"]
         if not user_turns:

@@ -26,6 +26,14 @@ class Target(Protocol):
     # Who the attacker is. Must not be authorized for any slot under test.
     attacker_principal: str
 
+    async def describe(self) -> Mapping[str, str]:
+        """The configuration under test (build, model, weights digest, settings).
+
+        Stored with every report so a replay can tell whether it faces the same thing.
+        Must not raise.
+        """
+        ...
+
     def slots(self) -> Sequence[Slot]:
         """Where canaries can be planted, and who may see each."""
         ...

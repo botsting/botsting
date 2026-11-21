@@ -19,6 +19,13 @@ class ChatModel(Protocol):
         """Return the assistant's next message. Raise ModelError on failure."""
         ...
 
+    async def fingerprint(self) -> dict[str, str]:
+        """What identifies this model and its settings, for pinning a result to a configuration.
+
+        Must not raise: report "unavailable" for anything that cannot be determined.
+        """
+        ...
+
 
 class ModelError(RuntimeError):
     """The model could not produce a reply (unreachable, timed out, bad response)."""

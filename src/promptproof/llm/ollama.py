@@ -73,6 +73,33 @@ class OllamaModel:
             )
         return _extract_reply(response, self.host, self.model)
 
+    async def fingerprint(self) -> dict[str, str]:
+        """Model name, the digest of the weights actually served, and the sampling settings.
+
+        A name such as "llama3.2" can be re-pulled to different weights, so the digest
+        is what pins a result. Never raises; an unreachable server gives "unavailable".
+        """
+        digest = "unavailable"
+        try:
+            async with httpx.AsyncClient(transport=self._transport, timeout=httpx.Timeout(10)) as client:
+                response = await client.get(f"{self.host}/api/tags")
+            body: object = response.json() if response.status_code == 200 else None
+            models = body.get("models") if isinstance(body, dict) else None
+            for entry in models if isinstance(models, list) else []:
+                if isinstance(entry, dict) and entry.get("name") in (self.model, f"{self.model}:latest"):
+                    if isinstance(entry.get("digest"), str):
+                        digest = entry["digest"]
+                    break
+        except Exception:  # noqa: BLE001 - a fingerprint must never fail a scan
+            pass
+        return {
+            "model": self.name,
+            "digest": digest,
+            "temperature": f"{self.temperature:g}",
+            "max_tokens": str(self.max_tokens),
+            "seed": "none" if self.seed is None else str(self.seed),
+        }
+
     def _payload(self, system: str, messages: list[ChatMessage]) -> dict[str, object]:
         options: dict[str, object] = {"temperature": self.temperature, "num_predict": self.max_tokens}
         if self.seed is not None:
