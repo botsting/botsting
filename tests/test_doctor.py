@@ -115,3 +115,23 @@ def test_the_command_line_and_its_exit_codes(staging, capsys):
     assert main(["doctor", "--target", "http:staging"]) == 2
     assert main(["doctor", "--target", "http:not-described"]) == 2
     assert "promptproof guide" in capsys.readouterr().out
+
+
+def test_production_keys_on_a_test_deployment_stop_it_and_no_value_is_shown(staging, monkeypatch):
+    monkeypatch.setenv(pp.KEY_ENV, KEY)
+    authorize(staging["origin"])
+    secret = "sk_" + "live_" + "Zq7" * 8
+    settings = staging["folder"] / "staging.env"
+    settings.write_text(f"STRIPE_SECRET_KEY={secret}\nNODE_ENV=test\n", encoding="utf-8")
+    lines: list[str] = []
+    ready = diagnose("http:staging", out=lines.append, env_files=(str(settings),))
+    text = "\n".join(lines)
+    assert not ready and "FIX   deployment settings" in text and "STRIPE_SECRET_KEY" in text
+    assert secret not in text and "Zq7" not in text
+    assert staging["seen"] == []  # nothing was sent to a deployment that may be wired to production
+
+    settings.write_text("STRIPE_SECRET_KEY=" + "sk_" + "test_" + "Zq7" * 8 + "\nNODE_ENV=test\n", encoding="utf-8")
+    lines.clear()
+    assert diagnose("http:staging", out=lines.append, env_files=(str(settings),))
+    assert any("ok    deployment settings" in line for line in lines)
+    assert main(["doctor", "--target", "http:staging", "--offline", "--env-file", str(settings)]) == 0

@@ -147,6 +147,10 @@ def _authorization_markdown(authorization: dict[str, str]) -> str:
             parts.append(f"in {_code(authorization['environment'])} environment")
         if authorization.get("scope"):
             parts.append(f"(scope: {_text(authorization['scope'])})")
+        if authorization.get("allowed_tools"):
+            parts.append(f"Tools that could be exercised: {_text(authorization['allowed_tools'])}.")
+        if authorization.get("live_tools"):
+            parts.append(f"Tools that could be carried out for real, inside the bot's own caps: {_text(authorization['live_tools'])}.")
         return " ".join(parts)
     if authorization.get("reach") == "in-process":
         return "not required (in-process target)"

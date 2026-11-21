@@ -21,6 +21,8 @@ def test_the_demo_catches_the_vulnerable_build_and_clears_the_fixed_one(tmp_path
         report = json.loads((folder / "scan.promptproof.json").read_text(encoding="utf-8"))
         assert report["status"] == status and (folder / "report.html").exists()
         assert report["authorization"]["authorized_by"] == "the promptproof demo command"
+        assert report["authorization"]["live_tools"].startswith("none") and report["target_config"]["description_digest"]
+        assert "recorded, never carried out" in (folder / "report.md").read_text(encoding="utf-8")
         check(tmp_path / "promptproof-demo" / f"{variant}.sealed.zip")
     # Nothing is left behind: no key in the environment, no authorization or target file on disk.
     assert pp.KEY_ENV not in os.environ and pp.LIVE_ENV not in os.environ
@@ -35,6 +37,9 @@ def test_the_live_demo_carries_out_small_refunds_and_stops_large_ones(tmp_path, 
     report = (tmp_path / "live" / "vulnerable" / "report.md").read_text(encoding="utf-8")
     assert "ran for real within the caps" in report
     assert f"is outside the cap of 0 to {LIVE_CAP}" in report  # the attempt is evidence; nothing ran
+    assert "Tools that could be carried out for real, inside the bot's own caps: issue" in report
+    html = (tmp_path / "live" / "vulnerable" / "report.html").read_text(encoding="utf-8")
+    assert "carried out for real" in html and "issue_refund" in html
     assert pp.LIVE_ENV not in os.environ
 
 

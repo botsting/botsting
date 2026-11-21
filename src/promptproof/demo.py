@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 import os
 import threading
@@ -167,7 +168,9 @@ def _demo(args: argparse.Namespace) -> int:
                     origin, "the promptproof demo command", "the built-in practice bot on this machine", "test", 1,
                     datetime.now(UTC), allowed_tools=(REFUND_TOOL,), live_tools=(REFUND_TOOL,) if args.live else (),
                 )  # fmt: skip
-                config = parse_config(f"practice-{variant}", description(server.server_address[1], variant, args.live))
+                raw = description(server.server_address[1], variant, args.live)
+                digest = hashlib.sha256(json.dumps(raw, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:16]
+                config = parse_config(f"practice-{variant}", raw, digest)
                 target = HttpTarget(config, f"http:practice-{variant}", permission)
                 report = run_to_completion(
                     run_scan(target, default_attacks(target), ScanConfig(reproduction_trials=args.replays))

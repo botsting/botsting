@@ -10,6 +10,7 @@ that is not passed, with the command or change that fixes it:
     3. credentials         are the environment variables its headers use set?
     4. the harness key     (drop-in harness only) is the key set here?
     5. authorization       has a person authorized this address, and does it cover the tools?
+       deployment settings (with --env-file) does the deployment's configuration hold production keys?
     6. proof of control    (across a network) does the address still serve its token?
     7. the harness         (drop-in harness only) does the bot confirm test mode?
     8. a legitimate run    can each secret be fetched by someone allowed it, and does normal use work?
@@ -51,8 +52,13 @@ class _Report:
             self.out(f"          {line}")
 
 
-def diagnose(spec: str, offline: bool = False, out: Callable[[str], None] = print) -> bool:
-    """Run the checks, printing through `out`. Returns True when the target is ready to scan."""
+def diagnose(
+    spec: str, offline: bool = False, out: Callable[[str], None] = print, env_files: tuple[str, ...] = ()
+) -> bool:
+    """Run the checks, printing through `out`. Returns True when the target is ready to scan.
+
+    `env_files` are exports of the deployment's own settings (never this machine's): they are checked
+    for production keys, by name and known prefix only."""
     from promptproof.core.authorization import (
         AuthorizationError,
         confirm_proof,
@@ -145,6 +151,39 @@ def diagnose(spec: str, offline: bool = False, out: Callable[[str], None] = prin
         report.fix("authorization", str(error), how)
         out("  Stopped here: nothing is sent to a bot without an authorization.")
         return False
+    # The deployment's own settings, if the owner exported them: no production keys on a test deployment.
+    if env_files:
+        from promptproof.sterility import EnvFileError, check, read_env_file
+
+        try:
+            variables: dict[str, str] = {}
+            for path in env_files:
+                variables.update(read_env_file(path))
+        except EnvFileError as error:
+            report.fix("deployment settings", str(error), "Give an env file of KEY=value lines exported from the deployment.")
+        else:
+            sterile = check(variables)
+            live = [f for f in sterile.findings if f.severity == "live" and not f.allowed]
+            if not live:
+                report.ok(
+                    "deployment settings",
+                    f"{sterile.checked_count} variable(s) checked, no production signal; "
+                    f"{sterile.unknown_count} could not be told apart and are worth a look",
+                )
+            elif target.authorization.environment == "production":
+                report.note(
+                    "deployment settings",
+                    f"{len(live)} production signal(s), as expected for a test of the real system: "
+                    + ", ".join(f.name for f in live),
+                )
+            else:
+                report.fix(
+                    "deployment settings",
+                    f"this {target.authorization.environment} deployment holds production settings: "
+                    + ", ".join(f"{f.name} ({f.reason})" for f in live),
+                    "Replace each with a test value before scanning, or a test could reach real systems.\n"
+                    "Details: promptproof sterile-check --env-file <file>",
+                )
     if report.failed:
         out("  Stopped here: fix the points above, then run this again.")
         return False
@@ -210,5 +249,11 @@ def register(commands: Any) -> None:
     parser = commands.add_parser("doctor", help="check a bot's setup step by step and say what to do next")
     parser.add_argument("--target", required=True, help="for example http:staging")
     parser.add_argument("--offline", action="store_true", help="check only what needs no contact with the bot")
-    parser.set_defaults(handler=lambda args: 0 if diagnose(args.target, args.offline) else 2)
+    parser.add_argument(
+        "--env-file", action="append", default=[], metavar="PATH",
+        help="an export of the deployment's settings, checked for production keys (names and known prefixes only)",
+    )  # fmt: skip
+    parser.set_defaults(
+        handler=lambda args: 0 if diagnose(args.target, args.offline, env_files=tuple(args.env_file)) else 2
+    )
 

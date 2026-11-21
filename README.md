@@ -93,9 +93,9 @@ uv run promptproof scan --target http:practice --html reports/practice.html
 
 `--write-config` adds the practice bot to `promptproof.targets.json`, which is a working example of the format.
 
-### The drop-in harness (Python bots)
+### The drop-in harness (Python and JavaScript bots)
 
-Instead of writing the reset endpoint and recorders yourself, add a few lines to the bot:
+Instead of writing the reset endpoint and recorders yourself, add a few lines to the bot. This is the Python package; the JavaScript one in `js/harness` does the same for Node, Express and fetch-style handlers (Next.js, Hono), and the same scanner scans both. It records tools and does not yet carry out capped real actions.
 
 ```python
 import promptproof.harness as pp
@@ -119,7 +119,7 @@ Make a key with `promptproof harness-key` and set it as `PROMPTPROOF_HARNESS_KEY
 - Set `PROMPTPROOF_CHALLENGE` to the token line from `promptproof authorize` and the harness serves the ownership proof for you.
 - The harness uses only the Python standard library.
 
-When something is not working, `promptproof doctor --target http:staging` checks the setup step by step (description, credentials, key, authorization, proof of control, the harness, legitimate use) and prints the command or change that fixes the first step not passed. It sends nothing hostile, and nothing at all before an authorization is on record.
+When something is not working, `promptproof doctor --target http:staging` checks the setup step by step (description, credentials, key, authorization, proof of control, the harness, legitimate use) and prints the command or change that fixes the first step not passed. It sends nothing hostile, and nothing at all before an authorization is on record. Add `--env-file staging.env` (an export of the deployment's settings) and it also refuses to go on if a test deployment holds production keys.
 
 Limits:
 
