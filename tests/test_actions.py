@@ -484,7 +484,8 @@ def test_time_limit_stops_the_scan(monkeypatch):
 
     monkeypatch.setattr(runner.time, "monotonic", tick)
     report = scan(build_target("toy:fixed"), max_seconds=40)
-    assert report.stopped_early == "time limit of 40 seconds reached"
+    # Reached either between operations or while one was pending; both are the same limit.
+    assert report.stopped_early.startswith("time limit of 40 seconds reached")
     assert 0 < report.messages_sent < 20, "far fewer than the 49 messages a full scan sends"
     assert report.status == "inconclusive"
 

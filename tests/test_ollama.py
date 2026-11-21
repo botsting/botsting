@@ -203,3 +203,12 @@ def test_fingerprint_never_raises() -> None:
     for transport in (httpx.MockTransport(refuse), httpx.MockTransport(lambda r: httpx.Response(500, text="oops"))):
         fingerprint = asyncio.run(OllamaModel("llama3.2", transport=transport).fingerprint())
         assert fingerprint["digest"] == "unavailable" and fingerprint["model"] == "ollama:llama3.2"
+
+
+def test_the_model_server_must_be_on_this_machine() -> None:
+    """The practice bots are exempt from authorization only while their model stays local."""
+    for host in ("https://unowned.example", "http://10.0.0.5:11434", "http://localhost.example.com:11434"):
+        with pytest.raises(ValueError, match="on this machine"):
+            OllamaModel("llama3.2", host=host)
+    for host in ("http://127.0.0.1:11434", "http://localhost:11434", "http://[::1]:11434"):
+        OllamaModel("llama3.2", host=host)

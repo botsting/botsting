@@ -90,6 +90,7 @@ from promptproof.targets.base import (
     injection_points,
     NotAuthorizedError,
     UnsafeTargetError,
+    confirm_permitted,
     require_contained_tools,
     tool_rules,
 )
@@ -224,6 +225,8 @@ class Meter:
         self.tool_calls = 0
         self.stop_reason = ""
         self._started = time.monotonic()
+        # Checks permission to reach the target; installed by `guard`.
+        self._guard: Callable[[bool], Awaitable[None]] | None = None
 
     def poll(self, about_to_send: bool = False) -> str:
         """Note a reason to stop, if there is one, and return it. Never raises.
@@ -248,17 +251,50 @@ class Meter:
         if self.poll(about_to_send=True):
             raise _Stop(self.stop_reason)
 
-    async def within_deadline(self, awaitable: Awaitable[object]) -> object:
-        """Await something from the target, but not past the time limit.
+    def guard(self, target: Target) -> None:
+        """From now on, check permission to reach `target` before every operation on it."""
+        if self._guard is None:
+            self._guard = lambda fresh: confirm_permitted(target, fresh)
+
+    async def start(self, target: Target) -> None:
+        """At the start of a scan or replay: fetch the proof of control afresh, within the limits.
+
+        Raises NotAuthorizedError if permission is missing, so nothing starts. A limit or a
+        cancel that arrives during the check is recorded as the reason the scan stopped.
+        """
+        self.guard(target)
+        try:
+            await self.within_deadline(confirm_permitted(target, True), gated=False)
+        except _Stop:
+            pass
+
+    async def within_deadline(self, awaitable: Awaitable[object], gated: bool = True) -> object:
+        """Await something from the target, but not past the time limit, and only while permitted.
 
         Without this a target that never answers would hold the scan forever: the limit
         would only be looked at between messages, and there would be no next message.
+        Permission is checked first: an authorization that expired or whose proof was
+        taken down since the last operation stops the scan here, before anything is sent.
         """
-        if self.poll():  # cancelled or out of time: do not start anything new
+
+        def drop() -> None:
             close = getattr(awaitable, "close", None)
             if close is not None:
                 close()
+
+        if self.poll():  # cancelled or out of time: do not start anything new
+            drop()
             raise _Stop(self.stop_reason)
+        if gated and self._guard is not None:
+            try:
+                await self.within_deadline(self._guard(False), gated=False)
+            except NotAuthorizedError as exc:
+                drop()
+                self.stop_reason = self.stop_reason or f"authorization no longer valid: {exc}"
+                raise _Stop(self.stop_reason) from exc
+            except _Stop:
+                drop()
+                raise
         config = self.config
         task = asyncio.ensure_future(awaitable)
         reason = ""
@@ -503,6 +539,7 @@ class _RunnerProbeChannel:
         title: str,
         max_turns: int = 4,
     ) -> tuple[Attempt, Attack | None]:
+        self._meter.guard(self._target)
         try:
             require_contained_tools(self._target)
         except NotAuthorizedError as exc:
@@ -626,6 +663,7 @@ async def run_attempt(
     """
     _check_attack(attack)
     meter = meter or Meter()
+    meter.guard(target)
     try:
         require_contained_tools(target)
     except NotAuthorizedError as exc:
@@ -944,6 +982,7 @@ class Preflight:
 
 async def preflight(target: Target, meter: Meter | None = None) -> Preflight:
     meter = meter or Meter()
+    meter.guard(target)
     try:
         require_contained_tools(target)
     except NotAuthorizedError as exc:
@@ -1075,8 +1114,9 @@ async def run_scan(
     strategy: AdaptiveStrategy | None = None,
 ) -> ScanReport:
     config = config or ScanConfig()
-    _validate(target, attacks)
     meter = Meter(config)
+    _validate(target, attacks)
+    await meter.start(target)  # proof of control fetched afresh; raises if permission is missing
     budget = _DiscoveryBudget(config.discovery_message_budget, config.discovery_budget_per_objective)
     started = datetime.now(UTC)
     target_config = await _describe(target, meter)
@@ -1393,6 +1433,7 @@ async def replay_finding(target: Target, finding: Finding, trials: int, config: 
     meter = Meter(config)
     try:
         require_contained_tools(target)
+        await meter.start(target)
     except UnsafeTargetError as exc:
         return ReplayResult(make_rate(0, 0), (f"Nothing was sent to the target: {exc}",), {})
     target_config = await _describe(target, meter)

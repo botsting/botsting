@@ -27,6 +27,12 @@ class OllamaModel:
         max_tokens: int = 600,
         transport: httpx.AsyncTransport | None = None,
     ) -> None:
+        # The practice bots count as running in this process, which exempts them from
+        # authorization. That only holds while their model is on this machine too.
+        from promptproof.core.authorization import is_loopback_origin
+
+        if not is_loopback_origin(host.rstrip("/")):
+            raise ValueError(f"the Ollama server must be on this machine (localhost or 127.0.0.1), not {host!r}")
         self.model = model
         self.host = host.rstrip("/")
         self.temperature = temperature

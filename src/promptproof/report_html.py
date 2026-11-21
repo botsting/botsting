@@ -277,7 +277,7 @@ def _rest(report: ScanReport) -> list[str]:
     if report.contaminated_attempts:
         count = report.contaminated_attempts
         lines.append(
-            f"<p>{count} attempt{'' if count == 1 else 's'} discarded because the planted value appeared in "
+            f"<p>{_e(count)} attempt{'' if count == 1 else 's'} discarded because the planted value appeared in "
             "attacker-visible input. These prove nothing about the thing concerned and are left out of its rates.</p>"
         )
     else:

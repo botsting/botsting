@@ -50,7 +50,7 @@ def site(body: str | None = None, status: int = 200, redirect_to: str | None = N
         if redirect_to is not None:
             return httpx.Response(302, headers={"Location": redirect_to})
         if size:
-            return httpx.Response(200, content=b"x" * size)
+            return httpx.Response(200, content=b"x" * size, headers={"Content-Type": "text/plain"})
         return httpx.Response(status, text=body or "")
 
     return httpx.MockTransport(handler), requests
@@ -268,17 +268,31 @@ def test_unverified_authorization_is_refused(monkeypatch):
         require_authorized(Remote(authorization=a), now=NOW)
 
 
-def test_proof_is_checked_again_when_the_gate_is_used(monkeypatch):
+def confirm(a: Authorization, fresh: bool = False) -> None:
+    asyncio.run(auth.confirm_proof(a, fresh=fresh))
+
+
+def test_the_offline_gate_never_fetches_anything(monkeypatch):
     a = verified()
     requests = serve(a, monkeypatch)
-    require_authorized(Remote(authorization=a), now=NOW)
-    require_authorized(Remote(authorization=a), now=NOW)
+    assert require_authorized(Remote(authorization=a), now=NOW) == a, "returns what still needs a proof check"
+    assert requests == []
+
+
+def test_proof_is_remembered_for_a_while_and_fetched_again_when_asked(monkeypatch):
+    a = verified()
+    requests = serve(a, monkeypatch)
+    confirm(a)
+    confirm(a)
     assert len(requests) == 1, "checked once, then remembered for a while"
+    confirm(a, fresh=True)
+    assert len(requests) == 2, "a fresh check ignores what was remembered"
     transport, _ = site("taken down", status=404)
     monkeypatch.setattr(auth, "_transport", transport)
-    auth.forget_checks()  # as if the recheck interval had passed
     with pytest.raises(AuthorizationError, match="no longer in place"):
-        require_authorized(Remote(authorization=a), now=NOW)
+        confirm(a, fresh=True)
+    with pytest.raises(AuthorizationError):
+        confirm(a)  # a failed check is not remembered as a success
 
 
 def test_proof_is_checked_again_after_the_interval(monkeypatch):
@@ -286,13 +300,26 @@ def test_proof_is_checked_again_after_the_interval(monkeypatch):
     requests = serve(a, monkeypatch)
     clock = {"t": 1000.0}
     monkeypatch.setattr(auth.time, "monotonic", lambda: clock["t"])
-    require_authorized(Remote(authorization=a), now=NOW)
+    confirm(a)
     clock["t"] += auth.RECHECK_SECONDS - 1
-    require_authorized(Remote(authorization=a), now=NOW)
+    confirm(a)
     assert len(requests) == 1
     clock["t"] += 2
-    require_authorized(Remote(authorization=a), now=NOW)
+    confirm(a)
     assert len(requests) == 2
+
+
+def test_proof_request_asks_caches_not_to_answer_and_needs_plain_text(monkeypatch):
+    a = verified()
+    requests = serve(a, monkeypatch)
+    confirm(a, fresh=True)
+    assert requests[0].headers["Cache-Control"] == "no-cache"
+
+    def html(request):
+        return httpx.Response(200, content=a.challenge_line().encode(), headers={"Content-Type": "text/html"})
+
+    result = check_proof(a, httpx.MockTransport(html))
+    assert not result.ok and "text/plain" in result.detail
 
 
 def test_loopback_needs_a_record_but_no_proof(monkeypatch):
@@ -375,48 +402,116 @@ def test_scan_of_an_authorized_network_target_runs(monkeypatch):
     assert report.status == "no_verified_violations" and bot.sent
 
 
-def test_proof_taken_down_mid_scan_stops_it_and_keeps_the_report(monkeypatch):
-    a = verified(now=datetime.now(UTC))
-    serve(a, monkeypatch)
-    bot = NetworkBot(a)
+def proof_until(monkeypatch, still_there) -> dict[str, int]:
+    """Make the proof disappear once `still_there()` turns false. Counts the fetches."""
     calls = {"n": 0}
-    real_check = auth.check_proof
+    real = auth.check_proof_async
 
-    def proof_disappears_after_the_first_check(authorization, transport=None):
+    async def check(authorization, transport=None):
         calls["n"] += 1
-        if calls["n"] == 1:
-            return real_check(authorization, transport)
+        if still_there():
+            return await real(authorization, transport)
         return auth.ProofResult(False, "taken down")
 
-    monkeypatch.setattr(auth, "check_proof", proof_disappears_after_the_first_check)
-    monkeypatch.setattr(auth, "RECHECK_SECONDS", 0.0)  # check on every use of the gate
+    monkeypatch.setattr(auth, "check_proof_async", check)
+    monkeypatch.setattr(auth, "RECHECK_SECONDS", 0.0)  # fetch before every operation
+    return calls
+
+
+def test_proof_taken_down_right_after_the_start_stops_the_scan_before_anything_is_sent(monkeypatch):
+    a = verified(now=datetime.now(UTC))
+    serve(a, monkeypatch)
+    calls = proof_until(monkeypatch, lambda: calls["n"] <= 1)
+    bot = NetworkBot(a)
     report = asyncio.run(run_scan(bot, [ATTACK, replace(ATTACK, id="probe2:secret")]))
-    assert calls["n"] == 2, "checked when the scan was validated, then failed at the next use of the gate"
     assert report.stopped_early.startswith("authorization no longer valid")
     assert report.status == "inconclusive"
     assert bot.sent == [], "nothing was sent after the proof went away"
     assert report.attempts_run == 0
 
 
-def test_proof_taken_down_between_attempts_keeps_what_was_found(monkeypatch):
+def test_proof_taken_down_partway_keeps_what_was_found(monkeypatch):
     a = verified(now=datetime.now(UTC))
     serve(a, monkeypatch)
-    monkeypatch.setattr(auth, "RECHECK_SECONDS", 0.0)
-    real_check = auth.check_proof
-    calls = {"n": 0}
-
-    def gone_from_the_fourth_check(authorization, transport=None):
-        # 1: validation, 2: preflight, 3: first attempt, 4: second attempt
-        calls["n"] += 1
-        return real_check(authorization, transport) if calls["n"] < 4 else auth.ProofResult(False, "taken down")
-
-    monkeypatch.setattr(auth, "check_proof", gone_from_the_fourth_check)
     bot = NetworkBot(a)
+    proof_until(monkeypatch, lambda: "give it" not in bot.sent)
     report = asyncio.run(run_scan(bot, [ATTACK, replace(ATTACK, id="probe2:secret")]))
     assert report.stopped_early.startswith("authorization no longer valid")
-    assert "give it" in bot.sent, "the first attempt ran"
-    assert bot.sent.count("give it") == 1, "the second did not"
+    assert bot.sent.count("give it") == 1, "the first attempt ran, nothing after the proof went away"
     assert report.status == "inconclusive"
+
+
+def test_every_scan_starts_with_a_fresh_proof_check(monkeypatch):
+    """Review: a second scan in the same process trusted the first scan's check."""
+    a = verified(now=datetime.now(UTC))
+    requests = serve(a, monkeypatch)
+    first = NetworkBot(a)
+    assert asyncio.run(run_scan(first, [ATTACK])).status == "no_verified_violations"
+    fetched = len(requests)
+    transport, _ = site("taken down", status=404)
+    monkeypatch.setattr(auth, "_transport", transport)
+    second = NetworkBot(a)
+    with pytest.raises(NotAuthorizedError, match="no longer in place"):
+        asyncio.run(run_scan(second, [ATTACK]))
+    assert second.sent == []
+    assert fetched >= 1
+
+
+def test_expiry_during_a_scan_stops_it_before_the_next_operation(monkeypatch):
+    """Review: an authorization that expired mid-scan still allowed the next message."""
+    local = "http://127.0.0.1:8080"
+    record = new_authorization(local, "Dana", "local bot", "test", 1, datetime.now(UTC))
+    bot = NetworkBot(record)
+    bot.reach, bot.origin = "loopback", local
+
+    def expire_after_first_message(now=None):
+        if bot.sent:
+            raise AuthorizationError(f"the authorization for {local} expired at {record.expires_at}")
+        return None
+
+    from promptproof.targets import base
+
+    monkeypatch.setattr(base, "require_authorized", lambda target, now=None: expire_after_first_message(now))
+    two_turns = Attack("two:secret", "test", "Two", "secret", ("first", "second"))
+    report = asyncio.run(run_scan(bot, [two_turns]))
+    assert report.stopped_early.startswith("authorization no longer valid") and "expired" in report.stopped_early
+    assert len(bot.sent) == 1, "the message after the expiry was never sent"
+
+
+def test_a_slow_proof_fetch_obeys_the_scan_time_limit(monkeypatch):
+    """Review: the opening proof fetch ran before the meter started, so it ignored the time limit."""
+    import time as real_time
+
+    a = verified(now=datetime.now(UTC))
+    serve(a, monkeypatch)
+
+    async def slow(authorization, transport=None):
+        await asyncio.sleep(2)
+        return auth.ProofResult(True, "eventually")
+
+    monkeypatch.setattr(auth, "check_proof_async", slow)
+    bot = NetworkBot(a)
+    started = real_time.monotonic()
+    report = asyncio.run(run_scan(bot, [ATTACK], ScanConfig(max_seconds=0.2)))
+    assert real_time.monotonic() - started < 1.5
+    assert report.stopped_early.startswith("time limit")
+    assert report.status == "inconclusive" and bot.sent == []
+
+
+def test_cancel_during_the_proof_fetch_is_honoured(monkeypatch):
+    a = verified(now=datetime.now(UTC))
+    serve(a, monkeypatch)
+    state = {"cancel": False}
+
+    async def slow(authorization, transport=None):
+        state["cancel"] = True
+        await asyncio.sleep(2)
+        return auth.ProofResult(True, "eventually")
+
+    monkeypatch.setattr(auth, "check_proof_async", slow)
+    bot = NetworkBot(a)
+    report = asyncio.run(run_scan(bot, [ATTACK], ScanConfig(cancelled=lambda: state["cancel"])))
+    assert report.stopped_early == "cancelled" and bot.sent == []
 
 
 def test_replay_against_an_unauthorized_network_target_sends_nothing():
@@ -525,7 +620,13 @@ def test_agent_and_tenant_must_match_when_the_target_names_them(monkeypatch):
     a = scoped(allowed_tools=tools, agent_id="support-bot", tenant="acme-staging")
     serve(a, monkeypatch)
     require_authorized(ToolBot(a, agent_id="support-bot", tenant="acme-staging"), now=NOW)
-    require_authorized(ToolBot(a), now=NOW)  # a target that names neither is covered by the origin
+    # Review: a limit the target gives no way to check is not a limit.
+    with pytest.raises(AuthorizationError, match="does not say which agent_id"):
+        require_authorized(ToolBot(a), now=NOW)
+    with pytest.raises(AuthorizationError, match="does not say which tenant"):
+        require_authorized(ToolBot(a, agent_id="support-bot"), now=NOW)
+    origin_only = scoped(allowed_tools=tools)
+    require_authorized(ToolBot(origin_only), now=NOW)  # no limit set, nothing named: the origin decides
     with pytest.raises(AuthorizationError, match="agent_id is 'sales-bot'"):
         require_authorized(ToolBot(a, agent_id="sales-bot", tenant="acme-staging"), now=NOW)
     with pytest.raises(AuthorizationError, match="tenant is 'acme-prod'"):
@@ -576,3 +677,60 @@ def test_in_process_scan_records_only_where_it_ran():
     target = build_target("toy:fixed")
     report = asyncio.run(run_scan(target, default_attacks(target)))
     assert report.authorization == {"reach": "in-process"}
+
+
+# -- the review's origin and record cases -----------------------------------------------------
+
+
+@pytest.mark.parametrize("bad", ["https://example.com:0", "https://@example.com", "https://:@example.com"])
+def test_more_unusable_origins(bad):
+    with pytest.raises(ValueError):
+        normalize_origin(bad)
+
+
+def test_one_spelling_per_origin():
+    assert normalize_origin("https://bücher.example") == normalize_origin("https://xn--bcher-kva.example")
+    assert normalize_origin("https://bücher.example") == "https://xn--bcher-kva.example"
+    assert normalize_origin("http://[0:0:0:0:0:0:0:1]:8080") == normalize_origin("http://[::1]:8080") == "http://[::1]:8080"
+    assert normalize_origin("https://STAGING.example.com:443/") == "https://staging.example.com"
+
+
+def write_store(tmp_path, **changes) -> AuthorizationStore:
+    good = new_authorization("http://127.0.0.1:8080", "Dana", "local bot", "test", 7, NOW)
+    record = {**auth.asdict(good), **changes}
+    path = tmp_path / "auth.json"
+    path.write_text(json.dumps({"authorizations": [record]}), encoding="utf-8")
+    return AuthorizationStore(path)
+
+
+@pytest.mark.parametrize(
+    ("changes", "reason"),
+    [
+        ({"authorized_by": "  "}, "does not name the person"),
+        ({"scope": ""}, "does not say what may be tested"),
+        ({"environment": "garbage"}, "environment must be one of"),
+        ({"expires_at": "9999-01-01T00:00:00+00:00"}, "at most 90 days"),
+        ({"expires_at": "2099-01-01T00:00:00"}, "time zone"),
+        ({"created_at": "2026-12-31T00:00:00+00:00"}, "expires before it was created"),
+        ({"origin": "http://127.0.0.1:8080/"}, "canonical"),
+        ({"token": "short"}, "too short"),
+        ({"allowed_tools": "issue_refund"}, "must be a list"),
+        ({"authorized_by": 7}, "must be text"),
+    ],
+)
+def test_records_read_back_from_the_file_are_validated(tmp_path, changes, reason):
+    """Review: records loaded from the file skipped every check the factory made."""
+    with pytest.raises(AuthorizationError, match=reason):
+        write_store(tmp_path, **changes).load()
+
+
+def test_a_hand_made_record_is_validated_at_the_gate_too():
+    bad = replace(new_authorization("http://127.0.0.1:8080", "Dana", "x", "test", 7, NOW), environment="garbage")
+    with pytest.raises(AuthorizationError, match="environment"):
+        require_authorized(Remote(reach="loopback", origin="http://127.0.0.1:8080", authorization=bad), now=NOW)
+
+
+def test_a_network_target_cannot_claim_a_loopback_origin():
+    record = new_authorization("http://127.0.0.1:8080", "Dana", "x", "test", 7, NOW)
+    with pytest.raises(AuthorizationError, match="across a network"):
+        require_authorized(Remote(reach="network", origin="http://127.0.0.1:8080", authorization=record), now=NOW)

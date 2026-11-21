@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Protocol
 
-from promptproof.core.authorization import AuthorizationError, require_authorized
+from promptproof.core.authorization import AuthorizationError, confirm_proof, require_authorized
 from promptproof.core.models import InjectionPoint, Reply, Slot, TaskCheck, ToolRule
 
 
@@ -101,18 +101,37 @@ class NotAuthorizedError(UnsafeTargetError):
 
 
 def require_contained_tools(target: Target) -> None:
-    """The gate in front of every entry point that sends anything to a target.
+    """The part of the gate that needs no network: run at every entry point and before every operation.
 
     Refuses a target unless (1) it is allowed to be reached at all: it runs in this
-    process, or there is a current, named authorization for exactly where it runs and,
-    across a network, proof of control that is still in place; and (2) it declares that
-    it has no tools, or that all of them are recording sinks. A target that omits either
-    declaration is refused: saying nothing is not the same as being harmless.
+    process, or there is a current, named, in-scope authorization for exactly where it
+    runs; and (2) it declares that it has no tools, or that all of them are recording
+    sinks. A target that omits either declaration is refused: saying nothing is not the
+    same as being harmless. Whether a network target's proof of control is still in
+    place is checked by `confirm_permitted`.
     """
     try:
         require_authorized(target)
     except AuthorizationError as exc:
         raise NotAuthorizedError(str(exc)) from exc
+    _require_tool_declaration(target)
+
+
+async def confirm_permitted(target: Target, fresh: bool = False) -> None:
+    """The whole gate, including fetching a network target's proof of control.
+
+    `fresh` fetches the proof whatever was remembered: used when a scan or replay starts.
+    """
+    try:
+        authorization = require_authorized(target)
+        _require_tool_declaration(target)
+        if authorization is not None:
+            await confirm_proof(authorization, fresh=fresh)
+    except AuthorizationError as exc:
+        raise NotAuthorizedError(str(exc)) from exc
+
+
+def _require_tool_declaration(target: Target) -> None:
     declared = getattr(target, "tool_safety", None)
     if declared == "sinks":
         return

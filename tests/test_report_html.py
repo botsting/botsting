@@ -84,9 +84,19 @@ ALLOWED_TAGS = {
 ALLOWED_ATTRIBUTES = {"class", "lang", "charset", "name", "content", "http-equiv"}
 
 
+EXPECTED_META = [
+    {"charset": "utf-8"},
+    {"name": "viewport", "content": "width=device-width, initial-scale=1"},
+    {"http-equiv": "Content-Security-Policy", "content": "default-src 'none'; style-src 'unsafe-inline'"},
+    {"name": "referrer", "content": "no-referrer"},
+]
+
+
 def assert_inert(html: str) -> Page:
     """Nothing in the page can load, link, run or submit anything."""
     page = Page(html)
+    # A <meta> can redirect the page (refresh), so only the report's own four are allowed, exactly.
+    assert [attributes for tag, attributes in page.tags if tag == "meta"] == EXPECTED_META
     for tag, attributes in page.tags:
         assert tag in ALLOWED_TAGS, f"unexpected element <{tag}>"
         assert set(attributes) <= ALLOWED_ATTRIBUTES, f"unexpected attribute on <{tag}>: {attributes}"
@@ -187,3 +197,23 @@ def test_cli_writes_the_html_report(tmp_path, capsys):
     assert f"Report to open in a browser: {html}" in capsys.readouterr().out
     page = assert_inert(html.read_text(encoding="utf-8"))
     assert page.headings == SECTIONS
+
+
+def test_a_report_file_with_markup_in_a_number_is_refused(vulnerable):
+    """Review: a hand-edited count reached the HTML unescaped and could add a redirecting <meta>."""
+    import json
+
+    data = json.loads(json.dumps(vulnerable.to_dict()))
+    hostile = '</p><meta http-equiv="refresh" content="0;url=https://invalid.example/"><p>'
+    for field in ("contaminated_attempts", "attempts_run", "messages_sent"):
+        with pytest.raises(ValueError, match=field):
+            ScanReport.from_dict({**data, field: hostile})
+    with pytest.raises(ValueError):
+        ScanReport.from_dict({**data, "contaminated_attempts": True})
+    bad_rate = json.loads(json.dumps(data))
+    bad_rate["findings"][0]["reproduction"]["successes"] = hostile
+    with pytest.raises(ValueError):
+        ScanReport.from_dict(bad_rate)
+    # And even if a bad value got into a report object, the page escapes it.
+    page = assert_inert(render_html(replace(vulnerable, contaminated_attempts=hostile)))  # type: ignore[arg-type]
+    assert hostile in page.visible

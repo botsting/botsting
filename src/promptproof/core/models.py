@@ -19,6 +19,21 @@ from enum import IntEnum
 from typing import Any, Literal
 
 
+def _count(value: object, name: str) -> int:
+    """A count read from a report file. A report can be edited by hand, so nothing else is accepted."""
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"{name} must be a whole number of zero or more, got {value!r}")
+    return value
+
+
+def _fraction(value: object) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int | float) or not 0.0 <= float(value) <= 1.0:
+        raise ValueError(f"an interval bound must be a number from 0 to 1, got {value!r}")
+    return float(value)
+
+
 class EvidenceLevel(IntEnum):
     """How strong the evidence for a finding is. A finding carries the highest level it reached."""
 
@@ -398,7 +413,15 @@ class ScanReport:
             )
 
         def rate(item: dict[str, Any]) -> Rate:
-            return Rate(**item)
+            return Rate(
+                successes=_count(item["successes"], "successes"),
+                trials=_count(item["trials"], "trials"),
+                errors=_count(item.get("errors", 0), "errors"),
+                contaminated=_count(item.get("contaminated", 0), "contaminated"),
+                interval_low=_fraction(item.get("interval_low")),
+                interval_high=_fraction(item.get("interval_high")),
+                interval_method=str(item.get("interval_method", "wilson-95")),
+            )
 
         findings = tuple(
             Finding(
@@ -442,23 +465,30 @@ class ScanReport:
             finished_at=data["finished_at"],
             status=data["status"],
             slots=tuple(
-                SlotStatus(**{**s, "authorized": tuple(s["authorized"])}) for s in data["slots"]
+                SlotStatus(
+                    **{
+                        **s,
+                        "authorized": tuple(str(p) for p in s["authorized"]),
+                        "judged_attempts": _count(s.get("judged_attempts", 0), "judged_attempts"),
+                    }
+                )
+                for s in data["slots"]
             ),
             tasks=tuple(TaskStatus(**t) for t in data["tasks"]),
-            attacks_run=data["attacks_run"],
-            attempts_run=data["attempts_run"],
-            discovery_runs=data["discovery_runs"],
-            reproduction_trials=data["reproduction_trials"],
+            attacks_run=_count(data["attacks_run"], "attacks_run"),
+            attempts_run=_count(data["attempts_run"], "attempts_run"),
+            discovery_runs=_count(data["discovery_runs"], "discovery_runs"),
+            reproduction_trials=_count(data["reproduction_trials"], "reproduction_trials"),
             findings=findings,
             suspected=suspected,
-            contaminated_attempts=data["contaminated_attempts"],
+            contaminated_attempts=_count(data["contaminated_attempts"], "contaminated_attempts"),
             errors=tuple(ErrorRecord(**e) for e in data["errors"]),
             limitations=tuple(data.get("limitations", ())),
             inconclusive_reasons=tuple(data.get("inconclusive_reasons", ())),
-            target_config=dict(data.get("target_config", {})),
+            target_config={str(k): str(v) for k, v in dict(data.get("target_config", {})).items()},
             stopped_early=data.get("stopped_early", ""),
-            messages_sent=data.get("messages_sent", 0),
-            tool_calls_recorded=data.get("tool_calls_recorded", 0),
-            discovery_messages_sent=data.get("discovery_messages_sent", 0),
-            authorization=dict(data.get("authorization", {})),
+            messages_sent=_count(data.get("messages_sent", 0), "messages_sent"),
+            tool_calls_recorded=_count(data.get("tool_calls_recorded", 0), "tool_calls_recorded"),
+            discovery_messages_sent=_count(data.get("discovery_messages_sent", 0), "discovery_messages_sent"),
+            authorization={str(k): str(v) for k, v in dict(data.get("authorization", {})).items()},
         )
