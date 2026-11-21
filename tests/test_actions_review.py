@@ -25,7 +25,7 @@ from test_actions import (  # noqa: F401  (fixtures are used by name)
 
 from promptproof.cli import EXIT_INCONCLUSIVE, main
 from promptproof.core.models import EvidenceLevel, Reply, ScanReport
-from promptproof.core.runner import ScanConfig, replay_finding, run_attempt
+from promptproof.core.runner import ScanConfig, replay_finding, run_attempt, run_scan, run_to_completion
 from promptproof.llm.base import ChatMessage
 from promptproof.llm.scripted import ScriptedModel
 from promptproof.report_markdown import render_markdown
@@ -240,6 +240,52 @@ def test_nothing_is_started_once_the_scan_is_cancelled():
     attempt = asyncio.run(run_attempt(CountingTarget(healthy), ATTACKS[0], Meter(ScanConfig(cancelled=lambda: True))))
     assert resets["n"] == 0, "an already-cancelled attempt must not even reset the target"
     assert attempt.error == "stopped early: cancelled" and attempt.transcript == ()
+
+
+def test_slow_cleanup_after_cancel_gets_a_short_grace_and_no_more():
+    """Third review: the wait for a cancelled operation to clean up had no limit."""
+
+    class SlowCleanup(FakeTarget):
+        async def reset(self, fixtures, content=None):
+            try:
+                await asyncio.sleep(30)
+            except asyncio.CancelledError:
+                await asyncio.sleep(5)  # cleanup that takes far longer than anyone should wait
+                raise
+
+    started = time.monotonic()
+    report = run_to_completion(run_scan(SlowCleanup(healthy), ATTACKS, ScanConfig(max_seconds=0.1)))
+    assert time.monotonic() - started < 2
+    assert "left running" in report.stopped_early
+    assert report.status == "inconclusive"
+
+
+def test_a_target_that_refuses_to_be_cancelled_cannot_hold_the_scan_or_the_process():
+    class Stubborn(FakeTarget):
+        async def reset(self, fixtures, content=None):
+            while True:
+                try:
+                    await asyncio.sleep(30)
+                except asyncio.CancelledError:
+                    continue  # ignores every request to stop
+
+    for config in (ScanConfig(max_seconds=0.1), ScanConfig(cancelled=lambda: True)):
+        started = time.monotonic()
+        # `asyncio.run` would wait on the stubborn operation forever at shutdown; this must not.
+        report = run_to_completion(run_scan(Stubborn(healthy), ATTACKS, config))
+        assert time.monotonic() - started < 2
+        assert report.stopped_early and report.status == "inconclusive"
+        assert report.messages_sent == 0
+
+
+def test_an_operation_that_stops_when_asked_is_not_reported_as_left_running():
+    class Polite(FakeTarget):
+        async def reset(self, fixtures, content=None):
+            await asyncio.sleep(30)
+
+    report = run_to_completion(run_scan(Polite(healthy), ATTACKS, ScanConfig(max_seconds=0.1)))
+    assert "while waiting for the target" in report.stopped_early
+    assert "left running" not in report.stopped_early
 
 
 # -- 3. nothing is sent to a target that has not promised its tools are harmless ------------

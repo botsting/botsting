@@ -36,11 +36,11 @@ scan is inconclusive and says why.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import math
 import secrets
 import time
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
+from typing import TypeVar
 from dataclasses import dataclass, field, replace as _replace
 from datetime import UTC, datetime
 
@@ -107,6 +107,9 @@ LIMITATIONS: tuple[str, ...] = (
     "The limits on a scan count messages, recorded tool calls and elapsed time. They are not a cap on "
     "cost: tokens, the size of replies and work the target does out of sight are not metered. The "
     "tool-call limit stops the scan before the next message; it cannot stop the calls one message triggers.",
+    "Stopping a scan, by a limit or by cancelling it, stops Promptproof's own waiting within a fraction of a "
+    "second. It cannot undo anything the target has already done, and a target that ignores the request to "
+    "stop is left running; the report says so when that happens.",
     "That the target's tools are harmless recording sinks is the target adapter's declaration. The scan "
     "refuses to run without it but cannot verify it.",
     "Attacks come from a fixed list of well-known techniques. An attacker who adapts to the "
@@ -136,8 +139,35 @@ LIMITATIONS: tuple[str, ...] = (
     "does not rule it out.",
 )
 
+_T = TypeVar("_T")
 _CONTROL_TRIES = 3
 _CANCEL_POLL_SECONDS = 0.05
+# How long an operation that was asked to stop is given to unwind before it is abandoned.
+_ABANDON_GRACE_SECONDS = 0.25
+
+
+def run_to_completion(main: Coroutine[object, object, _T]) -> _T:
+    """Run a scan or replay to its result, like `asyncio.run`, without waiting on what it abandoned.
+
+    `asyncio.run` finishes by cancelling every task still pending and waiting for all
+    of them, with no limit. A target operation that ignored cancellation would then
+    hold the process open after the scan had already given up on it, which would
+    defeat both the time limit and Ctrl+C. Here leftover tasks get the same short
+    grace period and are then dropped with the event loop.
+    """
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(main)
+    finally:
+        leftover = [task for task in asyncio.all_tasks(loop) if not task.done()]
+        for task in leftover:
+            task.cancel()
+        if leftover:
+            loop.run_until_complete(asyncio.wait(leftover, timeout=_ABANDON_GRACE_SECONDS))
+            for task in leftover:
+                if not task.done():
+                    task._log_destroy_pending = False  # type: ignore[attr-defined]
+        loop.close()
 UNAVAILABLE = "unavailable"
 
 
@@ -230,11 +260,19 @@ class Meter:
         except BaseException:
             task.cancel()
             raise
-        # Abandon the pending operation. This stops our waiting; it cannot undo anything
-        # the target has already done or is still doing on its side.
+        # Ask the pending operation to stop, give it a moment to unwind, then stop waiting
+        # whether or not it has. Cancellation in asyncio is cooperative: a target adapter
+        # that catches the request and carries on cannot be forced to stop from here. It is
+        # left behind, the report says so, and `run_to_completion` does not wait for it
+        # either. None of this can undo what the target has already done on its side.
         task.cancel()
-        with contextlib.suppress(asyncio.CancelledError, Exception):
-            await task
+        await asyncio.wait({task}, timeout=_ABANDON_GRACE_SECONDS)
+        if task.done():
+            if not task.cancelled():
+                task.exception()  # retrieved so it is not reported as never looked at
+        else:
+            task._log_destroy_pending = False  # type: ignore[attr-defined]
+            reason += "; the target did not stop when asked and was left running"
         self.stop_reason = self.stop_reason or reason
         raise _Stop(self.stop_reason)
 

@@ -8,7 +8,6 @@ Exit codes: 0 no verified violations, 1 violations verified (or reproduced, for 
 from __future__ import annotations
 
 import argparse
-import asyncio
 import json
 import signal
 import sys
@@ -18,7 +17,7 @@ from pathlib import Path
 from promptproof import __version__
 from promptproof.attacks.library import default_attacks
 from promptproof.core.models import Finding, Rate, ScanReport
-from promptproof.core.runner import ScanConfig, identity_unknown, replay_finding, run_scan
+from promptproof.core.runner import ScanConfig, identity_unknown, replay_finding, run_scan, run_to_completion
 from promptproof.shell import replay_command
 from promptproof.targets.registry import SpecError, build_target
 
@@ -100,9 +99,9 @@ def _run_until_done_or_cancelled(start: Callable[[Callable[[], bool]], object]) 
     try:
         previous = signal.signal(signal.SIGINT, on_interrupt)
     except ValueError:  # not the main thread; run without the handler
-        return asyncio.run(start(lambda: False))  # type: ignore[arg-type]
+        return run_to_completion(start(lambda: False))  # type: ignore[arg-type]
     try:
-        return asyncio.run(start(lambda: state["cancelled"]))  # type: ignore[arg-type]
+        return run_to_completion(start(lambda: state["cancelled"]))  # type: ignore[arg-type]
     finally:
         signal.signal(signal.SIGINT, previous)
 
@@ -174,7 +173,7 @@ def _replay(args: argparse.Namespace) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return EXIT_INCONCLUSIVE
 
-    result = asyncio.run(replay_finding(target, finding, args.trials))
+    result = run_to_completion(replay_finding(target, finding, args.trials))
     verb = "leaked" if finding.kind == "disclosure" else "was violated"
     print(
         f"{finding.id} ({finding.attack_id}) against {target.spec}: {finding.slot_id} {verb} in "
