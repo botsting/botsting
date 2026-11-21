@@ -373,6 +373,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     register_seal(commands)
 
+    from promptproof.sterility import register as register_sterility
+
+    register_sterility(commands)
+
     key = commands.add_parser("harness-key", help="make a key for the drop-in test harness (promptproof.harness)")
     key.set_defaults(handler=_harness_key)
 

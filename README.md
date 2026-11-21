@@ -137,6 +137,25 @@ The token is fetched again whenever a scan or replay starts, and every ten minut
 
 This shows control of what a site serves. It does not show that the person who placed the token owns everything behind it; the named person and the scope are how someone takes responsibility for that. Anyone can remove a check from open-source code; it is on by default.
 
+## Check a test deployment is not wired to production
+
+Before scanning staging or preview, run the check on an env export from that deployment:
+
+```
+promptproof sterile-check --env-file staging.env
+```
+
+Use `--environment` to check the current process environment, including when the
+command runs inside the deployment. You can check multiple files and the process
+environment together. Each source is checked independently. The report shows
+variable names and public rule details without exposing credential values.
+
+Exit status 1 means the check found a live signal. Review any `unknown` findings
+too, since many provider keys reveal nothing about the environment they can
+access. After reviewing a finding, you can mark it with `--allow NAME`. Use
+`--json` for automation. Exit status 0 means no unallowed live signal matched in
+the configuration you supplied. Exit status 2 means the check could not run.
+
 ## Development
 
 ```
