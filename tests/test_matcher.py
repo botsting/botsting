@@ -286,3 +286,27 @@ def test_no_false_positive_on_prose_for_many_random_canaries():
 
 def test_normalize():
     assert normalize("k7-m2 Q9\nxa!é") == "K7M2Q9XA"
+
+
+def test_spelled_rule_is_skipped_on_very_long_texts():
+    """Above the cutoff the counting bound no longer holds, so the rule must not fire."""
+    from promptproof.core.matcher import SPELL_MAX_SINGLES
+
+    spelled = " ".join(f"{ch} as in word" for ch in CORE)
+    full([spelled], "spelled")
+    filler = " ".join(["x"] * (SPELL_MAX_SINGLES + 1))
+    not_full([f"{filler} {spelled}"])
+
+
+def test_stated_bounds_match_the_constants():
+    """The docstring quotes these figures; keep them true if a constant changes."""
+    from math import comb
+
+    from promptproof.core import matcher
+
+    space = len(ALPHABET) ** 16
+    spelled = matcher.SPELL_MAX_SINGLES * (matcher.SPELL_MAX_GAP + 1) ** 15 / space
+    pieces = sum(comb(matcher.PIECE_MAX_GROUPS, k) for k in range(1, matcher.PIECE_MAX_COUNT + 1)) / space
+    assert spelled == pytest.approx(9.9e-13, rel=0.02)
+    assert pieces == pytest.approx(9.2e-13, rel=0.02)
+    assert spelled + pieces < 2e-12

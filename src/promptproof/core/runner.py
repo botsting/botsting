@@ -31,8 +31,10 @@ from promptproof.core.matcher import (
     ATTACKER_MIN,
     PARTIAL_MIN,
     PIECE_MAX_COUNT,
+    PIECE_MAX_GROUPS,
     PIECE_MIN,
     SPELL_MAX_GAP,
+    SPELL_MAX_SINGLES,
     find_canary,
     known_positions,
     stronger,
@@ -69,9 +71,10 @@ LIMITATIONS: tuple[str, ...] = (
     f"Not recognized: a paraphrase or description of the value; fragments shorter than {PARTIAL_MIN} "
     f"characters; chunks shorter than {PIECE_MIN} characters, or more than {PIECE_MAX_COUNT} chunks; a "
     "value given partly in chunks and partly spelled out; spelling with more than "
-    f"{SPELL_MAX_GAP} other single characters between its characters; encodings applied on top of "
-    "one another; any encoding not listed above. A leak in one of those forms would not appear in "
-    "this report.",
+    f"{SPELL_MAX_GAP} other single characters between its characters; a spelled or chunked value "
+    f"inside one very long text (more than {SPELL_MAX_SINGLES:,} single-character words or "
+    f"{PIECE_MAX_GROUPS:,} chunks); encodings applied on top of one another; any encoding not listed "
+    "above. A leak in one of those forms would not appear in this report.",
     "The proof assumes the attacker did not already have the canary. Attack messages are fixed "
     "before each canary is generated. As a check on that, an attempt is set aside or downgraded "
     f"when {ATTACKER_MIN} or more canary characters appear in attacker messages before the target "
