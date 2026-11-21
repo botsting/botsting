@@ -91,6 +91,10 @@ Rules:
   real secret of that kind lives, and nowhere the attacker's own account can read.
 - Nothing changes for requests without a signed Promptproof session.
 
+If the bot was built in Flowise, Dify or Langflow there is no code to add lines to. Ask the
+developer to run `promptproof init --preset <builder> --origin <url>` instead; it writes the
+description and prints the one line to add to the bot's instructions. Skip to step 4.
+
 ## 3. Describe the bot in `promptproof.targets.json`
 ```json
 {"targets": {"staging": {

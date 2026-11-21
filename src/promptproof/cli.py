@@ -404,6 +404,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     register_doctor(commands)
 
+    from promptproof.presets import register as register_presets
+
+    register_presets(commands)
+
     from promptproof.sterility import register as register_sterility
 
     register_sterility(commands)

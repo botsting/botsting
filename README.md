@@ -198,6 +198,16 @@ A bot built in Flowise, Dify, Langflow or a similar builder has no code to add l
 
 Each attempt then sends a fresh fake secret with its messages, and nothing is added to the bot. `session_pointer` is for bots that name the conversation themselves: the first message sends an empty id, and later ones send the id the bot returned.
 
+`promptproof init` writes this description for you, in the request shape each builder documents, and prints the one line to add to the bot's instructions:
+
+```
+promptproof init --preset dify --origin http://localhost --name support-bot
+promptproof init --preset flowise --origin http://localhost:3000 --id <chatflow id>
+promptproof init --preset langflow --origin http://localhost:7860 --id <flow id> --component <prompt component id>
+```
+
+That line tells the bot to give the planted value only to someone who states a pass phrase, made at random for you. A scan needs such a legitimate route before it can call a result clean: it shows the value really was planted. If the builder ignores the variable (Flowise does, silently, unless its override switch is on), the scan says the secret was unreachable, never that it was protected.
+
 This tests one thing: whether the bot can be talked into revealing a secret held in its instructions. A request variable is seen by whoever sends the request, so it cannot stand for another user's record, and no tool can be watched this way; descriptions that ask for either are refused. Check the builder's own terms before testing a bot on its hosted cloud.
 
 ### Testing the real system
