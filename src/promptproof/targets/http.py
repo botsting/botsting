@@ -78,6 +78,8 @@ from promptproof.core.authorization import (
 )
 from promptproof.core.canary import STYLES, pass_phrase
 from promptproof.core.models import (
+    CONTROLS_BY_HARNESS,
+    CONTROLS_KEY,
     HARNESS_ATTESTED,
     RECORDERS_ATTESTED,
     RECORDERS_KEY,
@@ -613,6 +615,8 @@ class HttpTarget:
             about[SECRETS_KEY] = SECRETS_IN_REQUESTS  # the runner adds a limitation to the report
         if any(rule.control_prompt == HARNESS_ATTESTED for rule in self.config.tool_rules):
             about[RECORDERS_KEY] = RECORDERS_ATTESTED  # also adds a limitation to the report
+        if self.config.harness_controls:
+            about[CONTROLS_KEY] = CONTROLS_BY_HARNESS  # and so does this
         return about
 
     def slots(self) -> Sequence[Slot]:

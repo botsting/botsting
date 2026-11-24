@@ -116,6 +116,7 @@ class Turn:
 # to the report for each. They are defined once, here, so the two sides cannot drift apart.
 SECRETS_KEY, SECRETS_IN_REQUESTS = "secrets", "sent with each request"
 RECORDERS_KEY, RECORDERS_ATTESTED = "tool_recorders", "attested by the harness"
+CONTROLS_KEY, CONTROLS_BY_HARNESS = "legitimate_route", "supplied by the harness in a check session"
 
 # A tool rule's control_prompt when no legitimate request is made: the drop-in harness attests,
 # in its signed readiness answer, that the tool is marked (its recorder is the decorator on it).

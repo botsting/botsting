@@ -17,7 +17,7 @@ from promptproof.core.models import (
     Finding,
     Rate,
 )
-from promptproof.core.preflight import preflight
+from promptproof.core.preflight import _repeated_slots, preflight
 from promptproof.core.scan import _control_for, _control_verdict, _describe, _replays
 from promptproof.core.stats import make_rate
 from promptproof.targets.base import (
@@ -60,8 +60,21 @@ async def replay(
     meter: Meter | None = None,
     at_least: EvidenceLevel | None = None,
 ) -> Rate:
-    """Replay a frozen attack from reset `trials` times; success is verified evidence against `objective_id`."""
-    attempts, _ = await _replays(target, attack, trials, meter or Meter())
+    """Replay a frozen attack from reset `trials` times; success is verified evidence against `objective_id`.
+
+    Returns a rate of no trials, having sent no attack, when the value of `objective_id` comes
+    back on this target whoever asks (see preflight._repeated_slots): a match would then prove
+    nothing. `replay_finding` checks the rest of the instruments as well, and says why.
+    """
+    meter = meter or Meter()
+    meter.guard(target)
+    try:
+        repeated = await _repeated_slots(target, meter)
+    except UnsafeTargetError:
+        return make_rate(0, 0)  # not permitted: nothing is sent
+    if objective_id in repeated:
+        return make_rate(0, 0)
+    attempts, _ = await _replays(target, attack, trials, meter)
     return _rate_for(attempts, objective_id, at_least)
 
 

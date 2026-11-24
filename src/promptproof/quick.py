@@ -54,6 +54,7 @@ OWNER = "owner:pass-phrase"
 MESSAGE_FIELDS = ("message", "query", "input", "prompt", "text", "question", "content", "user_input", "msg")
 REPLY_KEYS = ("reply", "response", "answer", "output", "text", "message", "content", "result", "completion")
 _NAME = re.compile(r"[^A-Za-z0-9]+")
+NEWLINE = chr(10)
 
 
 class QuickError(Exception):
@@ -324,6 +325,23 @@ def discover(
     return name, description, notes
 
 
+def _keep_earlier(path: Path, name: str, description: dict[str, Any]) -> Path | None:
+    """If the targets file already describes `name` differently, save that description beside it.
+
+    A first scan writes under a name made from the address, so scanning again would replace a
+    description someone had extended by hand. Returns where the earlier one was kept, or None."""
+    try:
+        earlier = json.loads(path.read_text(encoding="utf-8")).get("targets", {}).get(name)
+    except (OSError, ValueError, AttributeError):
+        return None
+    if earlier is None or earlier == description:
+        return None
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    kept = path.with_name(f"{path.stem}.{name}.{stamp}.json")
+    kept.write_text(json.dumps({"targets": {name: earlier}}, indent=2) + NEWLINE, encoding="utf-8")
+    return kept
+
+
 def run(args: Any) -> int:
     """The `promptproof scan URL` command."""
     from promptproof.cli import run_scan_command
@@ -345,6 +363,12 @@ def run(args: Any) -> int:
         print(f"Not scanned: {error}")
         return EXIT_INCONCLUSIVE
     path: Path = targets_file()
+    kept = _keep_earlier(path, name, description)
+    if kept is not None:
+        say(
+            f"The description saved earlier as http:{name} differs from what was worked out now (it was edited, or "
+            f"the bot changed). The earlier one was kept as {kept}."
+        )
     write_description(path, name, description)
     print(f"Saved what was worked out as target http:{name} in {path}.")
     print()

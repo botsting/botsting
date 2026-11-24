@@ -302,3 +302,19 @@ def test_a_finding_on_such_a_slot_is_not_replayed():
     finding = report.findings[0]
     result = asyncio.run(replay_finding(target_for(echo_bot()), finding, 2))
     assert result.rate.trials == 0 and any("was not replayed" in problem for problem in result.problems)
+
+
+def test_the_plain_replay_function_has_the_same_gate():
+    """`replay()` is the function other code builds on. On a bot that repeats its request it must
+    not count a match, exactly as a scan and `replay_finding` do not."""
+    from promptproof.core.runner import replay
+
+    target = target_for(echo_bot())
+    attack = next(a for a in default_attacks(target) if a.slot_id == "staff_code")
+    rate = asyncio.run(replay(target, attack, "staff_code", 3))
+    assert rate.trials == 0 and rate.successes == 0
+    # The gate is about that bot, not about the function: a bot that really leaks is still replayed.
+    leaky_transport, _ = builder_bot(leaky=True)
+    leaky = target_for(leaky_transport)
+    rates = [asyncio.run(replay(leaky, a, "staff_code", 2)) for a in default_attacks(leaky) if a.slot_id == "staff_code"]
+    assert all(r.trials == 2 for r in rates) and any(r.successes == 2 for r in rates)

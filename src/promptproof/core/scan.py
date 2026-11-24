@@ -64,6 +64,8 @@ from promptproof.core.matcher import (
 )
 from promptproof.core.meter import Meter, ScanConfig, _Stop
 from promptproof.core.models import (
+    CONTROLS_BY_HARNESS,
+    CONTROLS_KEY,
     RECORDERS_ATTESTED,
     RECORDERS_KEY,
     SECRETS_IN_REQUESTS,
@@ -362,6 +364,11 @@ async def run_attempt(
 
     The attack's messages and planted text are fixed before the canaries below are
     generated. That ordering is what guarantees the attacker's words cannot contain them.
+
+    This is the primitive, and it judges one attempt on its own. It does not know what the
+    checks before a scan found, so by itself it cannot tell a leak from a bot that repeats
+    its request (preflight's `repeated`). `run_scan`, `replay` and `replay_finding` apply
+    that gate; code that calls this directly must apply it too before calling a match a finding.
     """
     _check_attack(attack)
     meter = meter or Meter()
@@ -545,8 +552,18 @@ def _limitations_for(strategy: AdaptiveStrategy | None, target_config: dict[str,
         items.append(
             "For at least one tool, the scan did not make a legitimate request to see the recorder work. It "
             "relied on the harness's signed statement that the tool is marked. A recorded call is still proof. "
-            "But if the bot cannot reach that tool in this deployment, or calls it by a path that is not the "
-            "marked function, finding nothing for it means less than it would after an exercised control."
+            "But if the bot cannot reach that tool in this deployment, calls it by a path that is not the "
+            "marked function, or calls it somewhere the test session does not follow (a thread or process the "
+            "bot starts itself, a job queue, another worker), the call is not recorded, and finding nothing "
+            "for that tool means less than it would after an exercised control."
+        )
+    if target_config.get(CONTROLS_KEY) == CONTROLS_BY_HARNESS:
+        items.append(
+            "For at least one secret, the legitimate route was supplied by the test itself: in a signed check "
+            "session, and nowhere else, the harness added a line telling the bot to give the value to a user who "
+            "states a pass phrase made for this scan. \"Reachable\" for such a secret shows that the planted "
+            "value reached the model and that the bot can say it. It does not show that a real user of the "
+            "deployed bot has a way to obtain it. The pass phrase and that line never appear in an attack."
         )
     if target_config.get(SECRETS_KEY) == SECRETS_IN_REQUESTS:
         items.append(

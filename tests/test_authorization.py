@@ -105,7 +105,7 @@ def test_unusable_origins_are_rejected(bad):
 
 
 def test_loopback_detection():
-    for origin in ("http://localhost", "http://127.0.0.1:5000", "http://[::1]", "http://bot.localhost"):
+    for origin in ("http://localhost", "http://127.0.0.1:5000", "http://[::1]"):
         assert is_loopback_origin(origin), origin
     for origin in ("https://example.com", "http://10.0.0.5", "http://localhost.example.com", "http://127.0.0.1.nip.io"):
         assert not is_loopback_origin(origin), origin
@@ -797,3 +797,25 @@ def test_a_record_dated_in_the_future_is_refused(monkeypatch):
     with pytest.raises(AuthorizationError, match="in the future"):
         require_authorized(Remote(authorization=a), now=NOW)
     require_authorized(Remote(authorization=verified(now=NOW + timedelta(minutes=2))), now=NOW)  # small clock skew
+
+
+def test_a_name_under_localhost_counts_only_if_it_resolves_to_this_machine(monkeypatch):
+    """Some resolvers pass *.localhost on to DNS, where anyone could answer. Such a name is on this
+    machine only if every address it resolves to is a loopback one."""
+    import socket
+
+    answers = {
+        "bot.localhost": ["127.0.0.1", "::1"],
+        "elsewhere.localhost": ["203.0.113.5"],
+        "both.localhost": ["127.0.0.1", "203.0.113.5"],
+    }
+
+    def resolve(host, port, *args, **kwargs):
+        if host not in answers:
+            raise socket.gaierror("no such name")
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (address, 0)) for address in answers[host]]
+
+    monkeypatch.setattr(socket, "getaddrinfo", resolve)
+    assert is_loopback_origin("http://bot.localhost:8000")
+    for origin in ("http://elsewhere.localhost", "http://both.localhost", "http://unknown.localhost"):
+        assert not is_loopback_origin(origin), origin

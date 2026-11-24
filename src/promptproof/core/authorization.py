@@ -157,10 +157,31 @@ def normalize_origin(url: str) -> str:
     return f"{parts.scheme}://{shown_host}" + (f":{port}" if port is not None and port != default else "")
 
 
+def _resolves_here(host: str) -> bool:
+    """Whether every address this name resolves to is on this machine. False if it does not resolve."""
+    import socket
+
+    try:
+        found = {info[4][0] for info in socket.getaddrinfo(host, None)}
+    except (OSError, UnicodeError):
+        return False
+    try:
+        return bool(found) and all(ip_address(address.split("%")[0]).is_loopback for address in found)
+    except ValueError:
+        return False
+
+
 def is_loopback_origin(origin: str) -> bool:
+    """Whether a bot at this origin is on this machine, so that no proof of control is asked for.
+
+    `localhost` and loopback addresses are. A name under `.localhost` is meant to be, but some
+    resolvers pass such names on to DNS, where anyone could answer; it counts only if every
+    address it resolves to is a loopback one, and not at all if it does not resolve."""
     host = (urlsplit(origin).hostname or "").lower()
-    if host == "localhost" or host.endswith(".localhost"):
+    if host == "localhost":
         return True
+    if host.endswith(".localhost"):
+        return _resolves_here(host)
     try:
         return ip_address(host).is_loopback
     except ValueError:

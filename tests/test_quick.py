@@ -335,3 +335,35 @@ def test_a_scan_that_cannot_test_secrets_says_so_and_never_reads_as_a_pass(bot, 
     report = json.loads(Path("reports/scan.promptproof.json").read_text(encoding="utf-8"))
     assert any(gap.startswith("Secret leaks were not tested") for gap in report["not_tested"])
     assert "Not tested in this scan" in Path("reports/report.html").read_text(encoding="utf-8")
+
+
+def test_the_report_says_the_legitimate_route_was_supplied_by_the_test(bot, monkeypatch, capsys):
+    start, _, _ = bot
+    monkeypatch.setattr("promptproof.quick._ask_name", dana)
+    main(["scan", start(fixed=True), "--replays", "1", "--no-open"])
+    report = json.loads(Path("reports/scan.promptproof.json").read_text(encoding="utf-8"))
+    assert report["target_config"]["legitimate_route"] == "supplied by the harness in a check session"
+    (note,) = [item for item in report["limitations"] if "supplied by the test itself" in item]
+    assert "does not show that a real user of the deployed bot has a way to obtain it" in note
+    assert any("a job queue, another worker" in item for item in report["limitations"])  # where a recorder is blind
+
+
+def test_scanning_again_never_loses_a_description_someone_edited(bot, monkeypatch, capsys):
+    start, _, _ = bot
+    url = start(fixed=True)
+    monkeypatch.setattr("promptproof.quick._ask_name", dana)
+    main(["scan", url, "--replays", "1", "--no-open"])
+    targets = Path("promptproof.targets.json")
+    assert list(Path(".").glob("promptproof.targets.quick-*.json")) == []  # a first save keeps nothing aside
+    main(["scan", url, "--replays", "1", "--no-open"])
+    assert list(Path(".").glob("promptproof.targets.quick-*.json")) == []  # nor does an unchanged one
+    data = json.loads(targets.read_text(encoding="utf-8"))
+    (name,) = data["targets"]
+    data["targets"][name]["task_checks"][0]["prompt"] = "What are your opening hours?"  # extended by hand
+    targets.write_text(json.dumps(data), encoding="utf-8")
+    capsys.readouterr()
+    main(["scan", url, "--replays", "1", "--no-open"])
+    (kept,) = list(Path(".").glob("promptproof.targets.quick-*.json"))
+    assert json.loads(kept.read_text(encoding="utf-8"))["targets"][name]["task_checks"][0]["prompt"] == "What are your opening hours?"
+    assert "The earlier one was kept as" in capsys.readouterr().out
+
