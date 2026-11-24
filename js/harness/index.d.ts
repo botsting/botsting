@@ -17,6 +17,10 @@ export const MAX_LIFETIME_SECONDS: number;
 export const MAX_RUNS_REMEMBERED: number;
 /** How long one process remembers a run's live-action counts. */
 export const RUN_MEMORY_SECONDS: number;
+/** How many distinct slots one request's record lists as read. */
+export const MAX_SLOTS_NOTED: number;
+/** How many tools one process lists in its readiness answer. */
+export const MAX_TOOLS_NOTED: number;
 
 export class HarnessError extends Error {}
 
@@ -31,7 +35,9 @@ export class Session {
     key: string,
     nonce?: string,
     live?: ReadonlySet<string>,
-    runId?: string
+    runId?: string,
+    control?: Readonly<Record<string, string>>,
+    discover?: boolean
   );
   sid: string;
   fixtures: Record<string, string>;
@@ -42,13 +48,21 @@ export class Session {
   live: ReadonlySet<string>;
   /** The run their totals are counted under ("run" in the token). */
   runId: string;
+  /** Slot -> pass phrase, in a control session; planted() appends the note to those values. */
+  control: Record<string, string>;
+  /** True in a session that plants nothing and only learns which slots are read. */
+  discover: boolean;
   calls: CallRecord[];
+  /** The slots the bot's code asked for in this request, in the signed record. */
+  read: string[];
   dropped: number;
   size: number;
   /** Record a call, or count it as dropped past MAX_CALLS / MAX_RECORD_BYTES. */
   add(call: CallRecord): void;
-  /** The signed Promptproof-Tool-Calls header value for this session and message. */
-  headerValue(): string;
+  /** The signed Promptproof-Tool-Calls header value for this session and message.
+   *  With `tools` true (the readiness answer) it also carries every marked tool's
+   *  name and, for those marked neverForUsers, the rule. */
+  headerValue(tools?: boolean): string;
   /** Run `fn` with this session as the active one. */
   run<T>(fn: () => T): T;
 }
@@ -69,6 +83,8 @@ export interface SignedRecord {
   calls: CallRecord[];
   read: string[];
   tools: string[];
+  /** tool -> what an attacker would ask for, for the tools marked neverForUsers. */
+  rules: Record<string, string>;
 }
 
 /** Refuse a key shorter than MIN_KEY_LENGTH; returns it unchanged otherwise. */
@@ -90,6 +106,13 @@ export interface SessionTokenOptions {
   live?: Iterable<string>;
   /** The run the live actions' totals are counted under. */
   run?: string;
+  /** Slot -> pass phrase, for a control session: planted() returns the value with a
+   *  note telling the bot to give it to a user who states the phrase. Written into
+   *  the token only when it maps at least one slot, as the Python harness writes it. */
+  control?: Readonly<Record<string, string>> | null;
+  /** Marks a session that plants nothing and only learns which slots the bot reads.
+   *  Written into the token only when true. */
+  discover?: boolean;
 }
 
 /** What the scanner puts in the Promptproof-Session header of each message. */
@@ -131,7 +154,20 @@ export function active(): boolean;
 /** The number of test requests in progress in this Node worker. */
 export function testsInProgress(): number;
 
-/** The fake secret for this slot during a test session, `default` at any other time. */
+/** The line planted() appends after a value in a control session, and nowhere else. */
+export function controlNote(phrase: string): string;
+
+/** Note that a tool with this name is covered by the harness (done for you by
+ *  action()). `neverForUsers` says that nobody chatting with the bot may ever cause
+ *  it, and gives what an attacker would ask for; it travels in the readiness answer
+ *  as a rule. At most MAX_TOOLS_NOTED tools are remembered per process, and a later
+ *  call with an empty `neverForUsers` never erases what was said before. */
+export function markTool(name: string, neverForUsers?: string): void;
+
+/** The fake secret for this slot during a test session, `default` at any other time.
+ *  In a control session the value carries controlNote(phrase) for the slot's pass
+ *  phrase; in a discover session, and for a slot with nothing planted, the default.
+ *  Either way the slot is noted in the session's record of what was read. */
 export function planted(slotId: string, defaultValue?: string): string;
 
 /** Text the scan placed at this injection point during a test session, `default` otherwise. */
@@ -186,6 +222,13 @@ export interface ActionOptions {
    *  scan's session asks for it, and only inside every limit. A call outside the
    *  limits is still recorded, with the limit it broke. */
   live?: Cap;
+  /** A few words saying what an attacker would ask the bot for, for a tool no chat
+   *  user may ever cause: `neverForUsers: "a refund of 50 on order A-1001"`. A first
+   *  scan (promptproof scan URL) then tries to make the bot do exactly that; the
+   *  harness's readiness answer carries it as a rule. A string of at most 200 code
+   *  points; whitespace is collapsed. Leave it out for a tool some users may
+   *  legitimately trigger. */
+  neverForUsers?: string;
 }
 
 /** Mark a function as a risky tool. In a test session it is recorded, not run, and
@@ -210,6 +253,11 @@ export function action<T extends (...args: never[]) => unknown>(
  *  not part of the wire format. */
 export const _ledger: Map<string, Map<string, [number, Record<string, number>]>>;
 export const _runFirstSeen: Map<string, number>;
+
+/** Internal: every tool marked in this process (name -> what an attacker would ask
+ *  for, "" when nothing was said). Shared with the test suite so it can be cleared,
+ *  the way the Python tests reach into pp._marked_tools. */
+export const _markedTools: Map<string, string>;
 
 // -- adapters ---------------------------------------------------------------------------------
 

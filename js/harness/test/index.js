@@ -11,3 +11,4 @@ import "./fetch.test.js";
 import "./context.test.js";
 import "./live.test.js";
 import "./strict.test.js";
+import "./firstscan.test.js";

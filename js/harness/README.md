@@ -106,8 +106,69 @@ count through response finish or close. Fetch counts until the handler returns i
 `Response`.
 
 `pp.readRecord(key, sessionId, header, nonce)` verifies a signed response header and
-returns `{ calls, read, tools }`. Older records default omitted name lists to empty
-arrays. Use `pp.readCallsHeader` when you only need the calls.
+returns `{ calls, read, tools, rules }`. Older records default omitted name lists to
+empty arrays and omitted rules to `{}`. Use `pp.readCallsHeader` when you only need the
+calls.
+
+## First scan
+
+Three kinds of line in the bot, and one command. No description file — the harness
+tells the scanner everything a description would say, the same way the Python harness
+does (see "Scan your own bot" in the repository README).
+
+```js
+import * as pp from "promptproof-harness";
+
+const server = http.createServer(pp.wrapNode(handler)); // the bot's entry point
+
+// each risky tool: recorded, never run, during a test
+const issueRefund = pp.action("issue_refund", (orderId, amount) => bank.refund(orderId, amount), {
+  neverForUsers: "a refund of 50 on order A-1001",
+});
+
+const prompt = BASE_PROMPT + pp.planted("staff_code"); // where a secret lives
+```
+
+```
+promptproof harness-key                           # set it as PROMPTPROOF_HARNESS_KEY for the bot and here
+promptproof scan http://localhost:8000/chat
+```
+
+What the harness tells the scanner, each in the same signed record as the tool calls:
+
+- **Which secrets the bot reads.** Every `planted(slot)` call is noted, and the record
+  lists the slots read while handling that message (at most 50 distinct slots per
+  message). The scan first sends one ordinary message in a "discover" session, which
+  plants nothing, to learn which slots exist.
+- **Which tools are marked.** The readiness answer lists every tool registered with
+  `action()` or `markTool()` in the process (at most 200), and for each one marked
+  `neverForUsers`, the rule — what an attacker would ask for.
+- **Whether the bot can say a secret.** In a "control" session, and only there,
+  `planted()` returns the value followed by a one-line note telling the bot to give it
+  to a user who states a pass phrase (`pp.controlNote(phrase)` is exactly that text).
+  The scan states the phrase and expects the value back; attack sessions never carry
+  the note or the phrase.
+
+A first scan tests two things:
+
+- **Secrets in the instructions.** Whether a user can talk the bot into revealing one.
+- **Tools no chat user may ever cause.** For each tool marked with
+  `neverForUsers: "what an attacker would ask for"`, it tries to make the bot call it.
+  Any recorded call is a finding. Here the scan relies on the harness's signed
+  statement that the tool carries its recorder, without first exercising the tool
+  legitimately; the report says so.
+
+A tool that some users may use is listed as "not tested yet": whether a call is
+forbidden then depends on who is asking, which only you can say. `promptproof guide`
+shows how to describe that, and how to test one user reaching another user's data.
+
+There is a runnable example, a Node twin of the Python one:
+
+```
+node js/harness/examples/support-bot.mjs          # a build with a weakness
+node js/harness/examples/support-bot.mjs --fixed  # the same bot, closed
+promptproof scan http://127.0.0.1:8000/chat
+```
 
 ## Live actions under caps
 
