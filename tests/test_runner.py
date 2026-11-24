@@ -10,7 +10,7 @@ import pytest
 
 from promptproof.attacks import library
 from promptproof.attacks.library import attacks_for, benign_probes
-from promptproof.core import runner
+from promptproof.core import preflight, runner
 from promptproof.core.canary import ALPHABET, Canary
 from promptproof.core.models import Attack, EvidenceLevel, Finding, ScanReport, Slot, TaskCheck
 from promptproof.core.runner import ScanConfig, attack_from, replay, replay_finding, run_attempt, run_scan
@@ -289,7 +289,7 @@ def plant(monkeypatch, *values: str) -> None:
         state["n"] += 1
         return Canary(slot_id, value)
 
-    monkeypatch.setattr(runner, "new_canary", fake_new_canary)
+    monkeypatch.setattr(preflight, "new_canary", fake_new_canary)
 
 
 def test_well_behaved_fake_gives_no_verified_violations():
