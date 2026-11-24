@@ -580,7 +580,7 @@ def test_authorize_production_warns(tmp_path, capsys):
 
 # -- scope beyond the origin ---------------------------------------------------------------
 
-from promptproof.core.models import InjectionPoint, ToolRule  # noqa: E402
+from promptproof.core.models import InjectionPoint, ToolRule
 
 RULE = ToolRule("refund", "issue_refund", "Refunds at staff request", "a refund", ("staff:dana",), "staff:dana", "Refund 5")
 POINT = InjectionPoint("note", "Order note", "staff:dana", "Summarize", "order", "hi", ("send_email",), "send an email")
