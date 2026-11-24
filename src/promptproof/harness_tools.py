@@ -58,8 +58,7 @@ def guard(
     _check_names(tools, results, "results")
     _check_names(tools, live, "live")
     return {
-        name: function if name in reads else _guard_callable(name, function, results, live)
-        for name, function in tools.items()
+        name: function if name in reads else _guard_callable(name, function, results, live) for name, function in tools.items()
     }
 
 
@@ -101,7 +100,8 @@ def _tool_reads(tools, tool_type, reads, name):
 
 
 def guard_agents(
-    tools: Iterable[FunctionTool], reads: Iterable[str] = (),
+    tools: Iterable[FunctionTool],
+    reads: Iterable[str] = (),
 ) -> list[FunctionTool]:
     """Guard OpenAI Agents SDK function tools at their invocation callback."""
     from agents import FunctionTool
@@ -136,7 +136,8 @@ def guard_agents(
 
 
 def guard_langchain(
-    tools: Iterable[BaseTool], reads: Iterable[str] = (),
+    tools: Iterable[BaseTool],
+    reads: Iterable[str] = (),
 ) -> list[BaseTool]:
     """Guard LangChain and LangGraph BaseTools at their public invocation methods."""
     from langchain_core.messages import ToolMessage
@@ -226,7 +227,8 @@ def guard_claude_agent(
 
 
 def claude_pre_tool_use(
-    tool_names: Iterable[str], reads: Iterable[str] = (),
+    tool_names: Iterable[str],
+    reads: Iterable[str] = (),
 ) -> HookMatcher:
     """Return a Claude SDK PreToolUse matcher that records and denies non-reads.
 

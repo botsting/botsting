@@ -45,8 +45,11 @@ def test_guard_records_all_non_reads_with_decorator_semantics(token):
         return "found"
 
     original = {"refund": refund, "send": partial(Send()), "lookup": lookup}
-    tools = guard(original, reads=(name for name in ["lookup"]),
-                  results={"refund": lambda order, amount: f"{order}: {amount}", "send": None})
+    tools = guard(
+        original,
+        reads=(name for name in ["lookup"]),
+        results={"refund": lambda order, amount: f"{order}: {amount}", "send": None},
+    )
     assert list(tools) == list(original)
     assert original["refund"] is refund and tools["lookup"] is lookup
     assert tools["refund"]("T-1") == "refunded"
@@ -155,7 +158,10 @@ def test_openai_agents_tools(token):
         inputs = ['{"amount": 5}', '{"message": "a refund please"}', '{"ticket-id": "42"}', '{"order": "T-1"}']
         for tool, args in zip(tools, inputs, strict=True):
             context = ToolContext(
-                context=None, tool_name=tool.name, tool_call_id="call-1", tool_arguments=args,
+                context=None,
+                tool_name=tool.name,
+                tool_call_id="call-1",
+                tool_arguments=args,
             )
             results.append(await invoke_function_tool(function_tool=tool, context=context, arguments=args))
         return results, pp.recorded_calls()
@@ -232,7 +238,9 @@ def test_langchain_tools(token):
     async def turn():
         refund_call = {"type": "tool_call", "id": "refund-1", "name": "refund", "args": {"amount": 5}}
         send_call = {
-            "type": "tool_call", "id": "send-1", "name": "send",
+            "type": "tool_call",
+            "id": "send-1",
+            "name": "send",
             "args": {"message": "a refund please", "state": "injected state"},
         }
         synced = tools[0].invoke(refund_call)
@@ -243,7 +251,11 @@ def test_langchain_tools(token):
 
     (synced, threaded, sent, read), calls = asyncio.run(turn())
     assert (synced.content, synced.artifact, threaded.content, sent.content, read) == (
-        "refunded", 5, "refunded", "sent", "found",
+        "refunded",
+        5,
+        "refunded",
+        "sent",
+        "found",
     )
     assert effects == [5, 5, "a refund please", "T-1"] and calls == []
     effects.clear()
@@ -365,13 +377,17 @@ def test_claude_pre_tool_use_denies_and_records_through_sdk_dispatch(token):
         query.hook_callbacks["guard"] = matcher.hooks[0]
         results = []
         for name in (*tools, "FutureTool"):
-            await query._handle_control_request({
-                "type": "control_request", "request_id": "request-1",
-                "request": {
-                    "subtype": "hook_callback", "callback_id": "guard",
-                    "input": {"hook_event_name": "PreToolUse", "tool_name": name, "tool_input": {"order": "T-1"}},
-                },
-            })
+            await query._handle_control_request(
+                {
+                    "type": "control_request",
+                    "request_id": "request-1",
+                    "request": {
+                        "subtype": "hook_callback",
+                        "callback_id": "guard",
+                        "input": {"hook_event_name": "PreToolUse", "tool_name": name, "tool_input": {"order": "T-1"}},
+                    },
+                }
+            )
             assert transport.response["subtype"] == "success"
             result = transport.response["response"].get("hookSpecificOutput", {})
             if result.get("permissionDecision") != "deny":

@@ -148,6 +148,8 @@ MAX_RECORD_BYTES = 24_000  # of recorded calls in one reply; the record travels 
 MAX_LIFETIME_SECONDS = 900
 _SESSION_DOMAIN = b"promptproof-session/1\n"
 _CALLS_DOMAIN = b"promptproof-calls/1\n"
+
+
 class _StandIn(dict):  # type: ignore[type-arg]
     """What a marked tool returns during a test when no `result=` was given.
 
@@ -203,9 +205,7 @@ def _same(given: str, expected: str) -> bool:
 
 def check_key(key: str) -> str:
     if len(key) < MIN_KEY_LENGTH:
-        raise HarnessError(
-            f"{KEY_ENV} must be at least {MIN_KEY_LENGTH} characters; make one with `promptproof harness-key`"
-        )
+        raise HarnessError(f"{KEY_ENV} must be at least {MIN_KEY_LENGTH} characters; make one with `promptproof harness-key`")
     return key
 
 
@@ -236,9 +236,7 @@ def make_session_token(
     which slots the bot reads."""
     check_key(key)
     if not 0 < lifetime_seconds <= MAX_LIFETIME_SECONDS:
-        raise HarnessError(
-            f"a session token may live at most {MAX_LIFETIME_SECONDS} seconds"
-        )
+        raise HarnessError(f"a session token may live at most {MAX_LIFETIME_SECONDS} seconds")
     body = {
         "v": 1,
         "sid": session_id,
@@ -257,9 +255,7 @@ def make_session_token(
         body["control"] = dict(control)
     if discover:
         body["discover"] = True
-    payload = _b64(
-        json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    )
+    payload = _b64(json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8"))
     token = payload + "." + _mac(key, _SESSION_DOMAIN, payload)
     if len(token) > MAX_TOKEN_BYTES:
         raise HarnessError(
@@ -282,9 +278,7 @@ def read_record(key: str, session_id: str, value: str | None, nonce: str = "") -
         )
     payload, _, mac = value.strip().partition(".")
     if not mac or not _same(mac, _mac(key, _CALLS_DOMAIN, session_id, nonce, payload)):
-        raise HarnessError(
-            "the tool-call record is not signed by the harness for this session and message"
-        )
+        raise HarnessError("the tool-call record is not signed by the harness for this session and message")
     try:
         record = json.loads(_unb64(payload))
         calls, dropped = record["calls"], record["dropped"]
@@ -306,9 +300,7 @@ def read_record(key: str, session_id: str, value: str | None, nonce: str = "") -
     return {"calls": calls, "read": read, "tools": tools, "rules": rules}
 
 
-def read_calls_header(
-    key: str, session_id: str, value: str | None, nonce: str = ""
-) -> list[dict[str, Any]]:
+def read_calls_header(key: str, session_id: str, value: str | None, nonce: str = "") -> list[dict[str, Any]]:
     """The recorded tool calls from the signed record. See read_record."""
     return read_record(key, session_id, value, nonce)["calls"]
 
@@ -548,9 +540,11 @@ def _may_run(session: _Session, tool: str, cap: Cap | None, arguments: Mapping[s
         for name, value in sums.items():
             if totals.get(name, 0.0) + value > float(cap.total[name]):
                 return False, f"this would take the run's total {name} over the cap of {float(cap.total[name]):g}"
-        run[tool] = (calls + 1, {name: totals.get(name, 0.0) + value for name, value in sums.items()} | {
-            name: value for name, value in totals.items() if name not in sums
-        })
+        run[tool] = (
+            calls + 1,
+            {name: totals.get(name, 0.0) + value for name, value in sums.items()}
+            | {name: value for name, value in totals.items() if name not in sums},
+        )
     return True, ""
 
 
@@ -604,9 +598,7 @@ def record_call(tool: str, arguments: Mapping[str, Any], result: Any = _DEFAULT_
     return result
 
 
-def action(
-    tool: str, result: Any = _DEFAULT_RESULT, live: Cap | None = None, never_for_users: str = ""
-) -> Callable[[F], F]:
+def action(tool: str, result: Any = _DEFAULT_RESULT, live: Cap | None = None, never_for_users: str = "") -> Callable[[F], F]:
     """Mark a function as a risky tool. In a test session it is recorded, not run, and returns
     `result` (or `result(**arguments)` if that is callable). Outside one it runs as written.
 
@@ -725,9 +717,7 @@ def _challenge() -> bytes | None:
 def wrap(app: Any) -> Any:
     """Wrap an ASGI or WSGI app. Without PROMPTPROOF_HARNESS_KEY set, requests pass straight through."""
     _key()  # a key that is set but too short is a mistake worth stopping on
-    if inspect.iscoroutinefunction(app) or inspect.iscoroutinefunction(
-        type(app).__call__
-    ):
+    if inspect.iscoroutinefunction(app) or inspect.iscoroutinefunction(type(app).__call__):
         return _Asgi(app)
     return _Wsgi(app)
 
@@ -741,11 +731,7 @@ class _Asgi:
             await self.app(scope, receive, send)
             return
         challenge = _challenge()
-        if (
-            challenge is not None
-            and scope.get("method") == "GET"
-            and scope.get("path") == CHALLENGE_PATH
-        ):
+        if challenge is not None and scope.get("method") == "GET" and scope.get("path") == CHALLENGE_PATH:
             await send(
                 {
                     "type": "http.response.start",
@@ -772,9 +758,7 @@ class _Asgi:
                 session.header_value(tools=True).encode("ascii"),
             )
             headers = [(b"content-type", b"text/plain"), calls]
-            await send(
-                {"type": "http.response.start", "status": 200, "headers": headers}
-            )
+            await send({"type": "http.response.start", "status": 200, "headers": headers})
             await send({"type": "http.response.body", "body": _READY})
             return
 
@@ -801,15 +785,9 @@ class _Wsgi:
     def __init__(self, app: Any) -> None:
         self.app = app
 
-    def __call__(
-        self, environ: dict[str, Any], start_response: Callable[..., Any]
-    ) -> Iterable[bytes]:
+    def __call__(self, environ: dict[str, Any], start_response: Callable[..., Any]) -> Iterable[bytes]:
         challenge = _challenge()
-        if (
-            challenge is not None
-            and environ.get("REQUEST_METHOD") == "GET"
-            and environ.get("PATH_INFO") == CHALLENGE_PATH
-        ):
+        if challenge is not None and environ.get("REQUEST_METHOD") == "GET" and environ.get("PATH_INFO") == CHALLENGE_PATH:
             start_response("200 OK", [("Content-Type", "text/plain")])
             return [challenge + b"\n"]
         token = environ.get("HTTP_" + SESSION_HEADER.upper().replace("-", "_"))
@@ -833,15 +811,9 @@ class _Wsgi:
             )
             return [_READY]
 
-        def start_with_calls(
-            status: str, headers: list[tuple[str, str]], exc_info: Any = None
-        ) -> Any:
+        def start_with_calls(status: str, headers: list[tuple[str, str]], exc_info: Any = None) -> Any:
             headers = [*headers, (CALLS_HEADER, session.header_value())]
-            return (
-                start_response(status, headers)
-                if exc_info is None
-                else start_response(status, headers, exc_info)
-            )
+            return start_response(status, headers) if exc_info is None else start_response(status, headers, exc_info)
 
         reset = _enter(session)
         body: Iterable[bytes] = ()

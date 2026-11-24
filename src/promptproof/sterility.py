@@ -104,9 +104,21 @@ def read_env_file(path: str | os.PathLike[str]) -> dict[str, str]:
 _PRODUCTION_MARKERS = ("prod", "production", "live")
 _TEST_MARKERS = ("test", "staging", "dev", "preview", "sandbox")
 _ENVIRONMENT_NAMES = {
-    "NODE_ENV", "APP_ENV", "ENV", "ENVIRONMENT", "RAILS_ENV", "RACK_ENV", "FLASK_ENV",
-    "ASPNETCORE_ENVIRONMENT", "DOTNET_ENVIRONMENT", "VERCEL_ENV", "VERCEL_TARGET_ENV",
-    "RAILWAY_ENVIRONMENT_NAME", "RAILWAY_ENVIRONMENT", "DEPLOY_ENV", "DEPLOYMENT_ENV",
+    "NODE_ENV",
+    "APP_ENV",
+    "ENV",
+    "ENVIRONMENT",
+    "RAILS_ENV",
+    "RACK_ENV",
+    "FLASK_ENV",
+    "ASPNETCORE_ENVIRONMENT",
+    "DOTNET_ENVIRONMENT",
+    "VERCEL_ENV",
+    "VERCEL_TARGET_ENV",
+    "RAILWAY_ENVIRONMENT_NAME",
+    "RAILWAY_ENVIRONMENT",
+    "DEPLOY_ENV",
+    "DEPLOYMENT_ENV",
     "CONTEXT",  # Netlify deployment context
 }
 
@@ -172,12 +184,14 @@ _OPAQUE_CREDENTIALS = (
     # https://developers.google.com/android-publisher/authorization
     ("Google", r"(?:GOOGLE|GCP|GEMINI)_(?:.*_)?(?:KEY|TOKEN|CLIENT_SECRET|CREDENTIALS)", ("AIza", "ya29.")),
     # https://docs.github.com/en/organizations/managing-programmatic-access-to-your-organization/github-credential-types
-    ("GitHub", r"(?:GITHUB|GH)_(?:.*_)?(?:TOKEN|PAT|PRIVATE_KEY|CLIENT_SECRET)",
-     ("ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_")),
+    (
+        "GitHub",
+        r"(?:GITHUB|GH)_(?:.*_)?(?:TOKEN|PAT|PRIVATE_KEY|CLIENT_SECRET)",
+        ("ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_"),
+    ),
 )
 _CREDENTIAL_RULES = tuple(
-    (provider, re.compile(r"(?:^|_)" + names + "$"), prefixes)
-    for provider, names, prefixes in _OPAQUE_CREDENTIALS
+    (provider, re.compile(r"(?:^|_)" + names + "$"), prefixes) for provider, names, prefixes in _OPAQUE_CREDENTIALS
 )
 
 _DATABASE_URL = re.compile(
@@ -256,8 +270,7 @@ def _endpoint(name: str, value: str) -> _Match | None:
             return _Match(rule, "live", "The host or database name has a production marker.", marker)
     test_markers = set(_TEST_MARKERS)
     if hosts and (
-        database_words & test_markers
-        or all(_loopback(host) or parts & test_markers for host, parts in zip(hosts, host_words))
+        database_words & test_markers or all(_loopback(host) or parts & test_markers for host, parts in zip(hosts, host_words))
     ):
         return None
     return _Match(rule, "unknown", "The host or database name gives no clear environment signal.")
@@ -294,7 +307,9 @@ def _match(name: str, value: str) -> _Match | None:
             if value.startswith("test_"):
                 return None
             if value.startswith("live_"):
-                return _Match(f"{provider.lower()}-client-key", "live", f"{provider} identifies this client prefix as live mode.", "live_")
+                return _Match(
+                    f"{provider.lower()}-client-key", "live", f"{provider} identifies this client prefix as live mode.", "live_"
+                )
 
     # https://postmarkapp.com/developer/api/overview (public no-delivery test value)
     if name in {"POSTMARK_API_KEY", "POSTMARK_API_TOKEN", "POSTMARK_SERVER_TOKEN", "POSTMARK_SERVER_API_TOKEN"}:
@@ -306,7 +321,11 @@ def _match(name: str, value: str) -> _Match | None:
         return endpoint
     for provider, names, prefixes in _CREDENTIAL_RULES:
         if names.search(name) or value.startswith(prefixes):
-            return _Match(f"{provider.lower()}-credential", "unknown", f"The {provider} credential does not identify a live or test environment.")
+            return _Match(
+                f"{provider.lower()}-credential",
+                "unknown",
+                f"The {provider} credential does not identify a live or test environment.",
+            )
     return None
 
 
@@ -317,9 +336,16 @@ def check(variables: Mapping[str, str], allow: Collection[str] = ()) -> Report:
     for name, raw in sorted(variables.items()):
         value = raw.strip()
         if value and (match := _match(name.upper(), value)) is not None:
-            findings.append(Finding(
-                match.rule, match.severity, match.reason, match.marker, name=name, allowed=name in allowed,
-            ))
+            findings.append(
+                Finding(
+                    match.rule,
+                    match.severity,
+                    match.reason,
+                    match.marker,
+                    name=name,
+                    allowed=name in allowed,
+                )
+            )
     return Report(tuple(findings), len(variables))
 
 
@@ -341,12 +367,17 @@ def _command(args: argparse.Namespace) -> int:
         sum(source.checked_count for source in reports),
     )
     if args.json:
-        print(json.dumps({
-            **asdict(report),
-            "live_count": report.live_count,
-            "unknown_count": report.unknown_count,
-            "ok": report.ok,
-        }, indent=2))
+        print(
+            json.dumps(
+                {
+                    **asdict(report),
+                    "live_count": report.live_count,
+                    "unknown_count": report.unknown_count,
+                    "ok": report.ok,
+                },
+                indent=2,
+            )
+        )
     else:
         for finding in report.findings:
             name = finding.name if finding.name.isprintable() else ascii(finding.name)
@@ -365,7 +396,11 @@ def register(commands: argparse._SubParsersAction) -> None:
     parser.add_argument("--env-file", action="extend", nargs="+", default=[], metavar="PATH")
     parser.add_argument("--environment", action="store_true", help="check the current process environment")
     parser.add_argument(
-        "--allow", action="extend", nargs="+", default=[], metavar="NAME",
+        "--allow",
+        action="extend",
+        nargs="+",
+        default=[],
+        metavar="NAME",
         help="mark findings for these exact variable names as allowed by the owner",
     )
     parser.add_argument("--json", action="store_true", help="write a JSON report")

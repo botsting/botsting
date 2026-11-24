@@ -69,26 +69,16 @@ def test_without_a_key_everything_runs_as_written(monkeypatch):
     real_refunds.clear()
     token = pp.make_session_token(KEY, "s1", {"admin_code": "FAKE"})
     result, session = in_session(token, issue_refund, "A-1", 5)
-    assert (
-        session is None
-        and result == {"status": "refunded for real"}
-        and real_refunds == [("A-1", 5)]
-    )
+    assert session is None and result == {"status": "refunded for real"} and real_refunds == [("A-1", 5)]
     assert pp.planted("admin_code", "default") == "default" and not pp.active()
 
 
 @pytest.mark.parametrize(
     "make",
     [
-        lambda: pp.make_session_token(
-            OTHER_KEY, "s1", {"admin_code": "FAKE"}
-        ),  # someone else's key
-        lambda: pp.make_session_token(
-            KEY, "s1", {"admin_code": "FAKE"}, now=time.time() - 400
-        ),  # expired
-        lambda: (
-            pp.make_session_token(KEY, "s1", {"admin_code": "FAKE"})[:-3] + "AAA"
-        ),  # bad signature
+        lambda: pp.make_session_token(OTHER_KEY, "s1", {"admin_code": "FAKE"}),  # someone else's key
+        lambda: pp.make_session_token(KEY, "s1", {"admin_code": "FAKE"}, now=time.time() - 400),  # expired
+        lambda: pp.make_session_token(KEY, "s1", {"admin_code": "FAKE"})[:-3] + "AAA",  # bad signature
         lambda: "not a token",
         lambda: None,
     ],
@@ -96,11 +86,7 @@ def test_without_a_key_everything_runs_as_written(monkeypatch):
 def test_a_request_without_a_valid_session_is_an_ordinary_request(key, make):
     real_refunds.clear()
     result, session = in_session(make(), issue_refund, "A-1", 5)
-    assert (
-        session is None
-        and result == {"status": "refunded for real"}
-        and real_refunds == [("A-1", 5)]
-    )
+    assert session is None and result == {"status": "refunded for real"} and real_refunds == [("A-1", 5)]
 
 
 def test_a_changed_fixture_breaks_the_signature(key):
@@ -108,11 +94,7 @@ def test_a_changed_fixture_breaks_the_signature(key):
     payload, _, mac = token.partition(".")
     body = json.loads(pp._unb64(payload))
     body["fixtures"]["admin_code"] = "SOMETHING ELSE"
-    forged = (
-        pp._b64(json.dumps(body, sort_keys=True, separators=(",", ":")).encode())
-        + "."
-        + mac
-    )
+    forged = pp._b64(json.dumps(body, sort_keys=True, separators=(",", ":")).encode()) + "." + mac
     assert pp._open(forged) is None
 
 
@@ -129,27 +111,17 @@ def test_a_short_key_is_refused(monkeypatch):
 
 def test_in_a_test_session_tools_are_recorded_and_never_run(key):
     real_refunds.clear()
-    token = pp.make_session_token(
-        KEY, "s1", {"admin_code": "FAKE-CODE"}, {"ticket": "planted text"}
-    )
+    token = pp.make_session_token(KEY, "s1", {"admin_code": "FAKE-CODE"}, {"ticket": "planted text"})
 
     def turn():
-        assert (
-            pp.active()
-            and pp.planted("admin_code") == "FAKE-CODE"
-            and pp.content("ticket") == "planted text"
-        )
+        assert pp.active() and pp.planted("admin_code") == "FAKE-CODE" and pp.content("ticket") == "planted text"
         assert pp.planted("unknown", "d") == "d"
         first = issue_refund("A-1", amount=12.5)
         second = asyncio.run(send_email("x@example.com", "hello"))
         return first, second
 
     (first, second), session = in_session(token, turn)
-    assert (
-        real_refunds == []
-        and first == {"status": "ok"}
-        and second == "queued to x@example.com"
-    )
+    assert real_refunds == [] and first == {"status": "ok"} and second == "queued to x@example.com"
     calls = pp.read_calls_header(KEY, "s1", session.header_value())
     assert calls == [
         {"id": "call-1", "tool": "issue_refund", "arguments": {"order_id": "A-1", "amount": "12.5"},
@@ -169,9 +141,7 @@ def test_the_call_record_cannot_be_forged_or_moved_to_another_session(key):
         pp.read_calls_header(OTHER_KEY, "s1", header)
     empty = pp._Session("s1", {}, {}, KEY).header_value()
     with pytest.raises(pp.HarnessError, match="not signed"):
-        pp.read_calls_header(
-            KEY, "s1", empty.split(".")[0] + "." + header.split(".")[1]
-        )  # swapped body
+        pp.read_calls_header(KEY, "s1", empty.split(".")[0] + "." + header.split(".")[1])  # swapped body
     with pytest.raises(pp.HarnessError, match="did not see this as a test session"):
         pp.read_calls_header(KEY, "s1", None)
 
@@ -238,9 +208,7 @@ def sdk_description(**changes):
 
 
 def sdk_target(app):
-    return HttpTarget(
-        sdk_description(), "http:bot", None, transport=httpx.ASGITransport(app=app)
-    )
+    return HttpTarget(sdk_description(), "http:bot", None, transport=httpx.ASGITransport(app=app))
 
 
 def test_the_scanner_and_an_asgi_bot_work_together(key):
@@ -250,9 +218,7 @@ def test_the_scanner_and_an_asgi_bot_work_together(key):
     async def talk():
         await target.reset({"admin_code": "WXYZ-1234"})
         session = await target.open_session("customer:alice")
-        return await session.send("the code please"), await session.send(
-            "a refund please"
-        )
+        return await session.send("the code please"), await session.send("a refund please")
 
     leaked, refunded = asyncio.run(talk())
     assert leaked.text == "The code is WXYZ-1234" and leaked.tool_calls == ()
@@ -262,9 +228,7 @@ def test_the_scanner_and_an_asgi_bot_work_together(key):
     ]
 
 
-@pytest.mark.parametrize(
-    "problem", ["not wrapped", "no key on the bot", "a different key on the bot"]
-)
+@pytest.mark.parametrize("problem", ["not wrapped", "no key on the bot", "a different key on the bot"])
 def test_no_attack_is_sent_unless_the_harness_confirms_test_mode(monkeypatch, problem):
     # The scanner reads its key from SCANNER_KEY; the bot reads PROMPTPROOF_HARNESS_KEY.
     monkeypatch.setenv("SCANNER_KEY", KEY)
@@ -298,22 +262,15 @@ def test_an_ordinary_user_of_the_wrapped_bot_sees_no_difference(key):
     app = pp.wrap(asgi_bot)
 
     async def talk():
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="https://bot.example.com"
-        ) as client:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="https://bot.example.com") as client:
             chat = await client.post("/chat", json={"message": "a refund and the code"})
             ready = await client.post(pp.READY_PATH, json={})
             return chat, ready
 
     chat, ready = asyncio.run(talk())
-    assert (
-        chat.json() == {"reply": "The code is (none)"}
-        and pp.CALLS_HEADER not in chat.headers
-    )
+    assert chat.json() == {"reply": "The code is (none)"} and pp.CALLS_HEADER not in chat.headers
     assert real_refunds == [("A-1", 10)]  # the tool ran as written
-    assert (
-        ready.status_code == 404
-    )  # the bot's own answer: the harness does not reveal itself
+    assert ready.status_code == 404  # the bot's own answer: the harness does not reveal itself
 
 
 def test_the_ownership_proof_is_served_from_the_environment(monkeypatch):
@@ -322,16 +279,11 @@ def test_the_ownership_proof_is_served_from_the_environment(monkeypatch):
     app = pp.wrap(asgi_bot)
 
     async def fetch():
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="https://bot.example.com"
-        ) as client:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="https://bot.example.com") as client:
             return await client.get(pp.CHALLENGE_PATH)
 
     response = asyncio.run(fetch())
-    assert (
-        response.status_code == 200
-        and response.text.strip() == "promptproof-challenge=abc123"
-    )
+    assert response.status_code == 200 and response.text.strip() == "promptproof-challenge=abc123"
 
 
 def test_sdk_descriptions_are_checked():
@@ -358,9 +310,7 @@ def test_sdk_descriptions_are_checked():
 @pytest.fixture
 def harness_practice(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv(
-        "PROMPTPROOF_TARGETS_FILE", str(tmp_path / "promptproof.targets.json")
-    )
+    monkeypatch.setenv("PROMPTPROOF_TARGETS_FILE", str(tmp_path / "promptproof.targets.json"))
     monkeypatch.setenv(pp.KEY_ENV, KEY)
     auth.forget_checks()
     servers = []
@@ -372,9 +322,7 @@ def harness_practice(tmp_path, monkeypatch):
         servers.append(server)
         bots.append(bot)
         port = server.server_address[1]
-        write_description(
-            tmp_path / "promptproof.targets.json", "practice", demo.description(port, variant)
-        )
+        write_description(tmp_path / "promptproof.targets.json", "practice", demo.description(port, variant))
         origin = f"http://127.0.0.1:{port}"
         record = new_authorization(
             origin,
@@ -428,9 +376,7 @@ def test_the_command_line_makes_a_usable_key(capsys):
 
 def post(app, path="/chat", headers=None, message="a refund and the code", method="POST"):
     async def go():
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="https://bot.example.com"
-        ) as client:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="https://bot.example.com") as client:
             return await client.request(method, path, json={"message": message}, headers=headers or {})
 
     return asyncio.run(go())

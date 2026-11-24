@@ -19,9 +19,12 @@ def test_stripe_keys_under_any_name(kind):
     report = check({"CUSTOM_PAYMENT": live_prefix + FAKE})
     assert not report.ok
     assert report.live_count == 1
-    finding, = report.findings
+    (finding,) = report.findings
     assert (finding.name, finding.rule, finding.severity, finding.marker) == (
-        "CUSTOM_PAYMENT", "stripe-key", "live", live_prefix,
+        "CUSTOM_PAYMENT",
+        "stripe-key",
+        "live",
+        live_prefix,
     )
     assert not check({"STRIPE_API_KEY": kind + "_test_" + FAKE}).findings
     assert check({"PAYPAL_MODE": live_prefix + FAKE}).live_count == 1
@@ -109,7 +112,7 @@ def test_provider_key_prefixes(name, live, test, rule):
 def test_opaque_credentials_require_review(name, provider):
     report = check({name: FAKE})
     assert report.ok and report.unknown_count == 1
-    finding, = report.findings
+    (finding,) = report.findings
     assert (finding.rule, finding.severity, finding.marker) == (provider + "-credential", "unknown", None)
     assert not check({name: "  ", name + "_LABEL": FAKE}).findings
 
@@ -146,13 +149,22 @@ def test_postmark_test_token_and_separate_provider_modes():
 
 @pytest.mark.parametrize(
     "name",
-    ["NODE_ENV", "APP_ENV", "ENVIRONMENT", "RAILS_ENV", "ASPNETCORE_ENVIRONMENT",
-     "VERCEL_ENV", "RAILWAY_ENVIRONMENT_NAME", "DOTNET_ENVIRONMENT", "DEPLOYMENT_ENV"],
+    [
+        "NODE_ENV",
+        "APP_ENV",
+        "ENVIRONMENT",
+        "RAILS_ENV",
+        "ASPNETCORE_ENVIRONMENT",
+        "VERCEL_ENV",
+        "RAILWAY_ENVIRONMENT_NAME",
+        "DOTNET_ENVIRONMENT",
+        "DEPLOYMENT_ENV",
+    ],
 )
 def test_production_environment_markers(name):
     report = check({name: "  Production  "})
     assert not report.ok
-    finding, = report.findings
+    (finding,) = report.findings
     assert (finding.rule, finding.marker) == ("production-environment", "production")
     assert not check({name: "preview"}).findings
     assert not check({name: "preproduction"}).findings
@@ -173,7 +185,7 @@ def test_production_environment_markers(name):
 def test_production_host_or_database_markers(name, url, marker):
     report = check({name: url})
     assert not report.ok
-    finding, = report.findings
+    (finding,) = report.findings
     assert finding.marker == marker
     assert finding.rule == ("service-url" if "SERVICE" in name else "database-url")
 
@@ -181,11 +193,16 @@ def test_production_host_or_database_markers(name, url, marker):
 @pytest.mark.parametrize(
     "url",
     [
-        "postgres://localhost./db", "postgres://127.1.2.3/db",
-        "postgres://[::1]:5432/db", "postgres://[::ffff:127.0.0.1]/db",
-        "postgres://db.localhost/db", "postgres://db-test.example.invalid/db",
-        "postgres://db.staging.example.invalid/db", "postgres://db_dev.example.invalid/db",
-        "postgres://db.example.invalid/db_preview", "postgres://db.example.invalid/db.sandbox",
+        "postgres://localhost./db",
+        "postgres://127.1.2.3/db",
+        "postgres://[::1]:5432/db",
+        "postgres://[::ffff:127.0.0.1]/db",
+        "postgres://db.localhost/db",
+        "postgres://db-test.example.invalid/db",
+        "postgres://db.staging.example.invalid/db",
+        "postgres://db_dev.example.invalid/db",
+        "postgres://db.example.invalid/db_preview",
+        "postgres://db.example.invalid/db.sandbox",
         "postgres://u:live@db.test.example.invalid/app?password=production#prod",
         "postgres://localhost,db-test.example.invalid/app",
     ],
@@ -249,7 +266,8 @@ def test_allow_retains_findings_and_excludes_them_from_counts():
     assert report.checked_count == 4
     assert report.ok and report.live_count == report.unknown_count == 0
     assert {f.name: (f.severity, f.allowed) for f in report.findings} == {
-        "MY_KEY": ("live", True), "AWS_SESSION_TOKEN": ("unknown", True),
+        "MY_KEY": ("live", True),
+        "AWS_SESSION_TOKEN": ("unknown", True),
     }
     assert not check(config, allow=["my_key"]).ok
 
@@ -257,20 +275,34 @@ def test_allow_retains_findings_and_excludes_them_from_counts():
 def test_env_file_parsing(tmp_path):
     path = tmp_path / "input.env"
     lines = [
-        "\ufeff# heading", "", "  export\tA =   first  # tail", "A=last",
-        "HASH=before#after", "STARTS_HASH=#literal", "EMPTY=  # comment",
-        "EMPTY_QUOTED=''", "SPACED='  value # and =  ' # tail",
+        "\ufeff# heading",
+        "",
+        "  export\tA =   first  # tail",
+        "A=last",
+        "HASH=before#after",
+        "STARTS_HASH=#literal",
+        "EMPTY=  # comment",
+        "EMPTY_QUOTED=''",
+        "SPACED='  value # and =  ' # tail",
         r"""DOUBLE="quote:\" slash:\\ tab:\t newline:\n keep:\q"# tail""",
         r"""SINGLE='slash:\\ quote:\' literal:\n'""",
-        "LITERAL=${A} $(echo value)", "EQUALS=a=b=c", "UTF8=é",
+        "LITERAL=${A} $(echo value)",
+        "EQUALS=a=b=c",
+        "UTF8=é",
     ]
     path.write_bytes("\r\n".join(lines).encode("utf-8"))
     assert read_env_file(path) == {
-        "A": "last", "HASH": "before#after", "STARTS_HASH": "#literal", "EMPTY": "",
-        "EMPTY_QUOTED": "", "SPACED": "  value # and =  ",
+        "A": "last",
+        "HASH": "before#after",
+        "STARTS_HASH": "#literal",
+        "EMPTY": "",
+        "EMPTY_QUOTED": "",
+        "SPACED": "  value # and =  ",
         "DOUBLE": 'quote:" slash:\\ tab:\t newline:\n keep:\\q',
-        "SINGLE": "slash:\\ quote:' literal:\\n", "LITERAL": "${A} $(echo value)",
-        "EQUALS": "a=b=c", "UTF8": "é",
+        "SINGLE": "slash:\\ quote:' literal:\\n",
+        "LITERAL": "${A} $(echo value)",
+        "EQUALS": "a=b=c",
+        "UTF8": "é",
     }
 
 
@@ -351,7 +383,9 @@ def test_report_and_cli_output_redact_values(tmp_path, capsys, json_output):
         assert data["ok"] is False
         assert (data["live_count"], data["unknown_count"], data["checked_count"]) == (1, 1, 3)
         assert {f["name"]: f["allowed"] for f in data["findings"]} == {
-            "DATABASE_URL": False, "PAYMENT_KEY": True, "WEBHOOK_URL": False,
+            "DATABASE_URL": False,
+            "PAYMENT_KEY": True,
+            "WEBHOOK_URL": False,
         }
     else:
         lines = captured.out.splitlines()

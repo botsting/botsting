@@ -54,9 +54,7 @@ class _Report:
             self.out(f"          {line}")
 
 
-def diagnose(
-    spec: str, offline: bool = False, out: Callable[[str], None] = print, env_files: tuple[str, ...] = ()
-) -> bool:
+def diagnose(spec: str, offline: bool = False, out: Callable[[str], None] = print, env_files: tuple[str, ...] = ()) -> bool:
     """Run the checks, printing through `out`. Returns True when the target is ready to scan.
 
     `env_files` are exports of the deployment's own settings (never this machine's): they are checked
@@ -81,7 +79,9 @@ def diagnose(
     try:
         target: Any = build_target(spec)
     except SpecError as error:
-        report.fix("description", str(error), "Describe the bot in promptproof.targets.json. `promptproof guide` shows the format.")
+        report.fix(
+            "description", str(error), "Describe the bot in promptproof.targets.json. `promptproof guide` shows the format."
+        )
         return False
     config = getattr(target, "config", None)
     if config is None:
@@ -103,13 +103,17 @@ def diagnose(
             f"{len(config.injection_points)} injection point(s)",
         )
     if not config.task_checks:
-        report.note("normal use", 'no "task_checks": add one ordinary request, so a bot that refuses everything is not called safe')
+        report.note(
+            "normal use", 'no "task_checks": add one ordinary request, so a bot that refuses everything is not called safe'
+        )
 
     # 3. Credentials.
     wanted = sorted({name for p in config.principals.values() for value in p.headers.values() for name in _ENV.findall(value)})
     missing = [name for name in wanted if not os.environ.get(name)]
     if missing:
-        report.fix("credentials", f"not set in this environment: {', '.join(missing)}", "Set each to the test account's credential.")
+        report.fix(
+            "credentials", f"not set in this environment: {', '.join(missing)}", "Set each to the test account's credential."
+        )
     elif wanted:
         report.ok("credentials", f"{len(wanted)} environment variable(s) set")
     written = [n for n, p in config.principals.items() if any(v and "${" not in v for v in p.headers.values())]
@@ -132,10 +136,7 @@ def diagnose(
     # 5. Authorization.
     tools = sorted({r.tool for r in config.tool_rules} | {t for p in config.injection_points for t in p.forbidden_tools})
     flags = "".join(f" --tool {tool}" for tool in tools) + "".join(f" --live-tool {tool}" for tool in config.live_actions)
-    command = (
-        f'promptproof authorize {config.origin} --by "YOUR NAME" --scope "what may be tested" '
-        f"--environment staging{flags}"
-    )
+    command = f'promptproof authorize {config.origin} --by "YOUR NAME" --scope "what may be tested" --environment staging{flags}'
     proof = None
     try:
         proof = require_authorized(target)
@@ -149,7 +150,9 @@ def diagnose(
     except (AuthorizationError, UnsafeTargetError) as error:
         how = "A person who may allow this test runs:\n" + command
         if "has not been verified" in str(error):
-            how = f"Serve the token (see `promptproof authorize --list`), then run:\npromptproof authorize --verify {config.origin}"
+            how = (
+                f"Serve the token (see `promptproof authorize --list`), then run:\npromptproof authorize --verify {config.origin}"
+            )
         report.fix("authorization", str(error), how)
         out("  Stopped here: nothing is sent to a bot without an authorization.")
         return False
@@ -238,7 +241,9 @@ def diagnose(
             if task.passed:
                 report.ok(f"normal use ({task.task_id})", "the expected answer came back")
             else:
-                report.fix(f"normal use ({task.task_id})", task.detail, "Check the prompt and expect_substring of this task check.")
+                report.fix(
+                    f"normal use ({task.task_id})", task.detail, "Check the prompt and expect_substring of this task check."
+                )
 
     asyncio.run(online())
     if report.failed:
@@ -258,4 +263,3 @@ def register(commands: Any) -> None:
     parser.set_defaults(
         handler=lambda args: EXIT_OK if diagnose(args.target, args.offline, env_files=tuple(args.env_file)) else EXIT_FAILED
     )
-
