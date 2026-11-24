@@ -142,11 +142,9 @@ def _environment(**values: str) -> Iterator[None]:
 
 def _demo(args: argparse.Namespace) -> int:
     from promptproof.attacks.library import default_attacks
-    from promptproof.cli import _summary, _write, open_for_a_person
     from promptproof.core.authorization import new_authorization
     from promptproof.core.runner import ScanConfig, run_scan, run_to_completion
-    from promptproof.report_html import render_html
-    from promptproof.report_markdown import render_markdown
+    from promptproof.reporting import open_for_a_person, summary, write_reports
     from promptproof.seal import seal
     from promptproof.targets.http import HttpTarget, parse_config
 
@@ -180,13 +178,11 @@ def _demo(args: argparse.Namespace) -> int:
                 server.server_close()
             folder = directory / variant
             out = folder / "scan.promptproof.json"
-            _write(out, json.dumps(report.to_dict(), indent=2))
-            _write(folder / "report.md", render_markdown(report, str(out)))
-            _write(folder / "report.html", render_html(report, str(out)))
+            write_reports(report, out, folder / "report.md", folder / "report.html")
             value = seal(folder, directory / f"{variant}.sealed.zip")
             print()
             print(f"== The {variant} build ==")
-            print(_summary(report))
+            print(summary(report))
             if args.live:
                 kept = all(amount <= LIVE_CAP for _, amount in bot.carried_out)
                 print(

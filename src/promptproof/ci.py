@@ -62,7 +62,7 @@ def _ci(args: argparse.Namespace) -> int:
         EXIT_INCONCLUSIVE,
         EXIT_NO_VERIFIED,
         EXIT_VIOLATIONS,
-        _scan,
+        run_scan_command,
     )
 
     directory = Path(args.dir)
@@ -75,7 +75,7 @@ def _ci(args: argparse.Namespace) -> int:
     args.out = str(directory / "scan.promptproof.json")
     args.markdown = str(directory / "report.md")
     args.html = str(directory / "report.html")
-    code = _scan(args)
+    code = run_scan_command(args)
 
     status, findings = "not_run", 0
     report = Path(args.out)

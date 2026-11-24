@@ -20,6 +20,7 @@ from promptproof.attacks.library import default_attacks
 from promptproof.core.benchmark import DEFAULT_MARGIN, compare_strategies, render_benchmark_markdown
 from promptproof.core.models import Rate, ScanReport
 from promptproof.core.runner import ScanConfig, identity_unknown, replay_finding, run_scan, run_to_completion
+from promptproof.reporting import open_for_a_person, show_summary, write_file, write_reports
 from promptproof.shell import replay_command
 from promptproof.targets.registry import SpecError, build_model, build_target
 
@@ -45,13 +46,6 @@ def describe_rate(rate: Rate, noun: str) -> str:
     return text
 
 
-def _summary(report: ScanReport) -> str:
-    """What a scan prints: the verdict first, findings grouped, one real exchange. See console.py."""
-    from promptproof.console import render, use_colour
-
-    return render(report, use_colour())
-
-
 def _run_until_done_or_cancelled(start: Callable[[Callable[[], bool]], object]) -> object:
     """Run a scan so that Ctrl+C stops it after the current message and a partial report is still written.
 
@@ -75,12 +69,12 @@ def _run_until_done_or_cancelled(start: Callable[[Callable[[], bool]], object]) 
         signal.signal(signal.SIGINT, previous)
 
 
-def _write(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
+def run_scan_command(args: argparse.Namespace) -> int:
+    """The `promptproof scan` command, once the target is known: scan it, write the reports, say what to do next.
 
-
-def _scan(args: argparse.Namespace) -> int:
+    `quick` (a first scan of a URL) and `ci` call this too, with their own arguments
+    already folded into `args`.
+    """
     if not args.target:
         print(
             "error: say what to scan: a chat URL (promptproof scan http://localhost:8000/chat) or --target NAME",
@@ -126,46 +120,21 @@ def _scan(args: argparse.Namespace) -> int:
         return EXIT_INCONCLUSIVE
     assert isinstance(report, ScanReport)
 
-    out = Path(args.out)
-    _write(out, json.dumps(report.to_dict(), indent=2))
-    from promptproof.console import next_steps, use_colour
-
-    print(_summary(report))
-    # Full paths: a relative one is wrong as soon as the reader is in another folder.
-    paths = [("Report (JSON)", str(out.resolve()))]
-    if args.markdown:
-        from promptproof.report_markdown import render_markdown
-
-        _write(Path(args.markdown), render_markdown(report, str(out)))
-        paths.append(("Readable report", str(Path(args.markdown).resolve())))
+    paths = write_reports(
+        report,
+        Path(args.out),
+        Path(args.markdown) if args.markdown else None,
+        Path(args.html) if args.html else None,
+    )
     if args.html:
-        from promptproof.report_html import render_html
-
-        _write(Path(args.html), render_html(report, str(out)))
-        paths.insert(0, ("Report to open in a browser", str(Path(args.html).resolve())))
         open_for_a_person(Path(args.html), getattr(args, "no_open", False))
-    replay = replay_command(str(out), report.findings[0].id) if report.findings else ""
-    print()
-    print(next_steps(report, paths, replay, use_colour()))
+    replay = replay_command(str(args.out), report.findings[0].id) if report.findings else ""
+    show_summary(report, paths, replay)
     return {
         "violations_verified": EXIT_VIOLATIONS,
         "no_verified_violations": EXIT_NO_VERIFIED,
         "inconclusive": EXIT_INCONCLUSIVE,
     }[report.status]
-
-
-def open_for_a_person(page: Path, declined: bool = False) -> bool:
-    """Open a report in the browser, but only when someone is sitting at a terminal: never in a
-    pipeline, a test, or when output is piped somewhere."""
-    import os
-    import webbrowser
-
-    if declined or not sys.stdout.isatty() or os.environ.get("CI") or os.environ.get("PROMPTPROOF_NO_OPEN"):
-        return False
-    try:
-        return webbrowser.open(page.resolve().as_uri())
-    except Exception:
-        return False
 
 
 def _scan_or_first_scan(args: argparse.Namespace) -> int:
@@ -176,7 +145,7 @@ def _scan_or_first_scan(args: argparse.Namespace) -> int:
         from promptproof.quick import run
 
         return run(args)
-    return _scan(args)
+    return run_scan_command(args)
 
 
 def _replay(args: argparse.Namespace) -> int:
@@ -266,7 +235,7 @@ def _benchmark(args: argparse.Namespace) -> int:
     text = render_benchmark_markdown(report)
     print(text, end="")
     if args.out:
-        _write(Path(args.out), json.dumps(report.to_dict(), indent=2))
+        write_file(Path(args.out), json.dumps(report.to_dict(), indent=2))
         print(f"Benchmark JSON: {args.out}")
     return EXIT_NO_VERIFIED if report.passed else EXIT_VIOLATIONS
 
