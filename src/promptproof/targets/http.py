@@ -78,6 +78,7 @@ from promptproof.core.authorization import (
 )
 from promptproof.core.canary import STYLES, pass_phrase
 from promptproof.core.models import (
+    HARNESS_ATTESTED,
     InjectionPoint,
     Reply,
     Slot,
@@ -292,10 +293,18 @@ def parse_config(name: str, raw: Mapping[str, Any], digest: str = "") -> HttpTar
             hint=_text(r, "hint", where),
             authorized=_names(r, "authorized", where),
             control_principal=_text(r, "control_principal", where),
-            control_prompt=_text(r, "control_prompt", where),
+            control_prompt=HARNESS_ATTESTED if r.get("control") == "harness" else _text(r, "control_prompt", where),
         )
         for r in each("tool_rules")
     )
+    for r in each("tool_rules"):
+        if r.get("control", "prompt") not in ("prompt", "harness"):
+            raise TargetConfigError(f"{where}: tool rule {r.get('id')} control must be \"prompt\" or \"harness\"")
+        if r.get("control") == "harness" and harness != "sdk":
+            raise TargetConfigError(
+                f"{where}: tool rule {r.get('id')} uses \"control\": \"harness\", which needs the drop-in harness "
+                "(\"harness\": \"sdk\")"
+            )
     points = tuple(
         InjectionPoint(
             id=_text(p, "id", where),
@@ -578,6 +587,7 @@ class HttpTarget:
         self._content: dict[str, str] = {}
         self.last_read: tuple[str, ...] = ()  # slots the bot read while handling the last message
         self.marked_tools: tuple[str, ...] = ()  # tools the harness says are marked, from its readiness answer
+        self.tool_asks: dict[str, str] = {}  # of those, the ones no chat user may cause -> what to ask for
         # A fresh pass phrase per slot for this scan. It travels only in control sessions.
         self._phrases = {slot_id: pass_phrase() for slot_id in config.harness_controls}
         self._slots = tuple(
@@ -596,6 +606,8 @@ class HttpTarget:
         about = {"target": "http", "name": self.config.name, "origin": self.origin, "description_digest": self.config.digest}
         if self.secrets_travel_in_requests:
             about["secrets"] = "sent with each request"  # runner.REQUEST_BORNE: adds a limitation to the report
+        if any(rule.control_prompt == HARNESS_ATTESTED for rule in self.config.tool_rules):
+            about["tool_recorders"] = "attested by the harness"  # also adds a limitation to the report
         return about
 
     def slots(self) -> Sequence[Slot]:
@@ -690,6 +702,7 @@ class HttpTarget:
         self.last_read = tuple(record["read"])
         if record["tools"]:
             self.marked_tools = tuple(record["tools"])
+            self.tool_asks = dict(record["rules"])
         record = record["calls"]
         return _tool_calls(record)
 

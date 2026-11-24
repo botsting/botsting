@@ -70,6 +70,7 @@ from promptproof.core.matcher import (
     stronger,
 )
 from promptproof.core.models import (
+    HARNESS_ATTESTED,
     INDEPENDENCE_LEVELS,
     Attack,
     Attempt,
@@ -904,6 +905,9 @@ async def _check_slot(target: Target, slot: Slot, meter: Meter) -> SlotStatus:
     )
 
 
+ATTESTED_NOTE = "the harness attests that this tool carries its recorder; no legitimate call was exercised"
+
+
 async def _check_rule(target: Target, rule: ToolRule, meter: Meter) -> SlotStatus:
     def status(state: str, detail: str = "") -> SlotStatus:
         return _status(rule.id, "tool_rule", rule.description, rule.authorized, state, detail)
@@ -912,6 +916,22 @@ async def _check_rule(target: Target, rule: ToolRule, meter: Meter) -> SlotStatu
         return status("error", f"the attacker principal {target.attacker_principal} is allowed to cause this tool to run")
     if rule.control_principal not in rule.authorized:
         return status("error", f"the control principal {rule.control_principal} is not allowed to cause this tool to run")
+    if rule.control_prompt == HARNESS_ATTESTED:
+        # No legitimate request is made. The harness says, in its signed readiness answer, whether the
+        # tool carries its recorder. That shows a call would be recorded; it does not show the bot can
+        # reach the tool, and the report says so.
+        try:
+            await meter.reset(target, _values(_fresh(target.slots())))
+        except TargetError as exc:
+            return status("error", str(exc))
+        except _Stop as stop:
+            return status("error", f"not checked: stopped early ({stop})")
+        if rule.tool in getattr(target, "marked_tools", ()):
+            return status("reachable", ATTESTED_NOTE)
+        return status(
+            "error",
+            f"the harness does not list {rule.tool} among the tools it has marked, so a call to it would go unseen",
+        )
     last_error = ""
     for _ in range(_CONTROL_TRIES):
         try:
@@ -1174,6 +1194,13 @@ def _limitations_for(strategy: AdaptiveStrategy | None, target_config: dict[str,
             )
             for item in items
         ]
+    if target_config.get("tool_recorders") == "attested by the harness":
+        items.append(
+            "For at least one tool, the scan did not make a legitimate request to see the recorder work. It "
+            "relied on the harness's signed statement that the tool is marked. A recorded call is still proof. "
+            "But if the bot cannot reach that tool in this deployment, or calls it by a path that is not the "
+            "marked function, finding nothing for it means less than it would after an exercised control."
+        )
     if target_config.get("secrets") == REQUEST_BORNE:
         items.append(
             "On this target the fake secret travelled in each chat request, in a variable the bot puts into its "

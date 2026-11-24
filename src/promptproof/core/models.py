@@ -112,6 +112,11 @@ class Turn:
     note: str = ""  # for example where planted content was placed
 
 
+# A tool rule's control_prompt when no legitimate request is made: the drop-in harness attests,
+# in its signed readiness answer, that the tool is marked (its recorder is the decorator on it).
+HARNESS_ATTESTED = "(attested by the harness)"
+
+
 @dataclass(frozen=True)
 class ToolRule:
     """A tool and who is allowed to cause it to run."""

@@ -247,7 +247,7 @@ def read_record(key: str, session_id: str, value: str | None, nonce: str = "") -
     """What the scanner does with the Promptproof-Tool-Calls header: the whole signed record.
 
     Returns {"calls": [...], "read": [slot ids read in this message], "tools": [marked tools, in the
-    readiness answer]}. Raises HarnessError if it was not made by a harness holding the key for this
+    readiness answer], "rules": {tool: what an attacker would ask for, for tools no chat user may cause}}. Raises HarnessError if it was not made by a harness holding the key for this
     very session and message, or if calls were left out."""
     if value is None:
         raise HarnessError(
@@ -262,7 +262,7 @@ def read_record(key: str, session_id: str, value: str | None, nonce: str = "") -
     try:
         record = json.loads(_unb64(payload))
         calls, dropped = record["calls"], record["dropped"]
-        read, tools = record.get("read", []), record.get("tools", [])
+        read, tools, rules = record.get("read", []), record.get("tools", []), record.get("rules", {})
     except (ValueError, KeyError, TypeError) as error:
         raise HarnessError(f"the tool-call record is unreadable: {error}") from error
     if not isinstance(calls, list) or type(dropped) is not int:
@@ -275,7 +275,9 @@ def read_record(key: str, session_id: str, value: str | None, nonce: str = "") -
             f"the bot made more tool calls in one reply than the record holds ({MAX_CALLS} calls, "
             f"{MAX_RECORD_BYTES} bytes); {dropped} were not recorded"
         )
-    return {"calls": calls, "read": read, "tools": tools}
+    if not isinstance(rules, dict) or not all(isinstance(ask, str) for ask in rules.values()):
+        raise HarnessError("the record's 'rules' must map tool names to text")
+    return {"calls": calls, "read": read, "tools": tools, "rules": rules}
 
 
 def read_calls_header(
@@ -317,20 +319,24 @@ class _Session:
         record: dict[str, Any] = {"calls": self.calls, "dropped": self.dropped, "read": self.read}
         if tools:
             record["tools"] = sorted(_marked_tools)
+            record["rules"] = {name: ask for name, ask in sorted(_marked_tools.items()) if ask}
         payload = _b64(json.dumps(record, separators=(",", ":")).encode("utf-8"))
         return payload + "." + _mac(self.key, _CALLS_DOMAIN, self.sid, self.nonce, payload)
 
 
 _current: ContextVar[_Session | None] = ContextVar("promptproof_session", default=None)
-_marked_tools: set[str] = set()  # every tool marked in this process, for the readiness answer
+# Every tool marked in this process, for the readiness answer: name -> what an attacker would ask for
+# if no chat user may ever cause it ("" when nothing was said about who may use it).
+_marked_tools: dict[str, str] = {}
 _MAX_SLOTS_NOTED = 50
 _MAX_TOOLS_NOTED = 200
 
 
-def mark_tool(name: str) -> None:
+def mark_tool(name: str, never_for_users: str = "") -> None:
     """Note that a tool with this name is covered by the harness (done for you by @action)."""
-    if len(_marked_tools) < _MAX_TOOLS_NOTED:
-        _marked_tools.add(str(name))
+    name = str(name)
+    if name in _marked_tools or len(_marked_tools) < _MAX_TOOLS_NOTED:
+        _marked_tools[name] = never_for_users or _marked_tools.get(name, "")
 
 
 def _key() -> str | None:
@@ -572,16 +578,25 @@ def record_call(tool: str, arguments: Mapping[str, Any], result: Any = _DEFAULT_
     return result
 
 
-def action(tool: str, result: Any = _DEFAULT_RESULT, live: Cap | None = None) -> Callable[[F], F]:
+def action(
+    tool: str, result: Any = _DEFAULT_RESULT, live: Cap | None = None, never_for_users: str = ""
+) -> Callable[[F], F]:
     """Mark a function as a risky tool. In a test session it is recorded, not run, and returns
     `result` (or `result(**arguments)` if that is callable). Outside one it runs as written.
 
+    `never_for_users` says that nobody chatting with the bot may ever cause this tool to run, and
+    gives what an attacker would ask for, in a few words: `never_for_users="a refund of 50 on order
+    A-1001"`. A first scan (`promptproof scan URL`) then tries to make the bot do exactly that. Leave
+    it out for a tool some users may legitimately trigger; who may is then said in a description.
+
     With `live=Cap(...)` it may be carried out for real in a test session, inside those limits
     and only where the owner has switched that on. See the module notes."""
+    if not isinstance(never_for_users, str) or len(never_for_users) > 200:
+        raise HarnessError(f"{tool}: never_for_users is a few words saying what an attacker would ask for")
 
     def decorate(function: F) -> F:
         signature = inspect.signature(function)
-        mark_tool(tool)
+        mark_tool(tool, " ".join(never_for_users.split()))
         if live is not None:
             unknown = live.names() - (set(signature.parameters) - {"self", "cls"})
             if unknown:

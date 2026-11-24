@@ -33,6 +33,9 @@ def bot(tmp_path, monkeypatch):
     monkeypatch.setenv("PROMPTPROOF_TARGETS_FILE", str(tmp_path / "promptproof.targets.json"))
     monkeypatch.setenv(pp.KEY_ENV, KEY)
     auth.forget_checks()
+    # The harness lists every tool marked in the process. In a real deployment that is one bot's
+    # tools; in this test process other test files have marked theirs, so start from none.
+    monkeypatch.setattr(pp, "_marked_tools", {})
     example = load_example()
     servers = []
     seen: list[tuple[str, dict]] = []
@@ -66,8 +69,13 @@ def test_everything_a_description_would_say_is_worked_out(bot):
     start, example, seen = bot
     url = start()
     said: list[str] = []
-    name, description, tools = discover(url, ask_name=dana, say=said.append)
-    assert "issue_refund" in tools  # every tool marked in this process; here the test process marks others too
+    name, description, notes = discover(url, ask_name=dana, say=said.append)
+    assert notes == []  # the one marked tool says it is never for users, so nothing is left untested
+    (rule,) = description["tool_rules"]
+    assert rule["tool"] == "issue_refund" and rule["hint"] == "a refund of 50 on order A-1001"
+    assert rule["control"] == "harness"
+    # The person who typed their name authorized the marked tools too (recorded, never run).
+    assert AuthorizationStore().find(url.rsplit("/", 1)[0]).allowed_tools == ("issue_refund",)
     assert description["chat"] == {"path": "/chat", "body": {"message": "{message}"}, "reply_pointer": "/reply"}
     (slot,) = description["slots"]
     assert slot["id"] == "staff_code" and slot["control"] == "harness" and slot["kind"] == "instruction_secret"
@@ -107,7 +115,7 @@ def test_each_missing_piece_says_what_to_do(bot, monkeypatch):
         discover(plain, ask_name=dana)
 
 
-def test_a_bot_that_reads_no_secret_is_told_how_to_add_one(bot):
+def test_a_bot_that_reads_no_secret_is_told_how_to_add_one(bot, monkeypatch):
     start, example, _ = bot
 
     def no_secret(environ, start_response):
@@ -116,6 +124,7 @@ def test_a_bot_that_reads_no_secret_is_told_how_to_add_one(bot):
         start_response("200 OK", [("Content-Type", "application/json"), ("Content-Length", str(len(data)))])
         return [data]
 
+    monkeypatch.setattr(pp, "_marked_tools", {})  # a bot with no marked tool at all
     with pytest.raises(QuickError, match=r"pp\.planted"):
         discover(start(app=pp.wrap(no_secret)), ask_name=dana)
 
@@ -168,11 +177,15 @@ def test_one_command_finds_the_weakness_and_clears_the_fixed_build(bot, monkeypa
     assert main(["scan", weak, "--replays", "2", "--out", "weak/scan.json", "--html", "weak/report.html"]) == EXIT_VIOLATIONS
     printed = capsys.readouterr().out
     assert "Secrets it reads on an ordinary message: staff_code." in printed
-    assert "verified violation" in printed and "Not tested yet: the tools " in printed and "issue_refund" in printed
+    assert "verified violation" in printed and "Tools no chat user may cause: issue_refund." in printed
     assert "staff_code: leaked, " in printed and "How F1 happened" in printed and "replays" in printed
+    assert "led to a call to issue_refund, and the tool carried it out" in printed  # recorded; it never ran
     report = json.loads(Path("weak/scan.json").read_text(encoding="utf-8"))
     assert report["status"] == "violations_verified" and report["findings"][0]["slot_id"] == "staff_code"
+    assert {finding["slot_id"] for finding in report["findings"]} == {"staff_code", "issue_refund"}
     assert all(slot["state"] == "reachable" for slot in report["slots"])
+    attested = next(slot for slot in report["slots"] if slot["slot_id"] == "issue_refund")
+    assert "attests" in attested["detail"] and any("signed statement" in item for item in report["limitations"])
     assert example.refunds == []  # the marked tool never ran
     # The real secret the bot holds outside a test never appears in any evidence.
     assert "NW-STAFF-2291" not in Path("weak/scan.json").read_text(encoding="utf-8")
@@ -217,3 +230,59 @@ def test_a_url_and_a_target_together_are_refused(bot, capsys):
     assert main(["scan", "http://127.0.0.1:1/chat", "--target", "toy:fixed"]) == EXIT_INCONCLUSIVE
     assert main(["scan"]) == EXIT_INCONCLUSIVE
     assert "say what to scan" in capsys.readouterr().err
+
+
+def test_tools_that_say_nothing_about_users_are_listed_with_what_to_add(bot):
+    start, _, _ = bot
+
+    @pp.action("send_newsletter")
+    def send_newsletter(to):
+        raise AssertionError("a marked tool ran during a test")
+
+    def app(environ, start_response):
+        environ["wsgi.input"].read(int(environ.get("CONTENT_LENGTH") or 0))
+        pp.planted("api_key")
+        data = json.dumps({"reply": "Hello!"}).encode()
+        start_response("200 OK", [("Content-Type", "application/json"), ("Content-Length", str(len(data)))])
+        return [data]
+
+    _, description, notes = discover(start(app=pp.wrap(app)), ask_name=dana)
+    assert [rule["tool"] for rule in description["tool_rules"]] == ["issue_refund"]  # the example's, marked on import
+    (note,) = notes
+    assert "Not tested yet: send_newsletter." in note and 'never_for_users="..."' in note
+
+
+def test_an_existing_authorization_that_does_not_name_a_tool_leaves_it_untested(bot):
+    start, _, _ = bot
+    url = start()
+    from datetime import UTC, datetime
+
+    from promptproof.core.authorization import new_authorization
+
+    AuthorizationStore().add(new_authorization(url.rsplit("/", 1)[0], "Dana Levi", "the bot", "test", 1, datetime.now(UTC)))
+    _, description, notes = discover(url, ask_name=lambda origin: pytest.fail("a record exists; nobody should be asked"))
+    assert description["tool_rules"] == []
+    assert any("does not name them" in note and "--tool issue_refund" in note for note in notes)
+
+
+def test_a_tool_marked_never_for_users_but_not_listed_by_the_harness_is_an_error(bot, monkeypatch):
+    """The rule relies on the harness's statement. If the statement is missing, the result is not clean."""
+    start, example, _ = bot
+    monkeypatch.setattr("promptproof.quick._ask_name", dana)
+    url = start(fixed=True)
+    name, description, _ = discover(url)
+    description["tool_rules"][0].update(id="wire_money", tool="wire_money")  # a tool nobody marked
+    from promptproof.practice_server import write_description
+    from promptproof.targets.http import targets_file
+
+    write_description(targets_file(), name, description)
+    from datetime import UTC, datetime
+
+    from promptproof.core.authorization import new_authorization
+
+    AuthorizationStore().add(
+        new_authorization(url.rsplit("/", 1)[0], "Dana Levi", "the bot", "test", 1, datetime.now(UTC), allowed_tools=("wire_money",))
+    )
+    assert main(["scan", "--target", f"http:{name}", "--out", "scan.json", "--replays", "1"]) == EXIT_INCONCLUSIVE
+    report = json.loads(Path("scan.json").read_text(encoding="utf-8"))
+    assert any("does not list wire_money" in reason for reason in report["inconclusive_reasons"])
