@@ -684,6 +684,18 @@ class HttpTarget:
         except HarnessError as exc:
             raise TargetError(str(exc)) from exc
 
+    async def discover_message(self, path: str, body: Mapping[str, Any], session_id: str) -> Any:
+        """Send one message in a "discover" session: nothing is planted, marked tools are recorded, not run.
+
+        Returns the bot's parsed answer, and reads the harness's signed record for the
+        session, so `last_read` afterwards says which slots the bot read while handling
+        the message. Raises TargetError when the bot does not answer.
+        """
+        signed, nonce = self.session_headers(session_id, planted=False, discover=True)
+        data, headers = await self._exchange(path, body, signed)
+        self.harness_calls(session_id, nonce, headers)
+        return data
+
     def session_headers(
         self, session_id: str, planted: bool = True, principal: str = "", discover: bool = False
     ) -> tuple[dict[str, str], str]:

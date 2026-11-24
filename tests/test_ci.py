@@ -55,13 +55,13 @@ def test_a_scan_that_could_not_run_never_looks_green(pipeline, capsys):
 def test_an_inconclusive_scan_is_said_to_be_not_clean(pipeline, capsys, monkeypatch):
     from promptproof import cli
 
-    real = cli._scan
+    real = cli.run_scan_command
 
     def inconclusive(args):
         real(args)  # writes real reports
         return cli.EXIT_INCONCLUSIVE
 
-    monkeypatch.setattr(cli, "_scan", inconclusive)
+    monkeypatch.setattr(cli, "run_scan_command", inconclusive)
     assert main(["ci", "--target", "toy:fixed", "--replays", "1"]) == 0  # the default fails only on proven findings
     assert "INCONCLUSIVE. This is not a clean result" in capsys.readouterr().out
     assert main(["ci", "--target", "toy:fixed", "--replays", "1", "--fail-on", "inconclusive", "--dir", "second"]) == 2

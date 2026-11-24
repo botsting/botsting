@@ -46,6 +46,8 @@ import threading
 from datetime import UTC, datetime
 from pathlib import Path
 
+from promptproof.exits import EXIT_FAILED, EXIT_OK
+
 _MAX_HEADER = 16_384
 CHAIN_START = hashlib.sha256(b"promptproof-egress/1").hexdigest()
 
@@ -212,7 +214,7 @@ def _command(args: object) -> int:
         trap = EgressTrap(Path(args.log), port=args.port, allow=tuple(args.allow))  # type: ignore[attr-defined]
     except (ValueError, OSError) as error:
         print(f"error: {error}")
-        return 2
+        return EXIT_FAILED
     print(f"Trap listening on 127.0.0.1:{trap.port}. Log: {Path(args.log).resolve()}")  # type: ignore[attr-defined]
     print(f"Passed through: {', '.join(sorted(trap.allow)) or 'nothing'}. Everything else is refused and recorded.")
     print("Start the bot with these settings, so that its web traffic comes here:")
@@ -228,7 +230,7 @@ def _command(args: object) -> int:
         trap.stop()
     refused = sum(1 for attempt in trap.attempts if attempt.get("allowed") != "true")
     print(f"Stopped. {len(trap.attempts)} outbound attempt(s) recorded, {refused} refused. The log is closed.")
-    return 0
+    return EXIT_OK
 
 
 def register(commands: object) -> None:

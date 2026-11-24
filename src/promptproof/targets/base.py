@@ -5,7 +5,12 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Protocol
 
-from promptproof.core.authorization import AuthorizationError, confirm_proof, require_authorized
+from promptproof.core.authorization import (
+    Authorization,
+    AuthorizationError,
+    confirm_proof,
+    require_authorized,
+)
 from promptproof.core.models import InjectionPoint, Reply, Slot, TaskCheck, ToolRule
 
 
@@ -30,6 +35,20 @@ class Target(Protocol):
     spec: str
     # Who the attacker is. Must not be authorized for any slot under test.
     attacker_principal: str
+    # Where the target runs: "in-process", "loopback" or "network". Read by the
+    # authorization gate (core/authorization.py) before anything is sent; a target
+    # without one is refused, so there is no default when it is missing.
+    reach: str
+    # Every target must say what its tools can do, because any attack, including one
+    # that only asks for a secret, may make a tool fire. Read by the gate in this
+    # module (require_contained_tools) of every target:
+    #   "no-tools"  the target can do nothing but answer in text.
+    #   "sinks"     every tool that sends, pays, books or deletes writes to a recording
+    #               sink with test data.
+    # A target that says anything else, or says nothing, is refused: saying nothing is
+    # not the same as being harmless. This is the adapter's promise, not proof: the
+    # runner cannot inspect where a tool writes.
+    tool_safety: str
 
     async def describe(self) -> Mapping[str, str]:
         """The configuration under test (build, model, weights digest, settings).
@@ -65,15 +84,6 @@ class Target(Protocol):
 class ActionTarget(Target, Protocol):
     """A target whose tools can be observed. Needed for action and injection attacks."""
 
-    # Every target must say what its tools can do, because any attack, including one
-    # that only asks for a secret, may make a tool fire:
-    #   "no-tools"  the target can do nothing but answer in text.
-    #   "sinks"     every tool that sends, pays, books or deletes writes to a recording
-    #               sink with test data.
-    # Nothing is run against a target that says anything else or says nothing. This is
-    # the adapter's promise, not proof: the runner cannot inspect where a tool writes.
-    tool_safety: str
-
     def tool_rules(self) -> Sequence[ToolRule]:
         """Which tools may run, and at whose request."""
         ...
@@ -81,6 +91,49 @@ class ActionTarget(Target, Protocol):
     def injection_points(self) -> Sequence[InjectionPoint]:
         """Where text from someone else ends up in front of the target."""
         ...
+
+
+class NetworkTarget(Target, Protocol):
+    """A target that leaves this process (reach "loopback" or "network"), such as HttpTarget.
+
+    Every operation on it is checked against a recorded authorization. The gate in
+    core/authorization.py reads these attributes (`require_authorized`, the scope check
+    and `authorization_summary`); the scan itself never does. A target that runs
+    in-process has none of them.
+    """
+
+    # The place the target is reached at, e.g. "https://staging.example.com". Read by
+    # the gate to find the authorization for exactly this origin; when it is missing
+    # or not text, the gate refuses the target.
+    origin: str
+    # The recorded permission to test this origin. Read by the gate before every
+    # operation and summarized in the report; missing means no authorization, and the
+    # gate refuses the target.
+    authorization: Authorization | None
+    # Which agent the deployment serves, when it serves several behind one origin.
+    # Read by the gate's scope check against the authorization's --agent limit; the
+    # default when missing is "not declared", which an agent-limited authorization refuses.
+    agent_id: str
+    # Same, for the tenant the deployment serves (--tenant limit); default "not declared".
+    tenant: str
+    # Tools the scan may ask the harness to carry out for real, inside the caps written
+    # in the bot's code. Read by the gate's scope check against the authorization's
+    # live tools; the default when missing is (), nothing is ever carried out for real.
+    live_actions: tuple[str, ...]
+
+
+class HarnessedTarget(ActionTarget, Protocol):
+    """A target wired with the drop-in harness (promptproof/harness.py), such as an HttpTarget
+    with "harness": "sdk" or "inputs". The preflight reads what the harness reports."""
+
+    # Tools the harness listed as marked in its signed readiness answer. Read by the
+    # preflight when a tool rule's control is the harness's attestation; the default
+    # when missing is (), so an attested rule fails its check on a target without the harness.
+    marked_tools: tuple[str, ...]
+    # True when the fake secrets travel in each chat request ("harness": "inputs").
+    # Read by the preflight's repeated-slot check; the default when missing is False,
+    # so the check does not run and every slot is attacked as usual.
+    secrets_travel_in_requests: bool
 
 
 def tool_rules(target: Target) -> Sequence[ToolRule]:

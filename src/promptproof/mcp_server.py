@@ -43,6 +43,7 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from promptproof import __version__
+from promptproof.exits import EXIT_OK
 
 PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
 _MAX_FILES = 2000
@@ -525,4 +526,4 @@ def _serve_command(args: Any) -> int:
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", newline="\n")
     serve(Path.cwd(), sys.stdin, sys.stdout)
-    return 0
+    return EXIT_OK

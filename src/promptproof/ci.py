@@ -30,6 +30,7 @@ import os
 import sys
 from pathlib import Path
 
+from promptproof.exits import EXIT_INCONCLUSIVE, EXIT_NO_VERIFIED, EXIT_OK, EXIT_VIOLATIONS
 from promptproof.seal import SealError, seal
 
 FAIL_ON = ("violations", "inconclusive", "never")
@@ -58,12 +59,7 @@ def _append(path: str | None, text: str) -> None:
 
 
 def _ci(args: argparse.Namespace) -> int:
-    from promptproof.cli import (
-        EXIT_INCONCLUSIVE,
-        EXIT_NO_VERIFIED,
-        EXIT_VIOLATIONS,
-        _scan,
-    )
+    from promptproof.cli import run_scan_command
 
     directory = Path(args.dir)
     if directory.exists() and not directory.is_dir():
@@ -75,7 +71,7 @@ def _ci(args: argparse.Namespace) -> int:
     args.out = str(directory / "scan.promptproof.json")
     args.markdown = str(directory / "report.md")
     args.html = str(directory / "report.html")
-    code = _scan(args)
+    code = run_scan_command(args)
 
     status, findings = "not_run", 0
     report = Path(args.out)
@@ -116,11 +112,11 @@ def _ci(args: argparse.Namespace) -> int:
     print(headline)
 
     if args.fail_on == "never":
-        return 0
+        return EXIT_OK
     if code == EXIT_VIOLATIONS:
         return EXIT_VIOLATIONS
     if status == "not_run" or unsealed:
         return EXIT_INCONCLUSIVE  # nothing was tested, or the evidence could not be sealed
     if code != EXIT_NO_VERIFIED and args.fail_on == "inconclusive":
         return EXIT_INCONCLUSIVE
-    return 0
+    return EXIT_NO_VERIFIED

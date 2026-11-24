@@ -25,9 +25,7 @@ from promptproof.core.authorization import (
     check_proof,
     new_authorization,
 )
-
-EXIT_OK = 0
-EXIT_FAILED = 2
+from promptproof.exits import EXIT_FAILED, EXIT_OK
 
 
 def register(commands: argparse._SubParsersAction) -> None:  # type: ignore[type-arg]

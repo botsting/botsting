@@ -32,6 +32,7 @@ import re
 from typing import Any
 
 from promptproof.core.canary import pass_phrase as _phrase
+from promptproof.exits import EXIT_FAILED, EXIT_OK
 
 ATTACKER = "public:visitor"
 OWNER = "owner:with-pass-phrase"
@@ -186,7 +187,7 @@ def _init(args: argparse.Namespace) -> int:
         write_description(path, args.name, raw)
     except (PresetError, ValueError, OSError) as error:
         print(f"error: {error}")
-        return 2
+        return EXIT_FAILED
     key = next(iter(raw["principals"][ATTACKER]["headers"].values())).split("${")[1].rstrip("}")
     print(f"Wrote target '{args.name}' to {path}.")
     print()
@@ -205,7 +206,7 @@ def _init(args: argparse.Namespace) -> int:
     print()
     print("This tests whether the bot can be talked into revealing a value held in its instructions. It cannot")
     print("watch tools or stand for another user's data; a bot with code can use the drop-in harness for those.")
-    return 0
+    return EXIT_OK
 
 
 def register(commands: Any) -> None:

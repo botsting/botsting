@@ -30,6 +30,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from promptproof import __version__
+from promptproof.exits import EXIT_CHECK_FAILED, EXIT_FAILED, EXIT_OK
 
 MANIFEST = "SEAL.json"
 EGRESS_LOG = "egress-trap.jsonl"
@@ -192,12 +193,12 @@ def _seal_command(args: argparse.Namespace) -> int:
         value = seal(run_dir, out)
     except SealError as error:
         print(f"Not sealed: {error}")
-        return 2
+        return EXIT_FAILED
     print(f"Sealed {out}")
     print(f"Seal: {value}")
     print("Share the seal separately from the bundle. Anyone can then check the bundle with:")
     print(f"  promptproof check-seal {out} --seal {value}")
-    return 0
+    return EXIT_OK
 
 
 def _check_command(args: argparse.Namespace) -> int:
@@ -205,7 +206,7 @@ def _check_command(args: argparse.Namespace) -> int:
         manifest = check(Path(args.bundle), args.seal)
     except SealError as error:
         print(f"FAILED: {error}")
-        return 1
+        return EXIT_CHECK_FAILED
     print(f"Intact: {len(manifest['files'])} files, sealed {manifest['sealed_at']}, seal {manifest['seal']}")
     if args.seal is None:
         print("No --seal given: this shows the bundle is consistent, not that it is the one you were sent.")
@@ -229,8 +230,8 @@ def _check_command(args: argparse.Namespace) -> int:
         else:
             print(f"Outbound log: THE CHAIN IS {chain.upper()}. The log was changed after it was written.")
             print("FAILED: the bundle is what was sealed, but its outbound log cannot be relied on.")
-            return 1
-    return 0
+            return EXIT_CHECK_FAILED
+    return EXIT_OK
 
 
 def register(commands: argparse._SubParsersAction) -> None:

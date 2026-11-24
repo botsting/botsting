@@ -17,17 +17,14 @@ from pathlib import Path
 from promptproof import __version__
 from promptproof.attacks.adaptive import LLMAdaptiveStrategy
 from promptproof.attacks.library import default_attacks
+from promptproof.console import NO_VERIFIED_HEADLINE, what_happened  # noqa: F401  (re-exported)
 from promptproof.core.benchmark import DEFAULT_MARGIN, compare_strategies, render_benchmark_markdown
 from promptproof.core.models import Rate, ScanReport
 from promptproof.core.runner import ScanConfig, identity_unknown, replay_finding, run_scan, run_to_completion
+from promptproof.exits import EXIT_FAILED, EXIT_INCONCLUSIVE, EXIT_NO_VERIFIED, EXIT_OK, EXIT_VIOLATIONS
+from promptproof.reporting import open_for_a_person, show_summary, write_file, write_reports
 from promptproof.shell import replay_command
 from promptproof.targets.registry import SpecError, build_model, build_target
-
-EXIT_NO_VERIFIED = 0
-EXIT_VIOLATIONS = 1
-EXIT_INCONCLUSIVE = 2
-
-from promptproof.console import NO_VERIFIED_HEADLINE, what_happened  # noqa: E402, F401  (re-exported)
 
 
 def _percent(value: float | None) -> str:
@@ -43,13 +40,6 @@ def describe_rate(rate: Rate, noun: str) -> str:
     if rate.contaminated:
         text += f", {rate.contaminated} more discarded as contaminated"
     return text
-
-
-def _summary(report: ScanReport) -> str:
-    """What a scan prints: the verdict first, findings grouped, one real exchange. See console.py."""
-    from promptproof.console import render, use_colour
-
-    return render(report, use_colour())
 
 
 def _run_until_done_or_cancelled(start: Callable[[Callable[[], bool]], object]) -> object:
@@ -75,12 +65,12 @@ def _run_until_done_or_cancelled(start: Callable[[Callable[[], bool]], object]) 
         signal.signal(signal.SIGINT, previous)
 
 
-def _write(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
+def run_scan_command(args: argparse.Namespace) -> int:
+    """The `promptproof scan` command, once the target is known: scan it, write the reports, say what to do next.
 
-
-def _scan(args: argparse.Namespace) -> int:
+    `quick` (a first scan of a URL) and `ci` call this too, with their own arguments
+    already folded into `args`.
+    """
     if not args.target:
         print(
             "error: say what to scan: a chat URL (promptproof scan http://localhost:8000/chat) or --target NAME",
@@ -126,46 +116,21 @@ def _scan(args: argparse.Namespace) -> int:
         return EXIT_INCONCLUSIVE
     assert isinstance(report, ScanReport)
 
-    out = Path(args.out)
-    _write(out, json.dumps(report.to_dict(), indent=2))
-    from promptproof.console import next_steps, use_colour
-
-    print(_summary(report))
-    # Full paths: a relative one is wrong as soon as the reader is in another folder.
-    paths = [("Report (JSON)", str(out.resolve()))]
-    if args.markdown:
-        from promptproof.report_markdown import render_markdown
-
-        _write(Path(args.markdown), render_markdown(report, str(out)))
-        paths.append(("Readable report", str(Path(args.markdown).resolve())))
+    paths = write_reports(
+        report,
+        Path(args.out),
+        Path(args.markdown) if args.markdown else None,
+        Path(args.html) if args.html else None,
+    )
     if args.html:
-        from promptproof.report_html import render_html
-
-        _write(Path(args.html), render_html(report, str(out)))
-        paths.insert(0, ("Report to open in a browser", str(Path(args.html).resolve())))
         open_for_a_person(Path(args.html), getattr(args, "no_open", False))
-    replay = replay_command(str(out), report.findings[0].id) if report.findings else ""
-    print()
-    print(next_steps(report, paths, replay, use_colour()))
+    replay = replay_command(str(args.out), report.findings[0].id) if report.findings else ""
+    show_summary(report, paths, replay)
     return {
         "violations_verified": EXIT_VIOLATIONS,
         "no_verified_violations": EXIT_NO_VERIFIED,
         "inconclusive": EXIT_INCONCLUSIVE,
     }[report.status]
-
-
-def open_for_a_person(page: Path, declined: bool = False) -> bool:
-    """Open a report in the browser, but only when someone is sitting at a terminal: never in a
-    pipeline, a test, or when output is piped somewhere."""
-    import os
-    import webbrowser
-
-    if declined or not sys.stdout.isatty() or os.environ.get("CI") or os.environ.get("PROMPTPROOF_NO_OPEN"):
-        return False
-    try:
-        return webbrowser.open(page.resolve().as_uri())
-    except Exception:
-        return False
 
 
 def _scan_or_first_scan(args: argparse.Namespace) -> int:
@@ -176,7 +141,7 @@ def _scan_or_first_scan(args: argparse.Namespace) -> int:
         from promptproof.quick import run
 
         return run(args)
-    return _scan(args)
+    return run_scan_command(args)
 
 
 def _replay(args: argparse.Namespace) -> int:
@@ -266,7 +231,7 @@ def _benchmark(args: argparse.Namespace) -> int:
     text = render_benchmark_markdown(report)
     print(text, end="")
     if args.out:
-        _write(Path(args.out), json.dumps(report.to_dict(), indent=2))
+        write_file(Path(args.out), json.dumps(report.to_dict(), indent=2))
         print(f"Benchmark JSON: {args.out}")
     return EXIT_NO_VERIFIED if report.passed else EXIT_VIOLATIONS
 
@@ -283,7 +248,7 @@ def _practice_server(args: argparse.Namespace) -> int:
         server = start(bot, port=args.port)
     except (SpecError, ValueError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
-        return EXIT_INCONCLUSIVE
+        return EXIT_FAILED
     port = server.server_address[1]
     print(f"Practice bot ({args.variant}) listening on http://127.0.0.1:{port}. Press Ctrl+C to stop.")
     if args.write_config:
@@ -295,7 +260,7 @@ def _practice_server(args: argparse.Namespace) -> int:
             time.sleep(3600)
     except KeyboardInterrupt:
         server.shutdown()
-        return EXIT_NO_VERIFIED
+        return EXIT_OK
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -460,7 +425,7 @@ def _harness_key(args: argparse.Namespace) -> int:
         "Keep it off production unless you mean to test the real system (see the README).",
         file=sys.stderr,
     )
-    return 0
+    return EXIT_OK
 
 
 def _print_anything() -> None:

@@ -35,6 +35,7 @@ from wsgiref.simple_server import WSGIRequestHandler, WSGIServer, make_server
 
 import promptproof.harness as pp
 from promptproof.core.models import ToolCall
+from promptproof.exits import EXIT_FAILED, EXIT_OK
 from promptproof.llm.scripted import ScriptedModel
 from promptproof.targets.toy import REFUND_TOOL, ToyTarget
 
@@ -142,18 +143,16 @@ def _environment(**values: str) -> Iterator[None]:
 
 def _demo(args: argparse.Namespace) -> int:
     from promptproof.attacks.library import default_attacks
-    from promptproof.cli import _summary, _write, open_for_a_person
     from promptproof.core.authorization import new_authorization
     from promptproof.core.runner import ScanConfig, run_scan, run_to_completion
-    from promptproof.report_html import render_html
-    from promptproof.report_markdown import render_markdown
+    from promptproof.reporting import open_for_a_person, summary, write_reports
     from promptproof.seal import seal
     from promptproof.targets.http import HttpTarget, parse_config
 
     directory = Path(args.dir)
     if directory.exists() and any(directory.iterdir()):
         print(f"error: {directory} is not empty; give a new or empty --dir")
-        return 2
+        return EXIT_FAILED
     switches = {pp.KEY_ENV: pp.new_key()}
     if args.live:
         switches[pp.LIVE_ENV] = REFUND_TOOL
@@ -180,13 +179,11 @@ def _demo(args: argparse.Namespace) -> int:
                 server.server_close()
             folder = directory / variant
             out = folder / "scan.promptproof.json"
-            _write(out, json.dumps(report.to_dict(), indent=2))
-            _write(folder / "report.md", render_markdown(report, str(out)))
-            _write(folder / "report.html", render_html(report, str(out)))
+            write_reports(report, out, folder / "report.md", folder / "report.html")
             value = seal(folder, directory / f"{variant}.sealed.zip")
             print()
             print(f"== The {variant} build ==")
-            print(_summary(report))
+            print(summary(report))
             if args.live:
                 kept = all(amount <= LIVE_CAP for _, amount in bot.carried_out)
                 print(
@@ -203,7 +200,7 @@ def _demo(args: argparse.Namespace) -> int:
     print()
     print("The vulnerable build shows what a proven finding looks like; the fixed build shows what you see when nothing is found.")
     print("To wire your own bot the same way, run: promptproof guide")
-    return 0
+    return EXIT_OK
 
 
 def register(commands: Any) -> None:

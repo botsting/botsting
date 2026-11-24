@@ -267,11 +267,9 @@ def discover(
         for body in _shapes(field, session_field):
             candidate = target_for(body, "", [])
             session_id = uuid.uuid4().hex
-            signed, nonce = candidate.session_headers(session_id, planted=False, discover=True)
             filled = json.loads(json.dumps(body).replace("{message}", "Hello").replace("{session}", session_id))
             try:
-                data, headers = await candidate._exchange(path, filled, signed)
-                candidate.harness_calls(session_id, nonce, headers)
+                data = await candidate.discover_message(path, filled, session_id)
             except TargetError as error:
                 last = str(error)
                 continue
@@ -302,7 +300,8 @@ def discover(
 
 def run(args: Any) -> int:
     """The `promptproof scan URL` command."""
-    from promptproof.cli import EXIT_INCONCLUSIVE, _scan
+    from promptproof.cli import run_scan_command
+    from promptproof.exits import EXIT_INCONCLUSIVE
     from promptproof.practice_server import write_description
     from promptproof.targets.http import targets_file
 
@@ -318,7 +317,7 @@ def run(args: Any) -> int:
     args.target = f"http:{name}"
     if not args.html:
         args.html = str(Path(args.out).with_name("report.html"))  # a first scan is for a person to read
-    code = _scan(args)
+    code = run_scan_command(args)
     for note in notes:
         print()
         print(note)

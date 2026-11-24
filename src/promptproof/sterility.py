@@ -19,6 +19,8 @@ from pathlib import Path
 from typing import Literal
 from urllib.parse import unquote
 
+from promptproof.exits import EXIT_CHECK_FAILED, EXIT_FAILED, EXIT_OK
+
 
 @dataclass(frozen=True)
 class _Match:
@@ -324,14 +326,14 @@ def check(variables: Mapping[str, str], allow: Collection[str] = ()) -> Report:
 def _command(args: argparse.Namespace) -> int:
     if not args.env_file and not args.environment:
         print("error: sterile-check requires --env-file or --environment.", file=sys.stderr)
-        return 2
+        return EXIT_FAILED
     reports = []
     for number, path in enumerate(args.env_file, 1):
         try:
             reports.append(check(read_env_file(path), args.allow))
         except EnvFileError as error:
             print(f"error: --env-file #{number}. {error}", file=sys.stderr)
-            return 2
+            return EXIT_FAILED
     if args.environment:
         reports.append(check(os.environ, args.allow))
     report = Report(
@@ -355,7 +357,7 @@ def _command(args: argparse.Namespace) -> int:
             f"Checked {report.checked_count} variable(s). {report.live_count} live, "
             f"{report.unknown_count} unknown, {sum(f.allowed for f in report.findings)} allowed by the owner."
         )
-    return 0 if report.ok else 1
+    return EXIT_OK if report.ok else EXIT_CHECK_FAILED
 
 
 def register(commands: argparse._SubParsersAction) -> None:
