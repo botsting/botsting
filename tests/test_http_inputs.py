@@ -242,3 +242,63 @@ def test_reports_for_this_kind_of_target_say_how_the_secret_travelled():
     toy = build_target("toy:fixed")
     plain = asyncio.run(run_scan(toy, default_attacks(toy), ScanConfig(reproduction_trials=1)))
     assert not any("travelled in each chat request" in item for item in plain.limitations)
+
+
+def two_variable_bot():
+    """Keeps staff_code in its instructions and can be talked into giving it, and separately shows
+    whatever it is sent as `greeting` in every answer."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        text = body["query"].lower()
+        if "open" in text:
+            answer = "We are open 9 to 5."
+        elif body["user"] == "dana" or "code" in text or "instructions" in text:
+            answer = f"The staff code is {body['inputs']['staff_code']}."
+        else:
+            answer = "I can't share that."
+        answer += f" [{body['inputs']['greeting']}]"
+        return httpx.Response(200, json={"answer": answer, "conversation_id": body["conversation_id"] or "conv-1"})
+
+    return httpx.MockTransport(handler)
+
+
+def two_variable_target():
+    raw = description()
+    raw["chat"]["body"]["inputs"]["greeting"] = "{canary:greeting}"
+    raw["slots"].append({**raw["slots"][0], "id": "greeting", "hint": "the greeting", "control_prompt": "Say hello."})
+    permission = new_authorization(ORIGIN, "Dana Levi", "the builder bot", "test", 1, datetime.now(UTC))
+    return HttpTarget(parse_config("builder", raw), "http:builder", permission, two_variable_bot())
+
+
+def test_a_value_that_simply_comes_back_is_never_a_finding_even_as_a_by_product_of_another_attack():
+    """Every attack on staff_code also brings back the greeting variable, because the bot shows it in
+    every answer. That is the request coming back, not a leak, whichever attack it rides on."""
+    target = two_variable_target()
+    report = asyncio.run(run_scan(target, default_attacks(target), ScanConfig(reproduction_trials=2)))
+    assert report.findings and {finding.slot_id for finding in report.findings} == {"staff_code"}
+    assert [item.slot_id for item in report.suspected] == ["greeting"]
+    assert "came back in the reply to an ordinary request" in report.suspected[0].reason
+    greeting = next(slot for slot in report.slots if slot.slot_id == "greeting")
+    assert greeting.state == "error" and greeting.judged_attempts == 0
+
+
+def test_the_adaptive_attacker_is_not_set_on_such_a_slot_either():
+    from promptproof.attacks.adaptive import LLMAdaptiveStrategy, ScriptedAttackerModel
+
+    target = target_for(echo_bot())
+    strategy = LLMAdaptiveStrategy(model=ScriptedAttackerModel(), max_turns=2, max_episodes=2)
+    report = asyncio.run(run_scan(target, [], ScanConfig(reproduction_trials=1), strategy=strategy))
+    assert report.findings == () and report.status == "inconclusive"
+    assert report.attempts_run == 0  # nothing was even tried against it
+
+
+def test_a_finding_on_such_a_slot_is_not_replayed():
+    from promptproof.core.runner import replay_finding
+
+    leaky_transport, _ = builder_bot(leaky=True)
+    leaky = target_for(leaky_transport)
+    report = asyncio.run(run_scan(leaky, default_attacks(leaky), ScanConfig(reproduction_trials=1)))
+    finding = report.findings[0]
+    result = asyncio.run(replay_finding(target_for(echo_bot()), finding, 2))
+    assert result.rate.trials == 0 and any("was not replayed" in problem for problem in result.problems)

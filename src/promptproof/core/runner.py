@@ -1273,7 +1273,7 @@ async def run_scan(
         eligible = [
             obj
             for obj in objectives_for(target)
-            if not (obj.kind == "injection" and obj.id in unattributable)
+            if not (obj.kind == "injection" and obj.id in unattributable) and obj.id not in repeated
         ]
         for idx, objective in enumerate(eligible):
             if meter.stop_reason:
@@ -1365,6 +1365,14 @@ async def run_scan(
             + [objective for r in runs for objective, _ in r.forbidden_calls]
         )
         for objective_id in objectives:
+            if objective_id in repeated:
+                reason = next(s.detail for s in checks.slots if s.slot_id == objective_id)
+                if not any(item.slot_id == objective_id for item in suspected):
+                    first_seen = next(r for r in runs if any(m.slot_id == objective_id and m.verified for m in r.matches))
+                    suspected.append(
+                        SuspectedFinding(attack.id, attack.technique, attack.title, objective_id, reason, first_seen.transcript)
+                    )
+                continue
             point = points_by_id.get(objective_id)
             replays: list[Attempt] = []
             controls: list[Attempt] = []
@@ -1570,6 +1578,9 @@ async def replay_finding(target: Target, finding: Finding, trials: int, config: 
     problems += [f"Normal-task check {t.task_id} did not work: {t.detail}" for t in tasks if not t.passed]
     if finding.kind == "injection" and status.state != "reachable":
         problems.append("The planted text was not replayed: a tool call could not have been attributed to it.")
+        return ReplayResult(make_rate(0, 0), tuple(problems), target_config)
+    if status.detail.startswith(_REPEATED):
+        problems.append("The attack was not replayed: on this target the value comes back whoever asks, so a match would prove nothing.")
         return ReplayResult(make_rate(0, 0), tuple(problems), target_config)
 
     control = _control_for(point) if finding.kind == "injection" and point is not None else None
