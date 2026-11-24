@@ -88,6 +88,42 @@ def _heading(findings: Sequence[Finding]) -> str:
     return f"{what_happened(first)} ({ways})"
 
 
+ADVICE = {
+    "instruction_secret": (
+        "Take the secret out of the instructions. A model can be talked into repeating anything it was given. "
+        "Keep the value in your code and use it there."
+    ),
+    "other_user_record": (
+        "Check who is asking in the code that fetches the record, before the model sees it. A rule written in "
+        "the instructions is a request, not a check."
+    ),
+    "tool_rule": (
+        "Enforce who may use the tool inside the tool itself, from the signed-in user, not from what the "
+        "conversation claims."
+    ),
+    "injection_point": (
+        "Treat text the bot reads (notes, documents, tickets) as data. Offer a tool only when the current "
+        "user's own message asks for it, and check that in code."
+    ),
+}
+
+
+def advice(report: ScanReport, slot_id: str) -> str:
+    """What to change, for the kind of thing that was reached. Empty if the kind is not known."""
+    kind = next((slot.kind for slot in report.slots if slot.slot_id == slot_id), "")
+    return ADVICE.get(kind, "")
+
+
+def _wrap(text: str, indent: str, width: int = _WIDTH) -> list[str]:
+    words, lines, line = text.split(), [], indent
+    for word in words:
+        if len(line) + len(word) + 1 > width and line.strip():
+            lines.append(line.rstrip())
+            line = indent
+        line += word + " "
+    return [*lines, line.rstrip()]
+
+
 def _groups(findings: Sequence[Finding]) -> list[tuple[str, list[Finding]]]:
     grouped: dict[str, list[Finding]] = {}
     for finding in findings:
@@ -133,6 +169,9 @@ def render(report: ScanReport, colour: bool = False) -> str:
             replays = f"{rate.successes} of {rate.trials} replays"
             title = finding.title if len(finding.title) <= 58 else finding.title[:55].rstrip() + "..."
             lines.append(f"    {finding.id:<4} {title:<58}  {paint.dim(replays)}")
+        fix = advice(report, slot_id)
+        if fix:
+            lines += _wrap("Fix: " + fix, "    ")
     if report.findings:
         first = report.findings[0]
         lines.append("")
@@ -148,9 +187,8 @@ def render(report: ScanReport, colour: bool = False) -> str:
         lines.append(f"  {report.contaminated_attempts} attempt(s) discarded as contaminated.")
     lines.append(
         paint.dim(
-            f"  Target {report.target}, attacker acting as {report.attacker_principal}. {report.attacks_run} attacks, "
-            f"{report.attempts_run} attempts. Spent: {report.messages_sent} messages, "
-            f"{report.tool_calls_recorded} recorded tool calls."
+            f"  Target {report.target}, attacker acting as {report.attacker_principal}. {report.attacks_run} attacks "
+            f"tried. Spent: {report.messages_sent} messages, {report.tool_calls_recorded} recorded tool calls."
         )
     )
     return "\n".join(lines)

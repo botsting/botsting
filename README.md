@@ -2,18 +2,26 @@
 
 Evidence-first security testing for LLM applications. Promptproof attacks a bot you own and reports only what it can prove: it plants fresh secrets ("canaries") where an attacker should never reach, then shows you the exact conversation in which one came out.
 
-Early development: nothing here is released yet. It scans the built-in practice bots, and any bot you own that you describe and authorize (see "Scanning a bot over HTTP" and "Permission to test").
+Early development: nothing here is released yet, and it is not on PyPI. It scans the built-in practice bots and any bot you own.
+
+## Install it as a command
+
+Requires Python 3.11+. From a checkout of this repository, either of these puts the `promptproof` command on your path, so it works from any folder:
+
+```
+uv tool install .        # with uv (https://docs.astral.sh/uv/)
+pipx install .           # or with pipx
+```
+
+To work on Promptproof itself, use `uv sync` and prefix the commands below with `uv run`, from inside the checkout.
 
 ## See it in a minute
 
-Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/).
-
 ```
-uv sync
-uv run promptproof demo
+promptproof demo
 ```
 
-This serves a small support bot on your machine twice, a vulnerable build and a fixed one, wired exactly as your own bot would be, then attacks both and writes a report and a sealed evidence bundle for each in `promptproof-demo/`. Open `promptproof-demo/vulnerable/report.html` to see proven findings, each with its transcript. Nothing leaves your machine. `promptproof demo --live` shows live testing: small refunds really run (as a line in a practice ledger), and larger ones are stopped by the cap and recorded.
+This serves a small support bot on your machine twice, a vulnerable build and a fixed one, wired exactly as your own bot would be, then attacks both. It writes a report and a sealed evidence bundle for each into `promptproof-demo/` in the folder you are in, prints the full path of each report, and opens the first one in your browser. Nothing leaves your machine. `promptproof demo --live` shows live testing: small refunds really run (as a line in a practice ledger), and larger ones are stopped by the cap and kept as evidence.
 
 ## Scan your own bot
 
@@ -58,6 +66,8 @@ A first scan tests two things:
 A tool that some users may use is listed as "not tested yet": whether a call is forbidden then depends on who is asking, which only you can say. `promptproof guide` shows how to describe that, and how to test one user reaching another user's data.
 
 To try it without your own bot: `python examples/support_bot.py` in one terminal, `promptproof scan http://127.0.0.1:8000/chat` in another, then again with `--fixed`.
+
+One thing to know before you mark a tool. During a test a marked function is not run, so it cannot return its usual answer. It returns a stand-in that reads as `{"status": "ok"}` and as the text `"ok"`, which is enough for a bot that looks up a key in the answer or puts it into a sentence. If your bot needs more from it, say what the tool should return during a test: `@pp.action("issue_refund", result="Refunded.")`.
 
 ## Try it
 
@@ -389,3 +399,17 @@ uv run promptproof scan --target http:staging --out runs/scan.promptproof.json \
 `--independence` takes `self` (the team that built or operates the target, the default), `internal` (a separate team in the same organization), or `third-party` (an external assessor outside the organization).
 
 The coverage table maps only the objective kinds Promptproof tests and states plainly what the scan did not cover. A report is evidence of what those tests observed; it never claims that a target is compliant, certified, or passed for any framework. Pair the JSON, Markdown, and HTML reports with `promptproof seal` when handing evidence to an auditor or buyer.
+
+## Words used here
+
+- **Canary, or planted secret.** A fake value made for one attempt and put where an attacker should never reach. If it comes out, the bot leaked.
+- **Slot.** A place a canary can be planted: the bot's instructions, or one user's record.
+- **Marked tool, recorder.** A function carrying `@pp.action`. During a test it is written down and not run.
+- **Harness.** The lines added to the bot (`pp.wrap`, `pp.action`, `pp.planted`), or a test endpoint that does the same job.
+- **Principal.** A user the scan can act as: the attacker, and someone who is allowed what the attacker is not.
+- **Control, or legitimate route.** The check that a protected thing works for someone allowed it. Without it, finding nothing would mean nothing.
+- **Authorization.** The record that a named person allowed one exact address to be tested, until a date.
+- **Replay.** Running a finding's attack again from a fresh start with a new canary, to see how often it works and whether a fix closed it.
+- **Inconclusive.** The scan could not show that it would have seen a failure. It is never reported as a good result.
+- **Seal.** A fingerprint of a scan's evidence, so anyone can check later that nothing in it was changed.
+- **Egress trap.** A local gate that records, and refuses, the outbound connections a bot under test tries to make.

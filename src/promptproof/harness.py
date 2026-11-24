@@ -34,7 +34,12 @@ What a test session does
 - `content(point)` returns text the scan placed at an injection point (a document, a
   ticket), so the owner can show it wherever the bot would read such text.
 - A function decorated with `@action` is not run. The call and its arguments are
-  recorded, and the decorator returns the stand-in result instead.
+  recorded, and the decorator returns a stand-in instead of the function's own answer.
+  Unless `result=` says otherwise, the stand-in reads as {"status": "ok"} and as the
+  text "ok". A bot that needs more from the tool's answer (a number, a list, an object
+  with attributes) must be given one: `@action("issue_refund", result="Refunded.")`,
+  or `result=lambda order_id, amount: {...}`. Without it such a bot may fail during a
+  test at the line that uses the answer.
 - The scanner first asks READY_PATH, with a signed session, and starts only if the
   harness answers with a valid signature.
 - The recorded calls go back to the scanner in a response header,
@@ -143,7 +148,28 @@ MAX_RECORD_BYTES = 24_000  # of recorded calls in one reply; the record travels 
 MAX_LIFETIME_SECONDS = 900
 _SESSION_DOMAIN = b"promptproof-session/1\n"
 _CALLS_DOMAIN = b"promptproof-calls/1\n"
-_DEFAULT_RESULT = {"status": "ok"}
+class _StandIn(dict):  # type: ignore[type-arg]
+    """What a marked tool returns during a test when no `result=` was given.
+
+    The real function is not run, so its real answer does not exist. A bot usually does one of two
+    things with a tool's answer: looks a key up in it, or puts it into a sentence. This reads as the
+    mapping {"status": "ok"} and as the text "ok", so both keep working. For anything else, say what
+    the tool should answer during a test: `@pp.action("issue_refund", result="Refunded.")`."""
+
+    def __str__(self) -> str:
+        return "ok"
+
+    def __format__(self, spec: str) -> str:
+        return format("ok", spec)
+
+    def __add__(self, other: object) -> str:
+        return "ok" + other if isinstance(other, str) else NotImplemented
+
+    def __radd__(self, other: object) -> str:
+        return other + "ok" if isinstance(other, str) else NotImplemented
+
+
+_DEFAULT_RESULT = _StandIn(status="ok")
 _READY = b"promptproof harness ready\n"
 _REFUSED = b"promptproof: this request carries a test session that is not valid here, so it was not run\n"
 
@@ -626,7 +652,10 @@ def action(
             session.add(call)
 
         def stand_in(session: _Session, arguments: Mapping[str, Any], why_not: str) -> Any:
-            outcome = result(**arguments) if callable(result) else result
+            if result is _DEFAULT_RESULT:
+                outcome: Any = _StandIn(_DEFAULT_RESULT)  # a fresh one each time: the bot may change it
+            else:
+                outcome = result(**arguments) if callable(result) else result
             note = f"not run: {why_not}" if why_not else ""
             record(session, arguments, outcome, note, "capped" if why_not else "")
             return outcome

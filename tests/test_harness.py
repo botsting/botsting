@@ -736,3 +736,46 @@ def test_the_harness_knows_when_a_test_request_is_in_flight(key):
     with pytest.raises(RuntimeError):
         pp.wrap(failing)(environ, lambda status, headers: None)
     assert pp.tests_in_progress() == 0 and not pp.active()
+
+
+# -- found by a first-time user ------------------------------------------------------------------
+
+
+def test_the_stand_in_reads_as_a_mapping_and_as_text_so_the_bot_keeps_working(key):
+    """During a test a marked tool is not run, so its own answer does not exist. A bot that puts the
+    answer into a sentence, or looks a key up in it, must not fall over."""
+
+    @pp.action("issue_refund_plain")
+    def refund(order_id, amount):
+        return f"Refunded {amount} on {order_id}."
+
+    def bot_code():
+        answer = refund("A-1", 5)
+        return ("Done. " + answer, f"Done. {answer}", answer + "!", answer["status"], answer.get("missing"), str(answer))
+
+    token = pp.make_session_token(KEY, "s1", {})
+    outcome, session = in_session(token, bot_code)
+    assert outcome == ("Done. ok", "Done. ok", "ok!", "ok", None, "ok")
+    assert session.calls[0]["result"] == '{"status": "ok"}'  # what the report shows is unchanged
+    first, _ = in_session(token, refund, "A-1", 5)
+    second, _ = in_session(token, refund, "A-2", 5)
+    first["changed"] = True
+    assert "changed" not in second  # each call gets its own; a bot may change what it was handed
+    assert refund("A-1", 5) == "Refunded 5 on A-1."  # outside a test, the real answer
+
+
+def test_a_bot_that_fails_during_a_test_is_explained(key):
+    async def crashing(scope, receive, send):
+        await receive()
+        await send({"type": "http.response.start", "status": 500, "headers": []})
+        await send({"type": "http.response.body", "body": b"Internal Server Error"})
+
+    target = sdk_target(pp.wrap(crashing))
+
+    async def talk():
+        await target.reset({})
+        await (await target.open_session("customer:alice")).send("a refund please")
+
+    with pytest.raises(TargetError, match="returns a stand-in, not its usual answer") as raised:
+        asyncio.run(talk())
+    assert "result=" in str(raised.value) and "own log" in str(raised.value)

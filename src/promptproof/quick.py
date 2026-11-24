@@ -316,6 +316,8 @@ def run(args: Any) -> int:
     print(f"Saved what was worked out as target '{name}' in {path}.")
     print()
     args.target = f"http:{name}"
+    if not args.html:
+        args.html = str(Path(args.out).with_name("report.html"))  # a first scan is for a person to read
     code = _scan(args)
     for note in notes:
         print()

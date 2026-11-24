@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from html import escape
 
+from promptproof.console import advice
 from promptproof.core.models import EvidenceLevel, Finding, Rate, ScanReport, SlotStatus, ToolCall, Turn
 from promptproof.frameworks import (
     FrameworkEntry,
@@ -59,6 +60,7 @@ h1, h2, h3, th, dt, .tag, .who, .num, .facts { font-family:var(--display); }
 h1 { font-size:.95rem; font-weight:600; color:var(--muted); margin:0 0 1.25rem; }
 h2 { font-size:1.45rem; font-weight:700; font-stretch:90%; line-height:1.15; margin:3.5rem 0 1rem; }
 h3 { font-size:1.2rem; font-weight:700; font-stretch:90%; line-height:1.25; margin:0 0 .35rem; }
+table + h3, .scroll + h3 { margin-top:1.6rem; }
 p { margin:.5rem 0; max-width:42rem; }
 ul { margin:.5rem 0; padding-left:1.2rem; max-width:42rem; } li { margin:.3rem 0; }
 code { font:.86em var(--mono); background:var(--quote); padding:.08em .3em; border-radius:3px; overflow-wrap:anywhere; }
@@ -198,6 +200,11 @@ def _reached(report: ScanReport) -> list[str]:
             f'<td><span class="num">{_e(ids)}</span></td><td>{done} of {tried}</td></tr>'
         )
     lines.append("</tbody></table></div>")
+    fixes = [(slot_id, advice(report, slot_id)) for slot_id in grouped]
+    if any(text for _, text in fixes):
+        lines.append("<h3>What to change</h3><ul>")
+        lines += [f"<li>{_code(slot_id)}: {_e(text)}</li>" for slot_id, text in fixes if text]
+        lines.append("</ul>")
     return lines
 
 

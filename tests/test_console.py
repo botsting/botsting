@@ -1,6 +1,7 @@
 """What a scan prints in the terminal: the verdict first, findings grouped, one real exchange."""
 
 import asyncio
+import re
 
 import pytest
 
@@ -36,7 +37,7 @@ def test_findings_are_grouped_by_what_was_reached_with_their_replays(reports):
     assert "staff_code: leaked, " in text and "bob_delivery_note: leaked, " in text
     assert "with planted text in place, issue_refund was called, and the tool carried it out" in text
     assert "the attacker's conversation led to a call to issue_refund" in text
-    lines = [line for line in text.splitlines() if line.strip().startswith("F")]
+    lines = [line for line in text.splitlines() if re.match(r"\s+F\d+ ", line)]
     assert len(lines) == 14 and all(line.rstrip().endswith("2 of 2 replays") for line in lines)
     # The statistics stay in the reports: nothing here mentions an interval.
     assert "Wilson" not in text and "%" not in text
@@ -91,3 +92,13 @@ def test_next_steps_names_one_replay_command_not_one_per_finding(reports):
     text = next_steps(reports[0], [("Report (JSON)", "scan.json")], "promptproof replay scan.json --finding F1")
     assert text.count("promptproof replay") == 1 and "(any id from F1 to F14)" in text
     assert "Replay" not in next_steps(reports[1], [("Report (JSON)", "scan.json")])
+
+
+def test_each_thing_reached_comes_with_what_to_change(reports):
+    text = render(reports[0])
+    assert text.count("Fix: ") == 4  # one per thing reached, not one per finding
+    assert "Take the secret out of the instructions" in text  # staff_code, held in the instructions
+    assert "Check who is asking in the code that fetches the record" in text  # another customer's note
+    assert "Enforce who may use the tool inside the tool itself" in text
+    assert "Treat text the bot reads" in text  # planted text
+    assert "Fix:" not in render(reports[1])

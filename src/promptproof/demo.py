@@ -142,7 +142,7 @@ def _environment(**values: str) -> Iterator[None]:
 
 def _demo(args: argparse.Namespace) -> int:
     from promptproof.attacks.library import default_attacks
-    from promptproof.cli import _summary, _write
+    from promptproof.cli import _summary, _write, open_for_a_person
     from promptproof.core.authorization import new_authorization
     from promptproof.core.runner import ScanConfig, run_scan, run_to_completion
     from promptproof.report_html import render_html
@@ -193,10 +193,15 @@ def _demo(args: argparse.Namespace) -> int:
                     f"Refunds really carried out (a line in the practice ledger): {len(bot.carried_out)}, "
                     f"{'all' if kept else 'NOT all'} within the cap of {LIVE_CAP}."
                 )
-            print(f"Open: {folder / 'report.html'}")
-            print(f"Sealed evidence: {directory / f'{variant}.sealed.zip'}  seal {value}")
+            if args.live:
+                stopped = json.dumps(report.to_dict()).count("[not run: ")
+                print(f"Tool calls stopped by the cap and kept as evidence: {stopped}.")
+            print(f"Open: {(folder / 'report.html').resolve()}")
+            print(f"Sealed evidence: {(directory / f'{variant}.sealed.zip').resolve()}  seal {value}")
+            if variant == "vulnerable":
+                open_for_a_person(folder / "report.html", args.no_open)
     print()
-    print("The vulnerable build shows what a proven finding looks like; the fixed build shows a clean result.")
+    print("The vulnerable build shows what a proven finding looks like; the fixed build shows what you see when nothing is found.")
     print("To wire your own bot the same way, run: promptproof guide")
     return 0
 
@@ -209,4 +214,5 @@ def register(commands: Any) -> None:
         "--live", action="store_true",
         help=f"let the practice refund tool really run for refunds up to {LIVE_CAP} (a ledger line; no money exists)",
     )  # fmt: skip
+    parser.add_argument("--no-open", action="store_true", help="do not open the report in a browser")
     parser.set_defaults(handler=_demo)

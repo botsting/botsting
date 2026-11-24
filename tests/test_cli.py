@@ -172,3 +172,29 @@ def test_scan_rejects_invalid_independence(tmp_path):
     with pytest.raises(SystemExit) as exit_info:
         main(["scan", "--target", "toy:fixed", "--out", str(tmp_path / "x.json"), "--independence", "external"])
     assert exit_info.value.code == 2
+
+
+def test_paths_are_printed_in_full_and_no_browser_opens_without_a_person(tmp_path, monkeypatch, capsys):
+    import webbrowser
+
+    from promptproof.cli import open_for_a_person
+
+    opened = []
+    monkeypatch.setattr(webbrowser, "open", lambda url: opened.append(url) or True)
+    monkeypatch.chdir(tmp_path)
+    assert main(["scan", "--target", "toy:fixed", "--out", "scan.json", "--html", "report.html", "--replays", "1"]) == 0
+    printed = capsys.readouterr().out
+    assert str((tmp_path / "report.html").resolve()) in printed and str((tmp_path / "scan.json").resolve()) in printed
+    assert opened == []  # output is captured here, as it is in a pipeline: nobody is watching
+
+    class Terminal:
+        def isatty(self):
+            return True
+
+    monkeypatch.setattr("sys.stdout", Terminal())
+    monkeypatch.delenv("CI", raising=False)
+    monkeypatch.delenv("PROMPTPROOF_NO_OPEN", raising=False)
+    assert open_for_a_person(tmp_path / "report.html") and opened[0].startswith("file:")
+    assert not open_for_a_person(tmp_path / "report.html", declined=True)
+    monkeypatch.setenv("CI", "true")
+    assert not open_for_a_person(tmp_path / "report.html")

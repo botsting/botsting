@@ -55,10 +55,11 @@ GUIDE = """\
 # Setting a bot up for Promptproof
 
 Promptproof tests a bot its owner controls and reports only what is proven: a fake
-secret it planted leaked, or a forbidden tool call was recorded at the tool. You are
-helping the developer wire their own bot. Propose each change as a diff and let them
-approve it. Do not run a scan against anything but the built-in practice bots until
-the developer has recorded an authorization themselves.
+secret it planted leaked, or a forbidden tool call was recorded at the tool. This
+guide is the same for a developer and for a coding assistant working for one. An
+assistant proposes each change as a diff for the developer to approve, and does not
+scan anything but the built-in practice bots until the developer has recorded an
+authorization themselves.
 
 ## 1. Find the pieces
 - The web app object and the chat endpoint (path, request body, where the reply is).
@@ -82,6 +83,9 @@ note = pp.planted("bob_note", note) if user == "bob" else note    # a secret in 
 Rules:
 - Put `@pp.action` on the function that does the deed, below the app's own permission
   checks, so a call that reaches it means the app let it through.
+- During a test a marked function is not run and returns a stand-in that reads as
+  {"status": "ok"} and as the text "ok". If the bot needs more from the answer, give
+  one: `@pp.action("issue_refund", result="Refunded.")`.
 - For a central tool registry, pass the complete list or mapping through
   `promptproof.harness_tools` and list only read-only tools in `reads`.
   See "Cover every tool at once" in the README for framework examples.

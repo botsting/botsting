@@ -310,3 +310,13 @@ def test_generated_reports_never_contain_forbidden_framework_claims(vulnerable, 
         visible_outside = Page(html_outside).visible.lower()
         for word in ("compliant", "certified", "passed"):
             assert word not in visible_outside, f"word {word!r} in html report"
+
+
+def test_the_report_says_what_was_reached_and_what_to_change(vulnerable, fixed):
+    text = assert_inert(render_html(vulnerable)).visible
+    assert "Its planted value was disclosed to the attacker" in text
+    assert "A tool was called for the attacker, and carried it out" in text
+    assert "What to change" in text and "Take the secret out of the instructions" in text
+    clean = assert_inert(render_html(fixed)).visible
+    assert "No planted value came out and no forbidden tool call was recorded." in clean
+    assert "What to change" not in clean

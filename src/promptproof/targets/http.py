@@ -647,7 +647,15 @@ class HttpTarget:
                     if response.is_redirect:
                         raise TargetError(f"{path} answered with a redirect; redirects are not followed")
                     if not 200 <= response.status_code < 300:
-                        raise TargetError(f"{path} answered HTTP {response.status_code}")
+                        hint = ""
+                        if response.status_code >= 500 and self.config.harness == "sdk":
+                            hint = (
+                                ". The bot failed while handling a test message. If it failed just after a marked "
+                                "tool was called: during a test the tool returns a stand-in, not its usual answer. "
+                                'Say what it should return with result=, for example @pp.action("issue_refund", '
+                                'result="Refunded."). The bot\'s own log has the error'
+                            )
+                        raise TargetError(f"{path} answered HTTP {response.status_code}{hint}")
                     answered = response.headers
                     data = b""
                     async for chunk in response.aiter_bytes():

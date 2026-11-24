@@ -131,17 +131,19 @@ def _scan(args: argparse.Namespace) -> int:
     from promptproof.console import next_steps, use_colour
 
     print(_summary(report))
-    paths = [("Report (JSON)", str(out))]
+    # Full paths: a relative one is wrong as soon as the reader is in another folder.
+    paths = [("Report (JSON)", str(out.resolve()))]
     if args.markdown:
         from promptproof.report_markdown import render_markdown
 
         _write(Path(args.markdown), render_markdown(report, str(out)))
-        paths.append(("Readable report", str(args.markdown)))
+        paths.append(("Readable report", str(Path(args.markdown).resolve())))
     if args.html:
         from promptproof.report_html import render_html
 
         _write(Path(args.html), render_html(report, str(out)))
-        paths.insert(0, ("Report to open in a browser", str(args.html)))
+        paths.insert(0, ("Report to open in a browser", str(Path(args.html).resolve())))
+        open_for_a_person(Path(args.html), getattr(args, "no_open", False))
     replay = replay_command(str(out), report.findings[0].id) if report.findings else ""
     print()
     print(next_steps(report, paths, replay, use_colour()))
@@ -150,6 +152,20 @@ def _scan(args: argparse.Namespace) -> int:
         "no_verified_violations": EXIT_NO_VERIFIED,
         "inconclusive": EXIT_INCONCLUSIVE,
     }[report.status]
+
+
+def open_for_a_person(page: Path, declined: bool = False) -> bool:
+    """Open a report in the browser, but only when someone is sitting at a terminal: never in a
+    pipeline, a test, or when output is piped somewhere."""
+    import os
+    import webbrowser
+
+    if declined or not sys.stdout.isatty() or os.environ.get("CI") or os.environ.get("PROMPTPROOF_NO_OPEN"):
+        return False
+    try:
+        return webbrowser.open(page.resolve().as_uri())
+    except Exception:  # noqa: BLE001 - no browser is not a reason to fail a scan
+        return False
 
 
 def _scan_or_first_scan(args: argparse.Namespace) -> int:
@@ -345,6 +361,7 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--out", default="reports/scan.promptproof.json", help="where to write the JSON report")
     scan.add_argument("--markdown", help="also write a readable report to this path")
     scan.add_argument("--html", help="also write a self-contained report to open in a browser or print")
+    scan.add_argument("--no-open", action="store_true", help="do not open the browser report when the scan ends")
     scan.set_defaults(handler=_scan_or_first_scan)
 
     rep = commands.add_parser("replay", help="replay a finding from a reset state with fresh canaries")

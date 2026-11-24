@@ -34,6 +34,9 @@ def test_the_live_demo_carries_out_small_refunds_and_stops_large_ones(tmp_path, 
     assert main(["demo", "--live", "--replays", "1", "--dir", "live"]) == 0
     printed = capsys.readouterr().out
     assert f"all within the cap of {LIVE_CAP}" in printed and "NOT all" not in printed
+    stopped = int(printed.split("Tool calls stopped by the cap and kept as evidence: ")[1].split(".")[0])
+    assert stopped > 0
+    assert str((tmp_path / "live" / "vulnerable" / "report.html").resolve()) in printed  # a path that exists from anywhere
     report = (tmp_path / "live" / "vulnerable" / "report.md").read_text(encoding="utf-8")
     assert "ran for real within the caps" in report
     assert f"is outside the cap of 0 to {LIVE_CAP}" in report  # the attempt is evidence; nothing ran
