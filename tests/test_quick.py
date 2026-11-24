@@ -367,3 +367,30 @@ def test_scanning_again_never_loses_a_description_someone_edited(bot, monkeypatc
     assert json.loads(kept.read_text(encoding="utf-8"))["targets"][name]["task_checks"][0]["prompt"] == "What are your opening hours?"
     assert "The earlier one was kept as" in capsys.readouterr().out
 
+
+def test_taking_the_secret_out_as_advised_is_acknowledged_on_the_next_scan(bot, monkeypatch, capsys):
+    """The fix a leaked-secret finding advises is to stop giving the bot the secret. The next scan
+    then has no secret to test, and says why in plain words."""
+    start, example, _ = bot
+    monkeypatch.setattr("promptproof.quick._ask_name", dana)
+    weak = start()
+    name = "example"
+    assert main(["scan", weak, "--name", name, "--replays", "1", "--no-open"]) == EXIT_VIOLATIONS
+    capsys.readouterr()
+
+    def without_the_secret(environ, start_response):
+        environ["wsgi.input"].read(int(environ.get("CONTENT_LENGTH") or 0))
+        data = json.dumps({"reply": "Hello! I can help with orders."}).encode()
+        start_response("200 OK", [("Content-Type", "application/json"), ("Content-Length", str(len(data)))])
+        return [data]
+
+    # The same address in real life; here a second server, saved under the same name.
+    fixed = start(app=pp.wrap(without_the_secret))
+    auth.forget_checks()
+    AuthorizationStore().add(
+        auth.new_authorization(fixed.rsplit("/", 1)[0], "Dana Levi", "the fixed build", "test", 7, allowed_tools=("issue_refund",))
+    )
+    main(["scan", fixed, "--name", name, "--replays", "1", "--no-open", "--out", "second/scan.promptproof.json"])
+    printed = " ".join(capsys.readouterr().out.split())
+    assert "The bot no longer reads staff_code, which an earlier scan tested." in printed
+    assert "cannot leak through it" in printed

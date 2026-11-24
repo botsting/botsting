@@ -125,9 +125,9 @@ def test_errors_are_shown_where_the_person_is_looking(reports):
 
     hint = '/chat answered HTTP 500. Say what it should return with result=, for example @pp.action("issue_refund", result="Refunded.")'
     errors = (
-        ErrorRecord("discovery", "a1", hint),
-        ErrorRecord("discovery", "a2", hint),
-        ErrorRecord("reproduction", "a1", hint),
+        ErrorRecord("discovery", "a1", hint + " (after 0 of 1 replies)"),
+        ErrorRecord("discovery", "a2", hint + " (after 1 of 2 replies)"),
+        ErrorRecord("reproduction", "a1", hint + " (after 3 replies)"),
         ErrorRecord("preflight", None, "the bot did not answer"),
     )
     text = render(dataclasses.replace(reports[1], errors=errors, status="inconclusive"))

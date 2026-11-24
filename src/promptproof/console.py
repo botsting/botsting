@@ -149,6 +149,7 @@ def _exchange(finding: Finding) -> list[str]:
 
 
 _ERRORS_SHOWN = 3
+_AFTER = re.compile(r" \(after \d+(?: of \d+)? repl(?:y|ies)\)$")
 
 
 def _errors(report: ScanReport, paint: _Paint) -> list[str]:
@@ -159,7 +160,8 @@ def _errors(report: ScanReport, paint: _Paint) -> list[str]:
         return []
     seen: dict[str, list[str]] = {}
     for error in report.errors:
-        seen.setdefault(error.message, []).append(error.phase)
+        # The same failure at a different point in a conversation is the same thing to fix.
+        seen.setdefault(_AFTER.sub("", error.message), []).append(error.phase)
     lines = ["  " + paint.unsure("Errors")]
     for message, phases in list(seen.items())[:_ERRORS_SHOWN]:
         times = "once" if len(phases) == 1 else f"{len(phases)} times"

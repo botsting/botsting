@@ -144,6 +144,7 @@ def _ask_name(origin: str) -> str:
     try:
         return input("Your name: ").strip()
     except (EOFError, KeyboardInterrupt):
+        print()  # nobody is there to type: end the prompt's line before what is said next
         return ""
 
 
@@ -328,6 +329,18 @@ def discover(
     return name, description, notes
 
 
+def _no_longer_read(path: Path, name: str, description: dict[str, Any]) -> list[str]:
+    """Secrets the saved description of `name` had and the bot's code no longer asks for: what a
+    person sees after taking a secret out of the instructions, which is the fix a finding advises."""
+    try:
+        earlier = json.loads(path.read_text(encoding="utf-8")).get("targets", {}).get(name) or {}
+        before = [slot["id"] for slot in earlier.get("slots", [])]
+    except (OSError, ValueError, AttributeError, KeyError, TypeError):
+        return []
+    now = {slot["id"] for slot in description.get("slots", [])}
+    return [slot for slot in before if slot not in now]
+
+
 def _keep_earlier(path: Path, name: str, description: dict[str, Any]) -> Path | None:
     """If the targets file already describes `name` differently, save that description beside it.
 
@@ -366,6 +379,12 @@ def run(args: Any) -> int:
         print(f"Not scanned: {error}")
         return EXIT_INCONCLUSIVE
     path: Path = targets_file()
+    gone = _no_longer_read(path, name, description)
+    if gone:
+        say(
+            f"The bot no longer reads {', '.join(gone)}, which an earlier scan tested. A secret the bot is never "
+            "given cannot leak through it, so there is nothing left to test for it."
+        )
     kept = _keep_earlier(path, name, description)
     if kept is not None:
         say(

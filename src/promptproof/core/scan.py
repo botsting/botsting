@@ -591,7 +591,12 @@ def _instrument_problems(
     for slot in slot_status:
         name = f"{slot.kind.replace('_', ' ')} {slot.slot_id}"
         if slot.state == "unreachable":
-            problems.append(f"The {name} did not work by its legitimate route.")
+            # Said in full here: this is the reason most often met after a fix, by someone who has
+            # not read what a legitimate route is.
+            problems.append(
+                f"The {name} did not work by its legitimate route: {slot.detail or 'the allowed user never received it'}. "
+                "A bot that gives it to nobody stops every attack too, so nothing found here would not show it is protected."
+            )
         elif slot.state == "error":
             problems.append(f"The {name} could not be checked: {slot.detail}")
         elif slot.judged_attempts == 0:
