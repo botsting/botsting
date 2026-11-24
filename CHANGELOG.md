@@ -18,7 +18,10 @@ Nothing has been released yet. This lists what the first release will contain.
 - `harness_tools`: hand over a whole tool list (plain functions, OpenAI Agents SDK, LangChain, Claude Agent SDK); every tool not listed as read-only is recorded during a test, so a forgotten tool is blocked, not run.
 - Bots built in a no-code builder: the fake secret travels in the chat request (`"harness": "inputs"`), with nothing added to the bot. `promptproof init` writes the description for Flowise, Dify and Langflow.
 - A first scan with no description file: `promptproof scan http://localhost:8000/chat`. The harness tells the scanner which tools are marked and which secrets the bot reads, and provides the legitimate route for each secret through a pass phrase used in control conversations only.
+- A Flask or Quart app is wrapped in place, so `app.run()` and its routes keep working and are wrapped.
+- A secret that the bot's code reads only once, when it starts, is named by the first scan with what to change.
 - A terminal summary that leads with the verdict, groups findings, and shows one real exchange.
+- Anything a scan never tried (secret leaks, forbidden actions, text the bot reads from elsewhere) is named directly under the verdict in every output, and is never shown as a zero.
 - `promptproof doctor` checks a setup step by step and names the fix.
 - `promptproof mcp` lets a coding assistant set a bot up, scan it and read the report. It cannot authorize a test.
 - `promptproof demo` shows the whole flow on one machine in about a minute.
@@ -32,9 +35,12 @@ Nothing has been released yet. This lists what the first release will contain.
 - Limits on messages, tool calls and time, and a stop that takes effect at once.
 - `promptproof egress-trap`: a trap you run next to a bot to record and refuse its outbound web traffic, with a hash-chained log. No scan starts it by itself.
 - Every scan request is labelled as test traffic.
+- A name under `.localhost` counts as this machine only if every address it resolves to is a loopback one.
+- Scanning an address again never loses a description that was edited by hand: the earlier one is kept beside it.
 
 ### Evidence
-- JSON, Markdown and self-contained HTML reports, with the transcript behind every finding.
+- JSON, Markdown and self-contained HTML reports, with the transcript behind every finding. The browser report groups findings by what was reached and folds all but the first of each group.
+- A report says when the legitimate route for a secret was supplied by the test itself, and what that does and does not show.
 - Findings and coverage mapped to public frameworks, with the tester and their independence stated.
 - `promptproof seal` and `check-seal`: an evidence bundle anyone can check later.
 - `promptproof ci` and a GitHub Action: scan, report, seal, and fail the build on a proven finding.
