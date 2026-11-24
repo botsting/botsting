@@ -45,6 +45,13 @@ const changes = {
   "live as text": (b) => Object.assign(b, { live: "issue_refund", run: "r" }),
   "live holding a number": (b) => Object.assign(b, { live: [1], run: "r" }),
   "run as a number": (b) => Object.assign(b, { live: ["issue_refund"], run: 7 }),
+  "control as a list of pairs": (b) => (b.control = [["admin_code", "x"]]),
+  "control as null": (b) => (b.control = null),
+  "a pass phrase that is a number": (b) => (b.control = { admin_code: 5 }),
+  "a pass phrase that is null": (b) => (b.control = { admin_code: null }),
+  "discover as 1": (b) => (b.discover = 1),
+  "discover as text": (b) => (b.discover = "true"),
+  "discover as null": (b) => (b.discover = null),
 };
 
 for (const [name, change] of Object.entries(changes)) {
@@ -55,6 +62,31 @@ for (const [name, change] of Object.entries(changes)) {
   });
 }
 
+// JSON.stringify cannot write 1.0 where it means 1, so numbers Python would read as
+// floats are signed by hand. Every field of a token is an int or text, so a float
+// literal anywhere means Python's strict reading refuses the token.
+const EXP = Math.floor(Date.now() / 1000) + 300;
+const rawBody = (exp, v) => `{"content":{},"exp":${exp},"fixtures":{},"n":"","sid":"s1","v":${v}}`;
+const floatBodies = [
+  ["v as the literal 1.0", rawBody(EXP, "1.0")],
+  ["exp as a future float", rawBody("2000000000.0", 1)],
+  ["exp in exponent form", rawBody("2e9", 1)],
+  ["a fixture value as a float", `{"content":{},"exp":${EXP},"fixtures":{"a":1.5},"n":"","sid":"s1","v":1}`],
+  ["a pass phrase as a float", `{"content":{},"control":{"a":1.5},"exp":${EXP},"fixtures":{},"n":"","sid":"s1","v":1}`],
+  ["discover as 0.0", `{"content":{},"discover":0.0,"exp":${EXP},"fixtures":{},"n":"","sid":"s1","v":1}`],
+];
+for (const [name, json] of floatBodies) {
+  test(`a signed token with ${name} is refused`, () => {
+    const payload = Buffer.from(json).toString("base64url");
+    assert.equal(open(payload + "." + pp.mac(KEY, DOMAIN, [payload])), null);
+  });
+}
+test("text that looks like a number is still text", () => {
+  const json = `{"content":{},"exp":${EXP},"fixtures":{"a":"1.5"},"n":"","sid":"s1.5","v":1}`;
+  const payload = Buffer.from(json).toString("base64url");
+  assert.notEqual(open(payload + "." + pp.mac(KEY, DOMAIN, [payload])), null);
+});
+
 function signedRecord(record) {
   const json = typeof record === "string" ? record : JSON.stringify(record);
   const payload = Buffer.from(json).toString("base64url");
@@ -63,12 +95,13 @@ function signedRecord(record) {
 
 test("a signed record can include name lists or omit them", () => {
   const old = signedRecord({ calls: [], dropped: 0 });
-  assert.deepEqual(pp.readRecord(KEY, "s1", old, "n1"), { calls: [], read: [], tools: [] });
-  const current = signedRecord({ calls: [], dropped: 0, read: ["sample"], tools: ["example"] });
+  assert.deepEqual(pp.readRecord(KEY, "s1", old, "n1"), { calls: [], read: [], tools: [], rules: {} });
+  const current = signedRecord({ calls: [], dropped: 0, read: ["sample"], tools: ["example"], rules: { example: "an ask" } });
   assert.deepEqual(pp.readRecord(KEY, "s1", current, "n1"), {
     calls: [],
     read: ["sample"],
     tools: ["example"],
+    rules: { example: "an ask" },
   });
   assert.throws(() => pp.readRecord(KEY, "s1", current, "n2"), /not signed/);
 });
@@ -94,6 +127,7 @@ test("signed records with malformed name lists or drop counts are rejected", () 
     calls: [{ dropped: 0 }],
     read: ["1e10"],
     tools: [],
+    rules: {},
   });
   const dropped = signedRecord({ calls: [], dropped: 1 });
   assert.throws(() => pp.readRecord(KEY, "s1", dropped, "n1"), /1 were not recorded/);

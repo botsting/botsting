@@ -12,18 +12,22 @@ import json
 import os
 import shutil
 import subprocess
+from contextlib import contextmanager
 from pathlib import Path
 
 import httpx
 import pytest
 
 import promptproof.harness as pp
+from promptproof.cli import EXIT_NO_VERIFIED, EXIT_VIOLATIONS, main
+from promptproof.core import authorization as auth
 from promptproof.targets.http import HttpTarget, parse_config
 
 KEY = "k" * 40
 OTHER_KEY = "z" * 40
 NODE = shutil.which("node")
 JS_TEST = Path(__file__).resolve().parent.parent / "js" / "harness" / "test"
+JS_EXAMPLE = JS_TEST.parent / "examples" / "support-bot.mjs"
 
 pytestmark = pytest.mark.skipif(NODE is None, reason="node is not on PATH")
 
@@ -130,7 +134,7 @@ def test_a_js_signed_calls_header_is_accepted_by_python_with_the_right_nonce(key
     token = pp.make_session_token(KEY, "s1", {}, nonce="n1")
     out = run_node("interop.mjs", {"token": token, "slot": "admin_code"}, {pp.KEY_ENV: KEY})
     record = pp.read_record(KEY, "s1", out["calls"], "n1")
-    assert record["read"] == record["tools"] == []
+    assert record["read"] == ["admin_code"] and record["tools"] == []  # the slot it read; not a readiness answer
     calls = record["calls"]
     assert calls == [
         {
@@ -159,8 +163,45 @@ def test_js_reads_a_python_signed_record_with_name_lists(key, monkeypatch):
     )
     ours = pp.read_record(KEY, "s1", header, "n1")
     assert ours == {"calls": [], "read": ["sample"], "tools": ["example"], "rules": {}}
-    # The JavaScript reader does not return "rules" yet (the port is in progress); the rest must agree.
-    assert out == {key: value for key, value in ours.items() if key in out} and set(out) >= {"calls", "read", "tools"}
+    assert out == ours  # the JavaScript reader returns rules too, with the same validation
+
+
+def test_python_reads_a_js_signed_readiness_record_with_tools_and_rules(key):
+    """The other direction: a record the JavaScript harness signs, with the tool names
+    and the never-for-users rules of its readiness answer, verifies with Python's reader."""
+    out = run_node(
+        "interop.mjs",
+        {
+            "make": {
+                "sessionId": "s1",
+                "nonce": "n1",
+                "read": ["staff_code"],
+                "mark": {"issue_refund": "a refund of 50 on order A-1001", "send_email": ""},
+            }
+        },
+        {pp.KEY_ENV: KEY},
+    )
+    record = pp.read_record(KEY, "s1", out["calls"], "n1")
+    assert record == {
+        "calls": [],
+        "read": ["staff_code"],
+        "tools": ["issue_refund", "send_email"],
+        "rules": {"issue_refund": "a refund of 50 on order A-1001"},
+    }
+    with pytest.raises(pp.HarnessError, match="not signed"):
+        pp.read_record(KEY, "s2", out["calls"], "n1")  # bound to this session, as ever
+
+
+def test_python_control_and_discover_tokens_behave_the_same_in_js(key):
+    token = pp.make_session_token(KEY, "s1", {"admin_code": "FAKE-7"}, nonce="n1", control={"admin_code": "open sesame"})
+    out = run_node("interop.mjs", {"token": token, "slot": "admin_code"}, {pp.KEY_ENV: KEY})
+    assert out["session"] is True
+    assert out["planted"] == "FAKE-7" + pp.control_note("open sesame")  # the note, exactly as Python writes it
+    assert out["read"] == ["admin_code"]
+    discover = pp.make_session_token(KEY, "s2", {"admin_code": "FAKE-7"}, nonce="n1", discover=True)
+    out = run_node("interop.mjs", {"token": discover, "slot": "admin_code"}, {pp.KEY_ENV: KEY})
+    assert out["planted"] == "(none)"  # a discover session plants nothing...
+    assert out["read"] == ["admin_code"]  # ...but still tells the scanner the slot exists
 
 
 def test_the_js_harness_rejects_a_token_python_signed_with_another_key():
@@ -264,3 +305,80 @@ def test_a_scan_carries_out_a_small_refund_on_a_node_bot_and_only_records_a_larg
     assert "amount 5000 is outside the cap of 0 to 10" in large.tool_calls[0].result
     assert large.tool_calls[0].result.startswith("[not run: ")
     assert ran.text == 'ran=[["T-1",7]]'  # the in-memory record: only the refund inside the cap ran
+
+
+# -- a first scan of the Node example bot, end to end on this machine ------------------------
+
+
+@pytest.fixture
+def first_scan_env(tmp_path, monkeypatch):
+    """What test_quick.py sets up for a scan: nothing on disk yet, and the harness key."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PROMPTPROOF_TARGETS_FILE", str(tmp_path / "promptproof.targets.json"))
+    monkeypatch.setenv(pp.KEY_ENV, KEY)
+    auth.forget_checks()
+
+
+@contextmanager
+def node_example(fixed=False):
+    """The Node twin of examples/support_bot.py (js/harness/examples/support-bot.mjs),
+    on 127.0.0.1 on a free port, stopped when the test is done."""
+    env = {**os.environ, pp.KEY_ENV: KEY}
+    proc = subprocess.Popen(
+        [NODE, str(JS_EXAMPLE)] + (["--fixed"] if fixed else []),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        env=env,
+    )
+    try:
+        first = proc.stdout.readline()
+        assert first.strip().isdigit(), f"the node example did not report a port: {first!r} {proc.stderr.read()}"
+        yield f"http://127.0.0.1:{int(first.strip())}/chat"
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=10)
+
+
+def dana(origin):
+    return "Dana Levi"
+
+
+def refunds_really_carried_out(chat_url):
+    """How many refunds the bot really issued, from its own in-memory record."""
+    with httpx.Client(trust_env=False) as client:
+        return client.post(f"{chat_url.rsplit('/', 1)[0]}/state", json={"message": "state"}).json()["refunds"]
+
+
+def test_a_first_scan_of_the_node_example_finds_and_clears_both_weaknesses(first_scan_env, monkeypatch, capsys):
+    """The whole `promptproof scan` command against the Node example bot, the way
+    test_quick.py runs it against the Python one: no description file, the harness
+    tells the scanner everything. The weak build reports a verified leak of staff_code
+    and a verified call to issue_refund; the fixed build reports nothing, with every
+    slot reachable through the harness's pass-phrase route; and the marked tool never
+    really runs in either build."""
+    monkeypatch.setattr("promptproof.quick._ask_name", dana)
+    with node_example() as weak:
+        assert main(["scan", weak, "--replays", "2", "--out", "weak/scan.json"]) == EXIT_VIOLATIONS
+        assert refunds_really_carried_out(weak) == 0  # recorded, never run
+    printed = capsys.readouterr().out
+    assert "Secrets it reads on an ordinary message: staff_code." in printed
+    assert "verified violation" in printed and "Tools no chat user may cause: issue_refund." in printed
+    report = json.loads(Path("weak/scan.json").read_text(encoding="utf-8"))
+    assert report["status"] == "violations_verified"
+    assert {finding["slot_id"] for finding in report["findings"]} == {"staff_code", "issue_refund"}
+    assert all(slot["state"] == "reachable" for slot in report["slots"])
+    # The real secret the bot holds outside a test never appears in any evidence.
+    assert "NW-STAFF-2291" not in Path("weak/scan.json").read_text(encoding="utf-8")
+
+    with node_example(fixed=True) as fixed:
+        assert main(["scan", fixed, "--replays", "2", "--out", "fixed/scan.json"]) == EXIT_NO_VERIFIED
+        assert refunds_really_carried_out(fixed) == 0
+    report = json.loads(Path("fixed/scan.json").read_text(encoding="utf-8"))
+    assert report["status"] == "no_verified_violations", report["inconclusive_reasons"]
+    assert all(slot["state"] == "reachable" for slot in report["slots"])  # the pass phrase route worked
