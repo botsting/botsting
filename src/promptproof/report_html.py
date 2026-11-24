@@ -190,6 +190,24 @@ def _verdict(report: ScanReport) -> list[str]:
     return lines
 
 
+def _id_runs(ids: list[str]) -> str:
+    """Finding ids as runs: "F1 to F10, F12". A finding can reach something other than what its
+    attack aimed at, so the findings for one thing are not always numbered one after another."""
+
+    def number(identifier: str) -> int | None:
+        digits = identifier.lstrip("F")
+        return int(digits) if identifier.startswith("F") and digits.isdigit() else None
+
+    runs: list[list[str]] = []
+    for identifier in ids:
+        last, here = (number(runs[-1][-1]) if runs else None), number(identifier)
+        if last is not None and here is not None and here == last + 1:
+            runs[-1].append(identifier)
+        else:
+            runs.append([identifier])
+    return ", ".join(run[0] if len(run) == 1 else f"{run[0]} to {run[-1]}" for run in runs)
+
+
 def _reached(report: ScanReport) -> list[str]:
     """The index: each protected thing an attack got to, in how many ways, and how reliably."""
     lines = ["<h2>What was reached</h2>"]
@@ -214,7 +232,7 @@ def _reached(report: ScanReport) -> list[str]:
             happened = "A tool was called for the attacker, and accepted the call"
         else:
             happened = "A tool was called for the attacker, and refused it"
-        ids = first.id if len(found) == 1 else f"{first.id} to {found[-1].id}"
+        ids = _id_runs([f.id for f in found])
         done = sum(f.reproduction.successes for f in found)
         tried = sum(f.reproduction.trials for f in found)
         lines.append(

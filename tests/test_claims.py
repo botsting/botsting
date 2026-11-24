@@ -23,10 +23,26 @@ SOURCE = Path(pp.__file__).parent
 
 def test_nothing_leaves_the_machine_during_a_scan(tmp_path, monkeypatch, capsys):
     """never-do 10: no connection except to the bot named and the model chosen. Here both are on this
-    machine, so every name looked up and every address connected to must be this machine."""
+    machine, so every name looked up and every address connected to must be this machine.
+
+    What is watched: the name lookups and connections this process makes through Python's socket
+    layer (`getaddrinfo`, `connect`, `connect_ex`), and any other program it starts, of which there
+    must be none. A connection made by native code that bypasses that layer would not be seen."""
+    import subprocess
+
     looked_up: list[str] = []
     connected: list[str] = []
-    real_lookup, real_connect = socket.getaddrinfo, socket.socket.connect
+    started: list[str] = []
+    real_lookup, real_connect, real_connect_ex = socket.getaddrinfo, socket.socket.connect, socket.socket.connect_ex
+    real_popen = subprocess.Popen.__init__
+
+    def connect_ex(self, address):
+        connected.append(str(address[0]))
+        return real_connect_ex(self, address)
+
+    def popen(self, args, *more, **kwargs):
+        started.append(str(args))
+        return real_popen(self, args, *more, **kwargs)
 
     def lookup(host, *args, **kwargs):
         looked_up.append(str(host))
@@ -38,9 +54,12 @@ def test_nothing_leaves_the_machine_during_a_scan(tmp_path, monkeypatch, capsys)
 
     monkeypatch.setattr(socket, "getaddrinfo", lookup)
     monkeypatch.setattr(socket.socket, "connect", connect)
+    monkeypatch.setattr(socket.socket, "connect_ex", connect_ex)
+    monkeypatch.setattr(subprocess.Popen, "__init__", popen)
     monkeypatch.chdir(tmp_path)
     assert main(["demo", "--live", "--replays", "1", "--no-open"]) == 0
     assert looked_up or connected, "the demo scans over HTTP, so something must have been seen"
+    assert started == [], "a scan starts no other program"
     local = {"127.0.0.1", "localhost", "::1"}
     assert set(looked_up) <= local and set(connected) <= local, (set(looked_up), set(connected))
 
@@ -123,3 +142,12 @@ def test_the_egress_trap_runs_as_a_command_and_closes_its_log(tmp_path, monkeypa
     assert check_chain(lines) == ("intact", True) and lines[0]["allow"] == ["api.example.invalid:443"]
     assert "1 outbound attempt(s) recorded, 1 refused" in capsys.readouterr().out
     assert main(["egress-trap", "--log", str(log), "--allow", "not-a-host-and-port"]) == 2
+
+
+def test_every_report_says_that_an_accepted_call_is_not_proof_of_harm():
+    """A reader must not take "accepted" for "the refund happened", nor a zero for "impossible"."""
+    from promptproof.core.scan import LIMITATIONS
+
+    first = LIMITATIONS[0]
+    assert "attempted and refused by the tool (level 2), or accepted by it (level 3)" in first
+    assert "Whether an accepted call changed anything downstream (level 4) is not checked" in first

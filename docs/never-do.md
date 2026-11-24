@@ -11,7 +11,7 @@ These are properties of the tool, enforced in code and covered by tests. Each li
 7. **It never reports an opinion as a finding.** A finding is a planted secret recovered in full, or a tool call recorded at the tool. Partial matches are shown as suspected and never counted. (`core/matcher.py`, `core/runner.py`)
 8. **It never calls a scan clean when it could not have seen a failure.** If the planted secret cannot be fetched by its legitimate route, or normal use is broken, the result is inconclusive. (`core/runner.py`)
 9. **It never keeps going past its limits.** Messages, tool calls and time are capped, and Ctrl+C stops it. (`core/runner.py`)
-10. **It never sends your reports, transcripts or credentials anywhere.** The open-source tool runs on your machine or your build runner and makes no connection except to the bot you named and the model you chose. A test runs the demo with every outbound connection watched and fails if one leaves the machine. Credentials are read from the environment and never written to a report. (`targets/http.py`)
+10. **It never sends your reports, transcripts or credentials anywhere.** The open-source tool runs on your machine or your build runner and makes no connection except to the bot you named and the model you chose. A test runs the demo with every name lookup and connection of its own process watched, and fails if one leaves the machine or if the scan starts another program. Credentials are read from the environment and never written to a report. (`targets/http.py`)
 11. **It never writes an authorization for you through an assistant.** The assistant integration can read whether one exists; only a person at a terminal can create one. (`mcp_server.py`)
 
 ## What we ask you never to do with it

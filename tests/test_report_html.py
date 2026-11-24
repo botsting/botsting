@@ -321,3 +321,12 @@ def test_the_report_says_what_was_reached_and_what_to_change(vulnerable, fixed):
     clean = assert_inert(render_html(fixed)).visible
     assert "No planted value came out and no forbidden tool call was recorded." in clean
     assert "What to change" not in clean
+
+
+def test_finding_ids_are_shown_as_runs_only_where_the_numbers_run_on():
+    from promptproof.report_html import _id_runs
+
+    assert _id_runs(["F3"]) == "F3"
+    assert _id_runs(["F1", "F2", "F3"]) == "F1 to F3"
+    assert _id_runs(["F1", "F2", "F3", "F4", "F12"]) == "F1 to F4, F12"
+    assert _id_runs(["F11", "F13", "F14"]) == "F11, F13 to F14"
