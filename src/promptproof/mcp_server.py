@@ -8,7 +8,8 @@ assistant (Claude Code, Cursor and others) that is connected to it can:
     check_description      check a target description and say what is wrong with it
     authorization_status   see whether a person has authorized testing an origin
     doctor                 check the whole setup step by step and learn what to fix next
-    scan                   run a scan and get the result and where the reports are
+    first_scan             scan a bot that carries the drop-in harness, from its chat address alone
+    scan                   run a scan of a described target and get the result and where the reports are
     read_report            read a finished report
 
     claude mcp add promptproof -- promptproof mcp
@@ -18,7 +19,9 @@ What it will not do
 It never creates or changes an authorization. Permission to test is a person taking
 responsibility by name, so it is recorded by a person running `promptproof authorize`
 in a terminal. Without one, `scan` is refused for anything but the built-in practice
-bots, exactly as on the command line.
+bots, exactly as on the command line. `first_scan` never asks anyone to type a name,
+as the command does for a bot on the developer's own machine: an assistant is not a
+person at a keyboard, so it sends nothing until that authorization is on record.
 
 It never edits the project. `find_tools` and `check_description` only read; the
 assistant proposes the changes and the developer approves them in their own editor.
@@ -110,7 +113,8 @@ description and prints the one line to add to the bot's instructions. Skip to st
 
 ## 2b. The first scan needs no description
 Once the lines above are in and the bot is running with the harness key set, the
-developer runs `promptproof scan http://localhost:8000/chat` (their chat address). It
+developer runs `promptproof scan http://localhost:8000/chat` (their chat address); an
+assistant calls `first_scan` with that address, after the developer has authorized it. It
 works out the request shape and the secrets the bot reads, asks the developer to type
 their name to authorize a bot on their own machine, and saves the description it
 worked out, under a name it prints (`http:quick-localhost-8000`). Where nobody can type
@@ -351,6 +355,44 @@ def _doctor(root: Path, arguments: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _first_scan(root: Path, arguments: dict[str, Any]) -> str:
+    """`promptproof scan URL` for an assistant: work the description out from the harness, save it, scan."""
+    from promptproof.practice_server import write_description
+    from promptproof.quick import QuickError, _keep_earlier, discover
+    from promptproof.targets.http import targets_file
+
+    url = str(arguments.get("url", ""))
+    if not url:
+        raise ToolError("give the bot's chat address, for example http://localhost:8000/chat")
+    directory = str(arguments.get("dir", "promptproof-report"))
+    _inside(root, directory)
+    path = targets_file()
+    if not path.resolve().is_relative_to(root.resolve()):
+        raise ToolError("the targets file is outside the project folder; this server reads and writes only inside it")
+
+    def given(key: str) -> str | None:
+        return str(arguments[key]) if arguments.get(key) not in (None, "") else None
+
+    said: list[str] = []
+    try:
+        # Nobody is asked to type a name here: an authorization is a person's act, made in their own terminal.
+        name, description, notes = discover(
+            url, given("name"), given("field"), given("session_field"), given("reply"), ask_name=lambda origin: "", say=said.append
+        )
+    except QuickError as error:
+        raise ToolError("\n".join([*said, f"Not scanned: {error}"])) from error
+    kept = _keep_earlier(path, name, description)
+    if kept is not None:
+        said.append(f"The description saved earlier as http:{name} differed; it was kept as {kept.name}.")
+    write_description(path, name, description)
+    said.append(f"Saved what was worked out as target http:{name} in {path.name}.")
+    result = _scan(root, {**{k: v for k, v in arguments.items() if k in _SCAN_OPTIONS}, "target": f"http:{name}", "dir": directory})
+    return "\n".join([*said, "", result, *(["", *notes] if notes else [])])
+
+
+_SCAN_OPTIONS = ("strategy", "replays", "max_seconds", "max_messages")
+
+
 def _scan(root: Path, arguments: dict[str, Any]) -> str:
     from promptproof.cli import main
 
@@ -430,6 +472,28 @@ TOOLS: dict[str, tuple[str, dict[str, Any], Callable[[Path, dict[str, Any]], str
             ["target"],
         ),
         _doctor,
+    ),
+    "first_scan": (
+        "Scan the developer's own bot from its chat address alone, once the drop-in harness lines are in the bot and it "
+        "is running with the harness key set. Works out the request shape, the secrets the bot reads and the tools "
+        "marked never_for_users, saves that as a target, scans, and writes the reports. Refused, with the command the "
+        "developer must run themselves, until a person has recorded an authorization for that address.",
+        _text_schema(
+            {
+                "url": {"type": "string", "description": "The chat address, for example http://localhost:8000/chat"},
+                "dir": {"type": "string", "description": "A new or empty folder for the reports. Default: promptproof-report"},
+                "name": {"type": "string", "description": "The name to save the description under. Default: made from the address"},
+                "field": {"type": "string", "description": "The request field that carries the message, if it is not found"},
+                "session_field": {"type": "string", "description": "A request field for the conversation id, if the bot has one"},
+                "reply": {"type": "string", "description": "A JSON pointer to the reply text, such as /data/answer"},
+                "strategy": {"type": "string", "enum": ["static", "adaptive", "both"]},
+                "replays": {"type": "integer", "minimum": 1, "maximum": 20},
+                "max_seconds": {"type": "number", "minimum": 1, "maximum": 3600},
+                "max_messages": {"type": "integer", "minimum": 1, "maximum": 5000},
+            },
+            ["url"],
+        ),
+        _first_scan,
     ),
     "scan": (
         "Run a scan and write the reports. Practice bots (toy:vulnerable, toy:fixed) need no permission; any other "

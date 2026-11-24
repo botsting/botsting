@@ -232,3 +232,73 @@ def test_read_report_refuses_a_huge_file(project):
     big.write_bytes(b"x" * (mcp_server._MAX_REPORT_BYTES + 1))
     text, failed = call(project, "read_report", path="huge.md")
     assert failed and "larger than" in text
+
+
+# -- first_scan: the developer's own bot, from its chat address ---------------------------------
+
+
+@pytest.fixture
+def example_bot(project, monkeypatch):
+    """The example bot from examples/, served on a free port, with the harness key set. Returns (url, origin, requests seen)."""
+    import importlib.util
+    import threading
+    from pathlib import Path
+    from wsgiref.simple_server import make_server
+
+    import promptproof.harness as pp
+    from promptproof.core import authorization as auth
+
+    monkeypatch.setenv(pp.KEY_ENV, "k" * 40)
+    monkeypatch.setenv("PROMPTPROOF_TARGETS_FILE", str(project / "promptproof.targets.json"))
+    monkeypatch.setattr(pp, "_marked_tools", {})
+    monkeypatch.setattr(pp, "_read_outside", set())
+    auth.forget_checks()
+    source = Path(__file__).resolve().parents[1] / "examples" / "support_bot.py"
+    spec = importlib.util.spec_from_file_location("support_bot_for_mcp", source)
+    example = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(example)
+    inner, seen = example.make_app(False), []
+
+    def watching(environ, start_response):
+        seen.append(environ["PATH_INFO"])
+        return inner(environ, start_response)
+
+    server = make_server("127.0.0.1", 0, watching, handler_class=example._Quiet)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    origin = f"http://127.0.0.1:{server.server_address[1]}"
+    yield origin + "/chat", origin, seen
+    server.shutdown()
+    server.server_close()
+
+
+def test_first_scan_sends_nothing_and_authorizes_nothing_by_itself(example_bot, project):
+    """On the command line a person at the keyboard may type their name for a bot on their own
+    machine. An assistant is not that person: through this server the same scan is refused."""
+    url, origin, seen = example_bot
+    text, failed = call(project, "first_scan", url=url)
+    assert failed and "no one has authorized" in text and f"promptproof authorize {origin}" in text
+    assert seen == [] and AuthorizationStore().find(origin) is None
+
+
+def test_first_scan_works_the_bot_out_and_scans_it_once_a_person_has_authorized(example_bot, project):
+    url, origin, seen = example_bot
+    AuthorizationStore().add(
+        new_authorization(origin, "Dana Levi", "the example bot", "test", 7, datetime.now(UTC), allowed_tools=("issue_refund",))
+    )
+    text, failed = call(project, "first_scan", url=url, replays=1)
+    assert not failed, text
+    assert "Secrets it reads on an ordinary message: staff_code." in text
+    assert "Saved what was worked out as target http:quick-127-0-0-1-" in text
+    assert "verified violation" in text and "Reports are in promptproof-report/" in text
+    report, failed = call(project, "read_report")
+    assert not failed and "verified violations found" in report
+    saved = json.loads((project / "promptproof.targets.json").read_text(encoding="utf-8"))["targets"]
+    (name,) = saved
+    assert saved[name]["harness"] == "sdk" and [rule["tool"] for rule in saved[name]["tool_rules"]] == ["issue_refund"]
+
+
+def test_first_scan_stays_inside_the_project(example_bot, project):
+    url, origin, seen = example_bot
+    text, failed = call(project, "first_scan", url=url, dir="../elsewhere")
+    assert failed and "outside the project folder" in text and seen == []
+

@@ -1,0 +1,17 @@
+{
+  "name": "promptproof",
+  "version": "0.0.1",
+  "description": "Test your own AI bot or agent for prompt injection: plants fake secrets, records risky tool calls without running them, and reports only what it can prove. Runs on your machine.",
+  "author": { "name": "Promptproof contributors" },
+  "license": "Apache-2.0",
+  "keywords": [
+    "prompt injection",
+    "ai red teaming",
+    "agent security testing",
+    "llm security",
+    "system prompt leak",
+    "tool misuse",
+    "chatbot security test",
+    "jailbreak test"
+  ]
+}

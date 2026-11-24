@@ -358,9 +358,11 @@ Promptproof can be connected to a coding assistant (Claude Code, Cursor and othe
 claude mcp add promptproof -- promptproof mcp
 ```
 
-Then ask the assistant to "set up Promptproof for this bot". It can read the setup guide, list functions that look like risky tools, check the target description, run a scan and read the report back to you, proposing each code change for you to approve.
+Then ask the assistant to "set up Promptproof for this bot". It can read the setup guide, list functions that look like risky tools, propose the lines to add (each change is yours to approve), check the setup, scan the bot from its chat address and read the report back to you.
 
-It cannot authorize a test. Permission is a person taking responsibility by name, so you run `promptproof authorize` yourself; without it, the assistant can only scan the built-in practice bots. It reads and writes only inside the folder it was started in. `promptproof guide` prints the same setup guide for people.
+For Claude Code there is also a plugin in `integrations/claude-code`: the same connection plus a skill that tells the assistant the steps and the rules, so "test my bot for prompt injection" is enough. From a checkout: `claude --plugin-dir integrations/claude-code`.
+
+It cannot authorize a test. Permission is a person taking responsibility by name, so you run `promptproof authorize` yourself, also for a bot on your own machine: the assistant is never asked to type a name for you. Without an authorization it can only scan the built-in practice bots. It reads and writes only inside the folder it was started in. `promptproof guide` prints the same setup guide for people.
 
 ## Check a test deployment is not wired to production
 

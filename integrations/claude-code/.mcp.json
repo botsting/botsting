@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "promptproof": {
+      "command": "promptproof",
+      "args": ["mcp"]
+    }
+  }
+}

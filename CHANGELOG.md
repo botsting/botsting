@@ -23,7 +23,8 @@ Nothing has been released yet. This lists what the first release will contain.
 - A terminal summary that leads with the verdict, groups findings, and shows one real exchange.
 - Anything a scan never tried (secret leaks, forbidden actions, text the bot reads from elsewhere) is named directly under the verdict in every output, and is never shown as a zero.
 - `promptproof doctor` checks a setup step by step and names the fix.
-- `promptproof mcp` lets a coding assistant set a bot up, scan it and read the report. It cannot authorize a test.
+- `promptproof mcp` lets a coding assistant set a bot up, scan it and read the report. It cannot authorize a test. Its `first_scan` tool scans a bot from its chat address alone, once a person has authorized that address.
+- A Claude Code plugin in `integrations/claude-code`: that connection and one skill.
 - `promptproof demo` shows the whole flow on one machine in about a minute.
 
 ### Doing no harm

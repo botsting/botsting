@@ -327,7 +327,7 @@ def node_example(fixed=False):
     on 127.0.0.1 on a free port, stopped when the test is done."""
     env = {**os.environ, pp.KEY_ENV: KEY}
     proc = subprocess.Popen(
-        [NODE, str(JS_EXAMPLE)] + (["--fixed"] if fixed else []),
+        [NODE, str(JS_EXAMPLE), "--port", "0"] + (["--fixed"] if fixed else []),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
