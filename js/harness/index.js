@@ -73,7 +73,15 @@ export const RUN_MEMORY_SECONDS = 24 * 3600; // far longer than any scan; a run'
 
 const SESSION_DOMAIN = Buffer.from("promptproof-session/1\n");
 const CALLS_DOMAIN = Buffer.from("promptproof-calls/1\n");
-const DEFAULT_RESULT = { status: "ok" };
+// What a wrapped tool returns during a test when no `result` was given. The real function is not
+// run, so its own answer does not exist. A bot usually looks a key up in a tool's answer or puts it
+// into a sentence: this reads as { status: "ok" } and, in a string, as "ok", so both keep working.
+// (The Python harness does the same.) For anything else, say what the tool should answer during a
+// test with the `result` option.
+function standInResult() {
+  return Object.defineProperty({ status: "ok" }, "toString", { value: () => "ok", enumerable: false });
+}
+const DEFAULT_RESULT = standInResult();
 const READY = Buffer.from("promptproof harness ready\n");
 const REFUSED = Buffer.from(
   "promptproof: this request carries a test session that is not valid here, so it was not run\n"
@@ -883,7 +891,9 @@ export function action(tool, fn, options = {}) {
   }
 
   function standIn(session, callArguments, whyNot) {
-    const outcome = typeof resultOption === "function" ? resultOption(callArguments) : resultOption;
+    let outcome;
+    if (resultOption === DEFAULT_RESULT) outcome = standInResult(); // a fresh one each time: the bot may change it
+    else outcome = typeof resultOption === "function" ? resultOption(callArguments) : resultOption;
     record(session, callArguments, outcome, whyNot ? `not run: ${whyNot}` : "", whyNot ? "capped" : "");
     return outcome;
   }

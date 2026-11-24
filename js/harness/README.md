@@ -26,7 +26,14 @@ where you run the scan (the Python CLI can make one, or use Node):
 node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
 ```
 
-Never set the key in production.
+Set the key on the deployment under test: staging or a test copy, or the real deployment if you
+mean to test the real system (see "Testing the real system" in the main README). A deployment
+without the key refuses every test message.
+
+During a test a wrapped tool is not run, so it cannot return its usual answer. Unless you give a
+`result` option, it returns a stand-in that reads as `{ status: "ok" }` and, in a string, as `"ok"`.
+If your bot needs more from a tool's answer, say what the tool should return during a test:
+`pp.action("issue_refund", fn, { result: "Refunded." })`.
 
 ## The three adapters
 

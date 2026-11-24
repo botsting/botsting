@@ -132,3 +132,25 @@ test("signed records with malformed name lists or drop counts are rejected", () 
   const dropped = signedRecord({ calls: [], dropped: 1 });
   assert.throws(() => pp.readRecord(KEY, "s1", dropped, "n1"), /1 were not recorded/);
 });
+
+test("the stand-in reads as an object and as text, so the bot keeps working", () => {
+  const refund = pp.action("issue_refund_plain", (orderId, amount) => `Refunded ${amount} on ${orderId}.`);
+  const before = process.env[pp.KEY_ENV];
+  process.env[pp.KEY_ENV] = KEY;
+  try {
+    const session = pp.openSession(signed(honest()));
+    const [first, second] = session.run(() => [refund("A-1", 5), refund("A-2", 5)]);
+    assert.equal("Done. " + first, "Done. ok");
+    assert.equal(`Done. ${first}`, "Done. ok");
+    assert.equal(first.status, "ok");
+    assert.deepEqual(first, { status: "ok" });
+    assert.equal(JSON.stringify(first), '{"status":"ok"}');
+    first.changed = true;
+    assert.equal(second.changed, undefined); // each call gets its own
+    assert.equal(session.calls[0].result, '{"status": "ok"}'); // what the report shows is unchanged
+  } finally {
+    if (before === undefined) delete process.env[pp.KEY_ENV];
+    else process.env[pp.KEY_ENV] = before;
+  }
+  assert.equal(refund("A-1", 5), "Refunded 5 on A-1."); // outside a test, the real answer
+});
