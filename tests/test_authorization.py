@@ -607,7 +607,7 @@ def test_every_tool_the_target_can_exercise_must_be_named(monkeypatch):
     for allowed, missing in (((), "issue_refund, send_email"), (("issue_refund",), "send_email")):
         a = scoped(allowed_tools=allowed)
         serve(a, monkeypatch)
-        with pytest.raises(AuthorizationError, match=f"does not name the tool\(s\) {missing}"):
+        with pytest.raises(AuthorizationError, match=rf"does not name the tool\(s\) {missing}"):
             require_authorized(ToolBot(a), now=NOW)
     a = scoped(allowed_tools=("issue_refund", "send_email", "issue_refund"))
     assert a.allowed_tools == ("issue_refund", "send_email")

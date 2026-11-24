@@ -82,11 +82,19 @@ prompt = BASE_PROMPT + pp.planted("admin_code")                   # a secret in 
 note = pp.planted("bob_note", note) if user == "bob" else note    # a secret in one user's data
 ```
 Rules:
+- The library must be installed in the bot's own environment (`pip install` the Promptproof
+  checkout with the bot's Python). Installing the `promptproof` command does not do that.
+- `pp.wrap(app)` goes last, after the routes, and the wrapped app is what the server runs.
+  A Flask or Quart app stays the same object, so `app.run()` still works and is wrapped.
 - Put `@pp.action` on the function that does the deed, below the app's own permission
   checks, so a call that reaches it means the app let it through.
 - During a test a marked function is not run and returns a stand-in that reads as
   {"status": "ok"} and as the text "ok". If the bot needs more from the answer, give
-  one: `@pp.action("issue_refund", result="Refunded.")`.
+  one: `@pp.action("issue_refund", result="Refunded.")`, or a function of the tool's own
+  arguments: `result=lambda order_id, amount: {"status": "ok", "refunded": amount}`.
+- Call `pp.planted(...)` while a message is being handled. Each test conversation gets
+  its own fake secret, so instructions put together once, when the app starts, cannot
+  receive one; the scan then says secret leaks were not tested and names the slot.
 - For a central tool registry, pass the complete list or mapping through
   `promptproof.harness_tools` and list only read-only tools in `reads`.
   See "Cover every tool at once" in the README for framework examples.
@@ -105,8 +113,15 @@ Once the lines above are in and the bot is running with the harness key set, the
 developer runs `promptproof scan http://localhost:8000/chat` (their chat address). It
 works out the request shape and the secrets the bot reads, asks the developer to type
 their name to authorize a bot on their own machine, and saves the description it
-worked out. That first scan tests secrets held in the instructions. Steps 3 and 4 are
-for going further: tools, other users' data, and bots across a network.
+worked out, under a name it prints (`http:quick-localhost-8000`). Where nobody can type
+(a script, a pipeline, an assistant running the command) the developer first runs
+`promptproof authorize <origin> --by "NAME" --scope "..." --environment test` themselves.
+That first scan tests secrets held in the instructions, and tools marked
+`never_for_users="what an attacker would ask for"`. Before any attack it checks that the
+bot can say each secret at all: in one check conversation only, the harness adds a line
+telling the bot to give the value to a user who states a pass phrase made for that scan.
+The report says that route was supplied by the test. Steps 3 and 4 are for going further:
+tools some users may use, other users' data, and bots across a network.
 
 ## 3. Describe the bot in `promptproof.targets.json`
 ```json

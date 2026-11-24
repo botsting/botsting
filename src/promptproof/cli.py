@@ -266,7 +266,15 @@ def _practice_server(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="promptproof",
-        description="Evidence-first security testing for LLM applications.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=(
+            "Evidence-first security testing for LLM applications.\n\n"
+            "Start here:\n"
+            "  promptproof demo                              see it work on a built-in practice bot, in a minute\n"
+            "  promptproof guide                             the lines to add to your own bot\n"
+            "  promptproof scan http://localhost:8000/chat   scan your own bot, at its chat address\n"
+            "  promptproof doctor --target http:NAME         when something is not working: what to fix next"
+        ),
     )
     parser.add_argument("--version", action="version", version=f"promptproof {__version__}")
     commands = parser.add_subparsers(dest="command", required=True)
