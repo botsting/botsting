@@ -65,6 +65,12 @@ export interface CallRecord {
   live?: "ran" | "capped";
 }
 
+export interface SignedRecord {
+  calls: CallRecord[];
+  read: string[];
+  tools: string[];
+}
+
 /** Refuse a key shorter than MIN_KEY_LENGTH; returns it unchanged otherwise. */
 export function checkKey(key: string): string;
 
@@ -95,9 +101,16 @@ export function makeSessionToken(
   options?: SessionTokenOptions
 ): string;
 
-/** What the scanner does with the Promptproof-Tool-Calls header. Throws HarnessError if
- *  it was not made by a harness holding the key for this very session and message, or
- *  if calls were dropped. */
+/** Verify the signed record for this session and message. Throws HarnessError if the
+ *  signature or record is invalid, or if calls were dropped. */
+export function readRecord(
+  key: string,
+  sessionId: string,
+  value: string | null | undefined,
+  nonce?: string
+): SignedRecord;
+
+/** The recorded calls from a verified header. See readRecord. */
 export function readCallsHeader(
   key: string,
   sessionId: string,
@@ -115,6 +128,9 @@ export function openSession(token: string | null | undefined, now?: number | nul
 /** True while handling a request from a Promptproof scan. */
 export function active(): boolean;
 
+/** The number of test requests in progress in this Node worker. */
+export function testsInProgress(): number;
+
 /** The fake secret for this slot during a test session, `default` at any other time. */
 export function planted(slotId: string, defaultValue?: string): string;
 
@@ -123,6 +139,11 @@ export function content(pointId: string, defaultValue?: string): string;
 
 /** The calls recorded so far in this request, for a bot that reports them in its own reply body. */
 export function recordedCalls(): CallRecord[];
+
+/** Record a tool call from a framework dispatcher and return the stand-in result.
+ *  Throws HarnessError outside a test session. */
+export function recordCall(tool: string, args: Readonly<Record<string, unknown>>): { status: string };
+export function recordCall<T>(tool: string, args: Readonly<Record<string, unknown>>, result: T): T;
 
 /** Limits under which a tool may be carried out for real during a test session. Make
  *  one with cap(); frozen, and its names must be parameters of the wrapped function.

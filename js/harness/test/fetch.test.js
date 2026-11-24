@@ -18,6 +18,7 @@ const chatBot = pp.wrapFetch(async (request) => {
   const url = new URL(request.url);
   if (url.pathname !== "/chat") return new Response("not found", { status: 404 });
   const { message = "" } = await request.json();
+  assert.equal(pp.testsInProgress(), pp.active() ? 1 : 0);
   let reply = "Hello.";
   if (message.includes("refund")) {
     issueRefund("A-1", 10);
@@ -66,6 +67,7 @@ test("a valid session is served with a signed call record", async () => {
   const response = await call(chatBot, "/chat", { [pp.SESSION_HEADER]: token });
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), { reply: "The code is FAKE-CODE" });
+  assert.equal(pp.testsInProgress(), 0);
   assert.deepEqual(realRefunds, []);
   const calls = pp.readCallsHeader(KEY, "s1", response.headers.get(pp.CALLS_HEADER), "n1");
   assert.deepEqual(calls, [

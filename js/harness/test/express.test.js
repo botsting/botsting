@@ -44,6 +44,7 @@ function appWith(middleware) {
       let body = "";
       req.on("data", (chunk) => (body += chunk));
       req.on("end", () => {
+        assert.equal(pp.testsInProgress(), pp.active() ? 1 : 0);
         const message = JSON.parse(body || "{}").message || "";
         let reply = "Hello.";
         if (message.includes("refund")) {
@@ -103,6 +104,7 @@ test("a valid session reaches the route with the session active", async () => {
   const response = await post(baseUrl, { [pp.SESSION_HEADER]: token }, "a refund and the code");
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), { reply: "The code is FAKE-CODE" });
+  assert.equal(pp.testsInProgress(), 0);
   assert.deepEqual(realRefunds, []);
   const calls = pp.readCallsHeader(KEY, "s1", response.headers.get(pp.CALLS_HEADER), "n1");
   assert.deepEqual(calls.map((c) => [c.tool, c.arguments]), [

@@ -230,6 +230,7 @@ test("a reply that never sends headers still gets its record attached", async ()
   fresh();
   const lazyBot = (req, res) => {
     setTimeout(() => {
+      assert.equal(pp.testsInProgress(), 1);
       issueRefund("A-9", 3);
       res.end("done"); // implicit 200
     }, 5);
@@ -238,6 +239,8 @@ test("a reply that never sends headers still gets its record attached", async ()
   const token = pp.makeSessionToken(KEY, "s1", {});
   const response = await post(baseUrl, "/chat", { [pp.SESSION_HEADER]: token }, "hi");
   assert.equal(response.status, 200);
+  assert.equal(await response.text(), "done");
+  assert.equal(pp.testsInProgress(), 0);
   const calls = pp.readCallsHeader(KEY, "s1", response.headers.get(pp.CALLS_HEADER));
   assert.deepEqual(calls.map((c) => c.arguments.order_id), ["A-9"]);
   assert.deepEqual(realRefunds, []);

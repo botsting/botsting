@@ -54,3 +54,47 @@ for (const [name, change] of Object.entries(changes)) {
     assert.equal(open(signed(body)), null);
   });
 }
+
+function signedRecord(record) {
+  const json = typeof record === "string" ? record : JSON.stringify(record);
+  const payload = Buffer.from(json).toString("base64url");
+  return payload + "." + pp.mac(KEY, "promptproof-calls/1\n", ["s1", "n1", payload]);
+}
+
+test("a signed record can include name lists or omit them", () => {
+  const old = signedRecord({ calls: [], dropped: 0 });
+  assert.deepEqual(pp.readRecord(KEY, "s1", old, "n1"), { calls: [], read: [], tools: [] });
+  const current = signedRecord({ calls: [], dropped: 0, read: ["sample"], tools: ["example"] });
+  assert.deepEqual(pp.readRecord(KEY, "s1", current, "n1"), {
+    calls: [],
+    read: ["sample"],
+    tools: ["example"],
+  });
+  assert.throws(() => pp.readRecord(KEY, "s1", current, "n2"), /not signed/);
+});
+
+test("signed records with malformed name lists or drop counts are rejected", () => {
+  for (const field of ["read", "tools"]) {
+    for (const bad of [null, "sample", {}, [0]]) {
+      const header = signedRecord({ calls: [], dropped: 0, [field]: bad });
+      assert.throws(() => pp.readRecord(KEY, "s1", header, "n1"), /must be a list of names/);
+      assert.throws(() => pp.readCallsHeader(KEY, "s1", header, "n1"), /must be a list of names/);
+    }
+  }
+  for (const dropped of [false, "0", null, 0.5]) {
+    const header = signedRecord({ calls: [], dropped });
+    assert.throws(() => pp.readRecord(KEY, "s1", header, "n1"), /count of dropped ones/);
+  }
+  for (const literal of ["0.0", "-0e2", "1e-999"]) {
+    const header = signedRecord(`{"calls":[],"dropped":${literal}}`);
+    assert.throws(() => pp.readRecord(KEY, "s1", header, "n1"), /count of dropped ones/);
+  }
+  const nestedFloat = signedRecord('{"calls":[{"dropped":0.0}],"dropped":0,"read":["1e10"]}');
+  assert.deepEqual(pp.readRecord(KEY, "s1", nestedFloat, "n1"), {
+    calls: [{ dropped: 0 }],
+    read: ["1e10"],
+    tools: [],
+  });
+  const dropped = signedRecord({ calls: [], dropped: 1 });
+  assert.throws(() => pp.readRecord(KEY, "s1", dropped, "n1"), /1 were not recorded/);
+});
