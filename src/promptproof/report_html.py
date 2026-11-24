@@ -37,42 +37,88 @@ from promptproof.report_markdown import (
 from promptproof.shell import replay_command
 
 _CSS = """
-:root { --bg:#f6f5f1; --card:#fff; --ink:#1c1b18; --muted:#66625a; --line:#dcd8cf; --bad:#a1260d; --badbg:#fbeee9;
-  --ok:#2c5f4a; --okbg:#eaf3ee; --unsure:#7a5a00; --unsurebg:#fbf4dc; --code:#f0eee8; }
-@media (prefers-color-scheme: dark) { :root { --bg:#161513; --card:#201f1c; --ink:#ece9e1; --muted:#a39e93;
-  --line:#3a3833; --bad:#ff9d85; --badbg:#3a1d16; --ok:#8fd0b1; --okbg:#18301f; --unsure:#e8c766; --unsurebg:#332b10;
-  --code:#2a2925; } }
-* { box-sizing: border-box; }
-body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif; }
-main { max-width:60rem; margin:0 auto; padding:2rem 1rem 4rem; }
-h1 { font-size:1.15rem; font-weight:600; color:var(--muted); margin:0 0 1rem; letter-spacing:.02em; }
-h2 { font-size:1.2rem; margin:2.5rem 0 .75rem; padding-top:1rem; border-top:1px solid var(--line); }
-h3 { font-size:1.05rem; margin:0 0 .5rem; }
-p { margin:.5rem 0; }
-.verdict { padding:1.25rem 1.5rem; border-radius:.5rem; border:1px solid var(--line); background:var(--card); }
-.verdict strong { display:block; font-size:1.6rem; line-height:1.25; }
-.verdict.bad { border-color:var(--bad); background:var(--badbg); } .verdict.bad strong { color:var(--bad); }
-.verdict.ok { border-color:var(--ok); background:var(--okbg); } .verdict.ok strong { color:var(--ok); }
-.verdict.unsure { border-color:var(--unsure); background:var(--unsurebg); } .verdict.unsure strong { color:var(--unsure); }
-ul { margin:.5rem 0; padding-left:1.25rem; } li { margin:.25rem 0; }
-dl { display:grid; grid-template-columns:minmax(9rem,max-content) 1fr; gap:.3rem 1rem; margin:.5rem 0; }
-dt { color:var(--muted); } dd { margin:0; overflow-wrap:anywhere; }
-code { background:var(--code); padding:.1rem .3rem; border-radius:.25rem; font:0.9em ui-monospace,Consolas,monospace;
-  overflow-wrap:anywhere; }
-.card { background:var(--card); border:1px solid var(--line); border-radius:.5rem; padding:1rem 1.25rem; margin:1rem 0; }
-.tag { display:inline-block; font-size:.8rem; font-weight:600; padding:.1rem .5rem; border-radius:1rem;
-  border:1px solid currentColor; margin-bottom:.5rem; }
-.tag.bad { color:var(--bad); } .tag.unsure { color:var(--unsure); } .tag.ok { color:var(--ok); }
-.turn { margin:.75rem 0; } .who { font-size:.85rem; font-weight:600; color:var(--muted); }
-pre { margin:.25rem 0 0; padding:.75rem; background:var(--code); border-radius:.375rem; white-space:pre-wrap;
-  overflow-wrap:anywhere; font:0.9rem/1.45 ui-monospace,Consolas,monospace; max-height:28rem; overflow:auto; }
-.turn.attacker pre { border-left:3px solid var(--bad); } .turn.target pre { border-left:3px solid var(--muted); }
-.turn.user pre { border-left:3px solid var(--ok); }
-.note { color:var(--muted); font-size:.9rem; }
-table { border-collapse:collapse; width:100%; } th,td { text-align:left; padding:.4rem .6rem; border-bottom:1px solid var(--line);
-  vertical-align:top; overflow-wrap:anywhere; } th { color:var(--muted); font-weight:600; font-size:.9rem; }
+/* An evidence file. Reading order: the verdict, what was reached, each finding as an exhibit with
+   its exchange, then how the test was done. Headings and exhibit numbers are set in a DIN-like
+   face, the kind used on technical documents; the prose is a book serif; anything quoted from a
+   conversation is monospace, because it is verbatim. No web font can load here (the page loads
+   nothing), so each is a stack of faces that ship with the common systems. */
+:root {
+  --paper:#f7f9fb; --sheet:#ffffff; --ink:#14181f; --muted:#56606e; --rule:#d3dae3; --exhibit:#1f3fbf;
+  --bad:#b81a36; --ok:#0d6657; --unsure:#855600; --quote:#eef1f5;
+  --display:Bahnschrift,"DIN Alternate","Avenir Next Condensed","Roboto Condensed","Arial Narrow",sans-serif;
+  --text:Charter,"Bitstream Charter","Sitka Text",Cambria,Georgia,serif;
+  --mono:ui-monospace,"Cascadia Mono","SF Mono",Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark) { :root {
+  --paper:#0f1217; --sheet:#151a21; --ink:#e6eaf0; --muted:#9aa5b3; --rule:#2a323d; --exhibit:#8ea5ff;
+  --bad:#ff8397; --ok:#6fd3bd; --unsure:#e5bd62; --quote:#1c222b; } }
+* { box-sizing:border-box; }
+body { margin:0; background:var(--paper); color:var(--ink); font:1.0625rem/1.6 var(--text); }
+main { max-width:52rem; margin:0 auto; padding:2.5rem 1.25rem 5rem; }
+h1, h2, h3, th, dt, .tag, .who, .num, .facts { font-family:var(--display); }
+h1 { font-size:.95rem; font-weight:600; color:var(--muted); margin:0 0 1.25rem; }
+h2 { font-size:1.45rem; font-weight:700; font-stretch:90%; line-height:1.15; margin:3.5rem 0 1rem; }
+h3 { font-size:1.2rem; font-weight:700; font-stretch:90%; line-height:1.25; margin:0 0 .35rem; }
+p { margin:.5rem 0; max-width:42rem; }
+ul { margin:.5rem 0; padding-left:1.2rem; max-width:42rem; } li { margin:.3rem 0; }
+code { font:.86em var(--mono); background:var(--quote); padding:.08em .3em; border-radius:3px; overflow-wrap:anywhere; }
+.note { color:var(--muted); font-size:.94rem; }
+
+/* The verdict is the one loud thing on the page. */
+.verdict { border-top:.5rem solid var(--muted); padding:1.1rem 0 0; }
+.verdict strong { display:block; font:700 clamp(2rem,6vw,3.1rem)/1.04 var(--display); font-stretch:85%;
+  letter-spacing:-.01em; margin-bottom:.6rem; max-width:18ch; }
+.verdict.bad { border-color:var(--bad); } .verdict.bad strong { color:var(--bad); }
+.verdict.ok { border-color:var(--ok); } .verdict.ok strong { color:var(--ok); max-width:24ch; }
+.verdict.unsure { border-color:var(--unsure); } .verdict.unsure strong { color:var(--unsure); max-width:22ch; }
+.facts { display:flex; flex-wrap:wrap; gap:.4rem 2.2rem; margin:1.3rem 0 0; padding:.8rem 0 0;
+  border-top:1px solid var(--rule); font-size:.98rem; }
+.facts div { display:grid; } .facts span { color:var(--muted); font-size:.85rem; }
+
+/* Tables: the index of what was reached, and the instruments. */
 .scroll { overflow-x:auto; }
-@media print { body { background:#fff; } pre { max-height:none; } .card { break-inside:avoid; } }
+table { border-collapse:collapse; width:100%; font-size:.98rem; }
+th, td { text-align:left; padding:.55rem .9rem .55rem 0; border-bottom:1px solid var(--rule); vertical-align:top;
+  overflow-wrap:anywhere; }
+th { color:var(--muted); font-weight:600; font-size:.88rem; border-bottom-color:var(--ink); white-space:nowrap;
+  overflow-wrap:normal; }
+td ul { padding-left:1rem; margin:0; } td li { margin:.15rem 0; }
+td:first-child { overflow-wrap:normal; } td:first-child code { white-space:nowrap; }
+.reached td:first-child { font-family:var(--display); font-weight:700; white-space:nowrap; overflow-wrap:normal; }
+.reached td:nth-child(n+3) { white-space:nowrap; }
+.num { color:var(--exhibit); font-weight:700; white-space:nowrap; }
+
+/* A finding is an exhibit: its number hangs in the margin, the exchange is quoted verbatim. */
+.card { display:grid; grid-template-columns:4.2rem minmax(0,1fr); column-gap:.4rem; padding:1.6rem 0 1.9rem;
+  border-top:1px solid var(--rule); }
+.card > * { grid-column:2; }
+.card > .num { grid-column:1; grid-row:1 / span 3; font-size:1.7rem; font-stretch:85%; line-height:1; padding-top:.15rem; }
+.tag { justify-self:start; font-size:.84rem; font-weight:600; margin-bottom:.3rem; }
+.tag.bad { color:var(--bad); } .tag.unsure { color:var(--unsure); } .tag.ok { color:var(--ok); }
+.what { margin:0 0 .9rem; }
+.turn { margin:.55rem 0 0; }
+.who { font-size:.86rem; font-weight:600; color:var(--muted); }
+pre { margin:.2rem 0 0; padding:.7rem .85rem; background:var(--quote); border-left:3px solid var(--rule);
+  white-space:pre-wrap; overflow-wrap:anywhere; font:.88rem/1.5 var(--mono); max-height:26rem; overflow:auto; }
+.turn.attacker pre { border-left-color:var(--bad); }
+.turn.target pre { border-left-color:var(--exhibit); }
+.turn.user pre { border-left-color:var(--muted); }
+.turn .note { margin:.3rem 0 0; padding-left:.9rem; }
+dl { display:grid; grid-template-columns:minmax(9.5rem,max-content) minmax(0,1fr); gap:.35rem 1.2rem; margin:.9rem 0 0;
+  font-size:.97rem; }
+dt { color:var(--muted); font-size:.9rem; padding-top:.1rem; } dd { margin:0; overflow-wrap:anywhere; }
+dd ul { padding-left:1rem; margin:0; }
+.card dl { margin-top:1.2rem; padding-top:.9rem; border-top:1px dotted var(--rule); }
+
+@media (max-width:40rem) {
+  .card { grid-template-columns:minmax(0,1fr); } .card > *, .card > .num { grid-column:1; grid-row:auto; }
+  dl { grid-template-columns:minmax(0,1fr); gap:0; } dd { margin-bottom:.5rem; }
+}
+@media print {
+  :root { --paper:#fff; --sheet:#fff; --ink:#000; --muted:#444; --rule:#999; --quote:#f3f3f3; --exhibit:#000; }
+  body { font-size:10.5pt; } main { max-width:none; padding:0; }
+  pre { max-height:none; overflow:visible; } .card, tr { break-inside:avoid; } h2 { break-after:avoid; }
+}
 """
 
 
@@ -107,7 +153,51 @@ def _verdict(report: ScanReport) -> list[str]:
         lines.append(f"<p>{label}:</p><ul>")
         lines += [f"<li>{_e(reason)}</li>" for reason in report.inconclusive_reasons]
         lines.append("</ul>")
+    who = report.authorization.get("authorized_by", "") if report.authorization else ""
+    facts = [
+        ("Target", _e(report.target)),
+        ("Tested", _e(str(report.started_at)[:10])),
+        ("Attacks", f"{_e(report.attacks_run)}, in {_e(report.messages_sent)} messages"),
+    ]
+    if who:
+        facts.append(("Authorized by", _e(who)))
+    lines.append('<div class="facts">' + "".join(f"<div><span>{k}</span>{v}</div>" for k, v in facts) + "</div>")
     lines.append("</section>")
+    return lines
+
+
+def _reached(report: ScanReport) -> list[str]:
+    """The index: each protected thing an attack got to, in how many ways, and how reliably."""
+    lines = ["<h2>What was reached</h2>"]
+    if not report.findings:
+        if report.status == "no_verified_violations":
+            lines.append("<p>Nothing. No planted value came out and no forbidden tool call was recorded.</p>")
+        else:
+            lines.append("<p>Nothing was verified. See above for what could not be established.</p>")
+        return lines
+    grouped: dict[str, list[Finding]] = {}
+    for finding in report.findings:
+        grouped.setdefault(finding.slot_id, []).append(finding)
+    lines.append(
+        '<div class="scroll"><table class="reached"><thead><tr><th>What</th><th>What happened</th><th>Ways</th>'
+        "<th>Findings</th><th>Replays that reproduced it</th></tr></thead><tbody>"
+    )
+    for slot_id, found in grouped.items():
+        first = found[0]
+        if first.kind == "disclosure":
+            happened = "Its planted value was disclosed to the attacker"
+        elif any(call.accepted for f in found for call in f.tool_calls):
+            happened = "A tool was called for the attacker, and carried it out"
+        else:
+            happened = "A tool was called for the attacker, and refused it"
+        ids = first.id if len(found) == 1 else f"{first.id} to {found[-1].id}"
+        done = sum(f.reproduction.successes for f in found)
+        tried = sum(f.reproduction.trials for f in found)
+        lines.append(
+            f"<tr><td>{_e(slot_id)}</td><td>{happened}</td><td>{len(found)}</td>"
+            f'<td><span class="num">{_e(ids)}</span></td><td>{done} of {tried}</td></tr>'
+        )
+    lines.append("</tbody></table></div>")
     return lines
 
 
@@ -268,10 +358,22 @@ def _rate(verb: str, noun: str, rate: Rate) -> str:
 
 def _finding(finding: Finding, report_path: str | None, slots: tuple[SlotStatus, ...] = ()) -> list[str]:
     refused = finding.level == EvidenceLevel.ACTION_ATTEMPTED
+    rate = finding.reproduction
+    if finding.kind == "disclosure":
+        what = f"The value planted at {_code(finding.slot_id)} came out in the answer below."
+    elif finding.kind == "injection":
+        what = f"With text planted at {_code(finding.slot_id)}, an ordinary request made the bot call a tool."
+    else:
+        what = "The attacker's conversation made the bot call a tool it may not use for them."
     lines = [
         '<article class="card">',
+        f'<span class="num">{_e(finding.id)}</span>',
         f'<span class="tag {"unsure" if refused else "bad"}">{_e(finding.level.label)}</span>',
-        f"<h3>{_e(finding.id)}: {_e(finding.title)}</h3>",
+        f"<h3>{_e(finding.title)}</h3>",
+        f'<p class="what">{what} It worked again in {_e(rate.successes)} of {_e(rate.trials)} replays from a fresh start.</p>',
+    ]
+    lines += _transcript(finding.transcript)
+    lines += [
         "<dl>",
         f"<dt>Technique</dt><dd>{_e(finding.technique)}</dd>",
         f"<dt>Attack</dt><dd>{_code(finding.attack_id)}, by {_code(finding.attacker_principal)}</dd>",
@@ -304,7 +406,10 @@ def _finding(finding: Finding, report_path: str | None, slots: tuple[SlotStatus,
     kind = objective_kind_for(finding, slots)
     entries = entries_for(kind) if kind is not None else ()
     if entries:
-        lines.append(f"<dt>Framework entries</dt><dd>{_framework_list_html(entries)}</dd>")
+        ids = ", ".join(_code(entry.id) for entry in entries)
+        lines.append(
+            f'<dt>Framework entries</dt><dd>{ids} <span class="note">(named in full under Framework coverage)</span></dd>'
+        )
     command = replay_command(report_path or "REPORT.json", finding.id)
     if not report_path:
         command = command.replace("REPORT.json", "<report.json>", 1)
@@ -314,7 +419,6 @@ def _finding(finding: Finding, report_path: str | None, slots: tuple[SlotStatus,
         f"<dt>Replay</dt><dd>{_code(command)}</dd>",
         "</dl>",
     ]
-    lines += _transcript(finding.transcript)
     lines.append("</article>")
     return lines
 
@@ -382,14 +486,16 @@ def _rest(report: ScanReport) -> list[str]:
 def render_html(report: ScanReport, report_path: str | None = None) -> str:
     """The report as one HTML document. `report_path` is the JSON file's path, used in replay commands."""
     body: list[str] = ["<h1>Promptproof scan report</h1>"]
+    # A reader wants the verdict, then what was reached and how, then how far to trust it.
     body += _verdict(report)
-    body += _about(report)
-    body += _tested(report)
-    body += _coverage(report)
-    body += _protected(report)
-    body += _tasks(report)
+    body += _reached(report)
     body += _findings(report, report_path)
     body += _suspected(report)
+    body += _protected(report)
+    body += _tasks(report)
+    body += _tested(report)
+    body += _about(report)
+    body += _coverage(report)
     body += _rest(report)
     return (
         "<!doctype html>\n"

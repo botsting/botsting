@@ -16,14 +16,16 @@ from promptproof.report_markdown import HEADLINE_NO_VERIFIED_VIOLATIONS, INDEPEN
 from promptproof.targets.registry import build_target
 
 BANNED = ("safe", "secure", "clean", "certified", "passed", "compliant")
+# Reading order: the verdict (not a section), what was reached, each finding, then how far to trust it.
 SECTIONS = [
-    "About this test",
-    "What was tested",
-    "Framework coverage",
-    "What was protected",
-    "Normal use",
+    "What was reached",
     "Verified findings",
     "Suspected findings",
+    "What was protected",
+    "Normal use",
+    "What was tested",
+    "About this test",
+    "Framework coverage",
     "Discarded attempts",
     "Errors",
     "Limitations",
