@@ -148,6 +148,27 @@ def _exchange(finding: Finding) -> list[str]:
     return lines
 
 
+_ERRORS_SHOWN = 3
+
+
+def _errors(report: ScanReport, paint: _Paint) -> list[str]:
+    """What went wrong, in the scan's own words: each different message once, with how often and
+    during what. An error message usually says what to change, so it belongs where the person is
+    looking, not only in a report they have yet to open."""
+    if not report.errors:
+        return []
+    seen: dict[str, list[str]] = {}
+    for error in report.errors:
+        seen.setdefault(error.message, []).append(error.phase)
+    lines = ["  " + paint.unsure("Errors")]
+    for message, phases in list(seen.items())[:_ERRORS_SHOWN]:
+        times = "once" if len(phases) == 1 else f"{len(phases)} times"
+        lines += _wrap(f"{times}, during {', '.join(dict.fromkeys(phases))}: {message}", "    ")
+    if len(seen) > _ERRORS_SHOWN:
+        lines.append(f"    and {len(seen) - _ERRORS_SHOWN} more kind(s) of error, in the report")
+    return lines
+
+
 def render(report: ScanReport, colour: bool = False) -> str:
     """The summary printed after a scan. Its first line is the verdict."""
     paint = _Paint(colour)
@@ -160,6 +181,7 @@ def render(report: ScanReport, colour: bool = False) -> str:
         lines.append(paint.unsure("Inconclusive: the scan could not reach a conclusion."))
     for reason in report.inconclusive_reasons:
         lines.append(f"  not established: {reason}")
+    lines += _errors(report, paint)
     gaps = report.not_tested()
     if gaps:
         # A zero for something that was never tried must not read as a pass.

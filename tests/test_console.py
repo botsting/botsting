@@ -115,3 +115,24 @@ def test_a_kind_of_harm_that_was_never_tried_is_named_under_the_verdict(reports)
     lines = render(only_tools).splitlines()
     assert "Not tested in this scan" in lines[1]  # straight after the verdict, before any finding
     assert only_tools.to_dict()["not_tested"] == list(gaps)
+
+
+def test_errors_are_shown_where_the_person_is_looking(reports):
+    """An error message usually says what to change. The terminal shows each different one once."""
+    import dataclasses
+
+    from promptproof.core.models import ErrorRecord
+
+    hint = '/chat answered HTTP 500. Say what it should return with result=, for example @pp.action("issue_refund", result="Refunded.")'
+    errors = (
+        ErrorRecord("discovery", "a1", hint),
+        ErrorRecord("discovery", "a2", hint),
+        ErrorRecord("reproduction", "a1", hint),
+        ErrorRecord("preflight", None, "the bot did not answer"),
+    )
+    text = render(dataclasses.replace(reports[1], errors=errors, status="inconclusive"))
+    assert text.count("Say what it should return") == 1 and "3 times, during discovery, reproduction: /chat answered HTTP 500" in " ".join(text.split())
+    assert "once, during preflight: the bot did not answer" in text
+    assert "Errors" not in render(reports[1])  # nothing is printed when there were none
+    many = tuple(ErrorRecord("discovery", None, f"problem {n}") for n in range(5))
+    assert "and 2 more kind(s) of error, in the report" in render(dataclasses.replace(reports[1], errors=many))

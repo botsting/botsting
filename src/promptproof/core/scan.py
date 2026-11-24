@@ -605,7 +605,7 @@ def _instrument_problems(
         if not task.passed:
             problems.append(f"Normal-task check {task.task_id} did not work.")
     if errors:
-        problems.append(f"{len(errors)} error(s) occurred; see the error list.")
+        problems.append(f"{len(errors)} error(s) occurred; they are listed under Errors.")
     return problems
 
 
