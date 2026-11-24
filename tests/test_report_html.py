@@ -84,6 +84,7 @@ class Page(HTMLParser):
 ALLOWED_TAGS = {
     "html", "head", "meta", "title", "style", "body", "main", "section", "article", "div", "span", "p", "ul", "li",
     "dl", "dt", "dd", "h1", "h2", "h3", "strong", "code", "pre", "table", "thead", "tbody", "tr", "th", "td", "br",
+    "details", "summary",  # folded findings: inert, and no script is needed to open them
 }  # fmt: skip
 ALLOWED_ATTRIBUTES = {"class", "lang", "charset", "name", "content", "http-equiv"}
 

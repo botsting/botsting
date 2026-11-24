@@ -112,8 +112,25 @@ dt { color:var(--muted); font-size:.9rem; padding-top:.1rem; } dd { margin:0; ov
 dd ul { padding-left:1rem; margin:0; }
 .card dl { margin-top:1.2rem; padding-top:.9rem; border-top:1px dotted var(--rule); }
 
+/* The other ways to the same thing: one line each until opened. */
+.more { margin:0 0 1.4rem 4.6rem; }
+.more > .note { margin:0 0 .3rem; }
+details { border-top:1px solid var(--rule); }
+details:last-child { border-bottom:1px solid var(--rule); }
+summary { cursor:pointer; padding:.5rem 0; font-family:var(--display); font-weight:600; }
+summary .num { display:inline-block; min-width:3rem; }
+summary .note { font-family:var(--text); font-weight:400; margin-left:.6rem; white-space:nowrap; }
+details .card { border-top:0; padding-top:.4rem; grid-template-columns:minmax(0,1fr); }
+details .card > *, details .card > .num { grid-column:1; grid-row:auto; }
+details .card > .num, details .card > h3 { display:none; }
+
+/* What the scan never tried, beside the verdict. */
+p.untested { font-family:var(--display); font-weight:700; color:var(--unsure); margin:1rem 0 0; }
+ul.untested { margin-top:.2rem; }
+
 @media (max-width:40rem) {
   .card { grid-template-columns:minmax(0,1fr); } .card > *, .card > .num { grid-column:1; grid-row:auto; }
+  .more { margin-left:0; }
   dl { grid-template-columns:minmax(0,1fr); gap:0; } dd { margin-bottom:.5rem; }
 }
 @media print {
@@ -436,11 +453,41 @@ def _finding(finding: Finding, report_path: str | None, slots: tuple[SlotStatus,
 
 
 def _findings(report: ScanReport, report_path: str | None) -> list[str]:
+    """Every verified finding, grouped by what was reached. The first way in is shown in full; the
+    other ways to the same thing are folded, each still complete, so the page reads in minutes and
+    the file still holds all of the evidence."""
     lines = ["<h2>Verified findings</h2>"]
     if not report.findings:
         return lines + ["<p>None recorded.</p>"]
+    grouped: dict[str, list[Finding]] = {}
     for finding in report.findings:
-        lines += _finding(finding, report_path, report.slots)
+        grouped.setdefault(finding.slot_id, []).append(finding)
+    folded = sum(len(found) - 1 for found in grouped.values())
+    if folded:
+        lines.append(
+            f'<p class="note">{len(report.findings)} findings reached {len(grouped)} '
+            f'thing{"" if len(grouped) == 1 else "s"}. For each, the first way in is shown in full. The other '
+            f"{folded} are folded below it: open one to read its exchange. Printing keeps them folded; the JSON "
+            "report holds every one in full.</p>"
+        )
+    for slot_id, found in grouped.items():
+        lines += _finding(found[0], report_path, report.slots)
+        if len(found) == 1:
+            continue
+        more = len(found) - 1
+        lines.append(
+            f'<div class="more"><p class="note">{more} more way{"" if more == 1 else "s"} reached '
+            f"{_code(slot_id)}. Each is a verified finding of its own.</p>"
+        )
+        for finding in found[1:]:
+            rate = finding.reproduction
+            lines.append(
+                f'<details><summary><span class="num">{_e(finding.id)}</span> {_e(finding.title)} '
+                f'<span class="note">{_e(rate.successes)} of {_e(rate.trials)} replays</span></summary>'
+            )
+            lines += _finding(finding, report_path, report.slots)
+            lines.append("</details>")
+        lines.append("</div>")
     return lines
 
 
