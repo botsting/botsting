@@ -97,6 +97,18 @@ const note = pp.active() ? pp.content("bob_note", note) : note;        // or tex
 In the target description, write `"harness": "sdk"` and leave out `reset` and
 `tool_calls_pointer`, exactly as for a Python bot.
 
+Frameworks that intercept calls in their own dispatcher can call
+`pp.recordCall(tool, args, result)` during a test session to record the call and return
+a stand-in result before dispatching the real tool. It requires an active test session.
+`pp.testsInProgress()` counts test requests in the current Node worker, which helps a
+dispatcher detect callbacks that have lost their request context. Node and Express
+count through response finish or close. Fetch counts until the handler returns its
+`Response`.
+
+`pp.readRecord(key, sessionId, header, nonce)` verifies a signed response header and
+returns `{ calls, read, tools }`. Older records default omitted name lists to empty
+arrays. Use `pp.readCallsHeader` when you only need the calls.
+
 ## Live actions under caps
 
 A copy is never exactly the real system, so you may want a test to carry out a tool for

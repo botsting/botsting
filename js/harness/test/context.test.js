@@ -62,3 +62,43 @@ test("a tool run in a worker thread is not covered", async () => {
   assert.deepEqual(fromWorker, { ran: 1, result: { status: "refunded for real" }, active: false });
   assert.deepEqual(session.calls, []); // nothing was recorded there
 });
+
+test("a dispatcher can record a call only inside a test session", () => {
+  const session = new pp.Session("s1", {}, {}, KEY);
+  const result = { status: "simulated" };
+  assert.throws(() => pp.recordCall("example", {}), pp.HarnessError);
+  session.run(() => {
+    assert.equal(pp.recordCall("example", { count: 2, enabled: true }, result), result);
+    assert.deepEqual(pp.recordCall("example", {}), { status: "ok" });
+  });
+  const [first, second] = pp.readCallsHeader(KEY, "s1", session.headerValue());
+  assert.deepEqual(first, {
+    id: "call-1",
+    tool: "example",
+    arguments: { count: "2", enabled: "true" },
+    accepted: true,
+    result: '{"status": "simulated"}',
+  });
+  assert.equal(second.id, "call-2");
+});
+
+test("in-flight test sessions can be detected outside the request context", async () => {
+  const session = new pp.Session("s1", {}, {}, KEY);
+  const other = new pp.Session("s2", {}, {}, KEY);
+  const error = new Error("dispatch failed");
+  let finish;
+  const pending = new Promise((resolve) => { finish = resolve; });
+  const first = session.run(() => pending);
+  const second = other.run(async () => {
+    await pending;
+    throw error;
+  });
+  assert.equal(pp.active(), false);
+  assert.equal(pp.testsInProgress(), 2);
+  finish();
+  await first;
+  await assert.rejects(second, error);
+  assert.equal(pp.testsInProgress(), 0);
+  assert.throws(() => session.run(() => { throw error; }), error);
+  assert.equal(pp.testsInProgress(), 0);
+});

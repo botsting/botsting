@@ -22,7 +22,11 @@ let input = "";
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => (input += chunk));
 process.stdin.on("end", () => {
-  const { token, slot, liveAmounts } = JSON.parse(input);
+  const { token, slot, liveAmounts, record, sessionId, nonce } = JSON.parse(input);
+  if (record !== undefined) {
+    process.stdout.write(JSON.stringify(pp.readRecord(process.env[pp.KEY_ENV], sessionId, record, nonce)));
+    return;
+  }
   const session = pp.openSession(token);
   if (session === null) {
     process.stdout.write(JSON.stringify({ session: false }));

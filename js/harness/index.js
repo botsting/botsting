@@ -276,10 +276,7 @@ export function makeSessionToken(
   return token;
 }
 
-export function readCallsHeader(key, sessionId, value, nonce = "") {
-  // What the scanner does with the Promptproof-Tool-Calls header. Raises HarnessError
-  // if it was not made by a harness holding the key for this very session and message,
-  // or if calls were left out.
+export function readRecord(key, sessionId, value, nonce = "") {
   if (value === null || value === undefined) {
     throw new HarnessError(
       `the reply has no ${CALLS_HEADER} header: the harness did not see this as a test session ` +
@@ -293,17 +290,24 @@ export function readCallsHeader(key, sessionId, value, nonce = "") {
   if (!macPart || !same(macPart, mac(key, CALLS_DOMAIN, [sessionId, nonce, payload]))) {
     throw new HarnessError("the tool-call record is not signed by the harness for this session and message");
   }
+  const json = unb64(payload).toString("utf8");
   let record;
   try {
-    record = JSON.parse(unb64(payload).toString("utf8"));
+    record = JSON.parse(json);
     if (record === null || typeof record !== "object" || Array.isArray(record)) throw new TypeError("not an object");
-    if (!("calls" in record)) throw new TypeError("no calls");
-    var dropped = pyInt(record.dropped); // eslint-disable-line no-var
+    required(record, "calls");
+    required(record, "dropped");
   } catch (error) {
     throw new HarnessError(`the tool-call record is unreadable: ${error && error.message ? error.message : error}`);
   }
-  if (!Array.isArray(record.calls)) {
-    throw new HarnessError("the tool-call record must hold a list of calls");
+  const { calls, dropped, read = [], tools = [] } = record;
+  if (!Array.isArray(calls) || !isIntegerDropCount(json, dropped)) {
+    throw new HarnessError("the tool-call record must hold a list of calls and a count of dropped ones");
+  }
+  for (const [name, items] of [["read", read], ["tools", tools]]) {
+    if (!Array.isArray(items) || !items.every((item) => typeof item === "string")) {
+      throw new HarnessError(`the record's '${name}' must be a list of names`);
+    }
   }
   if (dropped) {
     throw new HarnessError(
@@ -311,7 +315,22 @@ export function readCallsHeader(key, sessionId, value, nonce = "") {
         `${MAX_RECORD_BYTES} bytes); ${dropped} were not recorded`
     );
   }
-  return record.calls;
+  return { calls, read, tools };
+}
+
+function isIntegerDropCount(json, dropped) {
+  if (!Number.isInteger(dropped)) return false;
+  // JSON.parse maps both 0 and 0.0 to the same number. Mask float literals,
+  // skipping quoted strings, to recover Python's integer-only check.
+  const withoutFloats = json.replace(
+    /"(?:[^"\\]|\\[\s\S])*"|-?\d+(\.[0-9]+(?:[eE][+-]?\d+)?|[eE][+-]?\d+)?/g,
+    (token, suffix) => suffix === undefined ? token : "null"
+  );
+  return json === withoutFloats || JSON.parse(withoutFloats).dropped !== null;
+}
+
+export function readCallsHeader(key, sessionId, value, nonce = "") {
+  return readRecord(key, sessionId, value, nonce).calls;
 }
 
 // -- the session -----------------------------------------------------------------------------
@@ -348,11 +367,25 @@ export class Session {
   }
 
   run(fn) {
-    return storage.run(this, fn);
+    inFlight += 1;
+    try {
+      const result = storage.run(this, fn);
+      if (typeof result?.then === "function") {
+        return Promise.resolve(result).finally(() => {
+          inFlight -= 1;
+        });
+      }
+      inFlight -= 1;
+      return result;
+    } catch (error) {
+      inFlight -= 1;
+      throw error;
+    }
   }
 }
 
 const storage = new AsyncLocalStorage();
+let inFlight = 0;
 
 function envKey() {
   const key = process.env[KEY_ENV];
@@ -422,6 +455,10 @@ export function openSession(token, now = null) {
 export function active() {
   // True while handling a request from a Promptproof scan.
   return storage.getStore() !== undefined;
+}
+
+export function testsInProgress() {
+  return inFlight;
 }
 
 export function planted(slotId, default_ = "") {
@@ -631,6 +668,27 @@ function text(value) {
   return pyDumps(value, { sortKeys: true });
 }
 
+function addCall(session, tool, callArguments, outcome, note = "", mode = "") {
+  const call = {
+    id: `call-${session.calls.length + 1}`,
+    tool,
+    arguments: Object.fromEntries(Object.entries(callArguments).map(([name, value]) => [name, text(value)])),
+    accepted: true,
+    result: (note ? `[${note}] ` : "") + text(outcome),
+  };
+  if (mode) call.live = mode;
+  session.add(call);
+}
+
+export function recordCall(tool, callArguments, result = DEFAULT_RESULT) {
+  const session = storage.getStore();
+  if (session === undefined) {
+    throw new HarnessError("recordCall needs a Promptproof test session; check pp.active() first");
+  }
+  addCall(session, tool, callArguments, result);
+  return result;
+}
+
 function errorName(error) {
   // Python records type(error).__name__, so the class's own name comes first; an
   // explicitly set error.name is the fallback.
@@ -688,17 +746,7 @@ export function action(tool, fn, options = {}) {
   }
 
   function record(session, callArguments, outcome, note, mode) {
-    const recorded = {};
-    for (const key of Object.keys(callArguments)) recorded[key] = text(callArguments[key]);
-    const call = {
-      id: `call-${session.calls.length + 1}`,
-      tool,
-      arguments: recorded,
-      accepted: true,
-      result: (note ? `[${note}] ` : "") + text(outcome),
-    };
-    if (mode) call.live = mode; // "ran" or "capped"; absent for an ordinary recorded call
-    session.add(call);
+    addCall(session, tool, callArguments, outcome, note, mode);
   }
 
   function standIn(session, callArguments, whyNot) {
@@ -838,6 +886,27 @@ function bindEmitter(emitter) {
   }
 }
 
+function runHttpSession(session, req, res, handler) {
+  attachCallsHeader(res, session);
+  inFlight += 1;
+  let pending = true;
+  const complete = () => {
+    if (!pending) return;
+    pending = false;
+    inFlight -= 1;
+  };
+  res.once("finish", complete);
+  res.once("close", complete);
+  try {
+    bindEmitter(req);
+    bindEmitter(res);
+    return storage.run(session, handler);
+  } catch (error) {
+    complete();
+    throw error;
+  }
+}
+
 export function wrapNode(handler) {
   // Wrap a plain (req, res) Node http handler. Without PROMPTPROOF_HARNESS_KEY set,
   // requests pass straight through.
@@ -861,10 +930,7 @@ export function wrapNode(handler) {
       res.end(READY);
       return;
     }
-    attachCallsHeader(res, session);
-    bindEmitter(req);
-    bindEmitter(res);
-    return storage.run(session, () => handler(req, res));
+    return runHttpSession(session, req, res, () => handler(req, res));
   };
 }
 
@@ -890,10 +956,7 @@ export function express() {
       res.end(READY);
       return;
     }
-    attachCallsHeader(res, session);
-    bindEmitter(req);
-    bindEmitter(res);
-    return storage.run(session, () => next());
+    return runHttpSession(session, req, res, next);
   };
 }
 
@@ -924,7 +987,7 @@ export function wrapFetch(handler) {
         headers: { "content-type": "text/plain", [CALLS_HEADER]: session.headerValue() },
       });
     }
-    const response = await storage.run(session, () => handler(request));
+    const response = await session.run(() => handler(request));
     const headers = new Headers(response.headers);
     headers.append(CALLS_HEADER, session.headerValue()); // append: a lying reply keeps its own fake record
     return new Response(response.status === 204 || response.status === 304 ? null : response.body, {

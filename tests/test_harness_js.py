@@ -129,7 +129,9 @@ def test_a_python_token_opens_a_session_in_the_js_harness(key):
 def test_a_js_signed_calls_header_is_accepted_by_python_with_the_right_nonce(key):
     token = pp.make_session_token(KEY, "s1", {}, nonce="n1")
     out = run_node("interop.mjs", {"token": token, "slot": "admin_code"}, {pp.KEY_ENV: KEY})
-    calls = pp.read_calls_header(KEY, "s1", out["calls"], "n1")
+    record = pp.read_record(KEY, "s1", out["calls"], "n1")
+    assert record["read"] == record["tools"] == []
+    calls = record["calls"]
     assert calls == [
         {
             "id": "call-1",
@@ -143,6 +145,23 @@ def test_a_js_signed_calls_header_is_accepted_by_python_with_the_right_nonce(key
         pp.read_calls_header(KEY, "s2", out["calls"], "n1")  # bound to this session
     with pytest.raises(pp.HarnessError, match="not signed"):
         pp.read_calls_header(KEY, "s1", out["calls"], "n2")  # and to this one message
+
+
+def test_js_reads_a_python_signed_record_with_name_lists(key, monkeypatch):
+    monkeypatch.setattr(pp, "_marked_tools", {"example"})
+    session = pp._Session(sid="s1", fixtures={}, content={}, key=KEY, nonce="n1")
+    session.read.append("sample")
+    header = session.header_value(tools=True)
+    out = run_node(
+        "interop.mjs",
+        {"record": header, "sessionId": "s1", "nonce": "n1"},
+        {pp.KEY_ENV: KEY},
+    )
+    assert out == pp.read_record(KEY, "s1", header, "n1") == {
+        "calls": [],
+        "read": ["sample"],
+        "tools": ["example"],
+    }
 
 
 def test_the_js_harness_rejects_a_token_python_signed_with_another_key():
