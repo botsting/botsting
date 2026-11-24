@@ -148,7 +148,7 @@ def test_a_js_signed_calls_header_is_accepted_by_python_with_the_right_nonce(key
 
 
 def test_js_reads_a_python_signed_record_with_name_lists(key, monkeypatch):
-    monkeypatch.setattr(pp, "_marked_tools", {"example"})
+    monkeypatch.setattr(pp, "_marked_tools", {"example": ""})
     session = pp._Session(sid="s1", fixtures={}, content={}, key=KEY, nonce="n1")
     session.read.append("sample")
     header = session.header_value(tools=True)
