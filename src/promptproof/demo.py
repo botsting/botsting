@@ -35,6 +35,7 @@ from wsgiref.simple_server import WSGIRequestHandler, WSGIServer, make_server
 
 import promptproof.harness as pp
 from promptproof.core.models import ToolCall
+from promptproof.exits import EXIT_FAILED, EXIT_OK
 from promptproof.llm.scripted import ScriptedModel
 from promptproof.targets.toy import REFUND_TOOL, ToyTarget
 
@@ -151,7 +152,7 @@ def _demo(args: argparse.Namespace) -> int:
     directory = Path(args.dir)
     if directory.exists() and any(directory.iterdir()):
         print(f"error: {directory} is not empty; give a new or empty --dir")
-        return 2
+        return EXIT_FAILED
     switches = {pp.KEY_ENV: pp.new_key()}
     if args.live:
         switches[pp.LIVE_ENV] = REFUND_TOOL
@@ -199,7 +200,7 @@ def _demo(args: argparse.Namespace) -> int:
     print()
     print("The vulnerable build shows what a proven finding looks like; the fixed build shows what you see when nothing is found.")
     print("To wire your own bot the same way, run: promptproof guide")
-    return 0
+    return EXIT_OK
 
 
 def register(commands: Any) -> None:

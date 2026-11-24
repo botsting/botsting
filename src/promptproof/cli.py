@@ -17,18 +17,14 @@ from pathlib import Path
 from promptproof import __version__
 from promptproof.attacks.adaptive import LLMAdaptiveStrategy
 from promptproof.attacks.library import default_attacks
+from promptproof.console import NO_VERIFIED_HEADLINE, what_happened  # noqa: F401  (re-exported)
 from promptproof.core.benchmark import DEFAULT_MARGIN, compare_strategies, render_benchmark_markdown
 from promptproof.core.models import Rate, ScanReport
 from promptproof.core.runner import ScanConfig, identity_unknown, replay_finding, run_scan, run_to_completion
+from promptproof.exits import EXIT_FAILED, EXIT_INCONCLUSIVE, EXIT_NO_VERIFIED, EXIT_OK, EXIT_VIOLATIONS
 from promptproof.reporting import open_for_a_person, show_summary, write_file, write_reports
 from promptproof.shell import replay_command
 from promptproof.targets.registry import SpecError, build_model, build_target
-
-EXIT_NO_VERIFIED = 0
-EXIT_VIOLATIONS = 1
-EXIT_INCONCLUSIVE = 2
-
-from promptproof.console import NO_VERIFIED_HEADLINE, what_happened  # noqa: E402, F401  (re-exported)
 
 
 def _percent(value: float | None) -> str:
@@ -252,7 +248,7 @@ def _practice_server(args: argparse.Namespace) -> int:
         server = start(bot, port=args.port)
     except (SpecError, ValueError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
-        return EXIT_INCONCLUSIVE
+        return EXIT_FAILED
     port = server.server_address[1]
     print(f"Practice bot ({args.variant}) listening on http://127.0.0.1:{port}. Press Ctrl+C to stop.")
     if args.write_config:
@@ -264,7 +260,7 @@ def _practice_server(args: argparse.Namespace) -> int:
             time.sleep(3600)
     except KeyboardInterrupt:
         server.shutdown()
-        return EXIT_NO_VERIFIED
+        return EXIT_OK
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -429,7 +425,7 @@ def _harness_key(args: argparse.Namespace) -> int:
         "Keep it off production unless you mean to test the real system (see the README).",
         file=sys.stderr,
     )
-    return 0
+    return EXIT_OK
 
 
 def _print_anything() -> None:

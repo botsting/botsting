@@ -300,7 +300,8 @@ def discover(
 
 def run(args: Any) -> int:
     """The `promptproof scan URL` command."""
-    from promptproof.cli import EXIT_INCONCLUSIVE, run_scan_command
+    from promptproof.cli import run_scan_command
+    from promptproof.exits import EXIT_INCONCLUSIVE
     from promptproof.practice_server import write_description
     from promptproof.targets.http import targets_file
 

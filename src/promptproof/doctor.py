@@ -31,6 +31,8 @@ import re
 from collections.abc import Callable
 from typing import Any
 
+from promptproof.exits import EXIT_FAILED, EXIT_OK
+
 _ENV = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
@@ -254,6 +256,6 @@ def register(commands: Any) -> None:
         help="an export of the deployment's settings, checked for production keys (names and known prefixes only)",
     )  # fmt: skip
     parser.set_defaults(
-        handler=lambda args: 0 if diagnose(args.target, args.offline, env_files=tuple(args.env_file)) else 2
+        handler=lambda args: EXIT_OK if diagnose(args.target, args.offline, env_files=tuple(args.env_file)) else EXIT_FAILED
     )
 
