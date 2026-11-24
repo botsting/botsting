@@ -206,7 +206,8 @@ def discover(
         raise QuickError(
             f"no one has authorized a test of {origin}. A person who may allow it runs:\n"
             f'  promptproof authorize {origin} --by "YOUR NAME" --scope "what may be tested" --environment staging\n'
-            "and, for a bot across a network, serves the token it prints. Then run this again."
+            "adding --tool NAME for each tool marked never_for_users (a tool the authorization does not name is "
+            "left untested), and, for a bot across a network, serves the token it prints. Then run this again."
         )
 
     def target_for(body: dict[str, Any], pointer: str, slots: list[str]) -> HttpTarget:
@@ -251,8 +252,10 @@ def discover(
         if unnamed:
             flags = " ".join(f"--tool {tool}" for tool in unnamed)
             notes.append(
-                f"Not tested: {', '.join(unnamed)}. The authorization on record does not name them. "
-                f"Re-authorize with {flags}, then run this again."
+                f"Not tested: {', '.join(unnamed)}. The authorization on record does not name them. A person who "
+                "may allow it records one that does, then this is run again:\n"
+                f'  promptproof authorize {origin} --by "YOUR NAME" --scope "{permission.scope}" '
+                f"--environment {permission.environment} {flags}"
             )
         open_tools = sorted(tool for tool in tools if tool not in probe.tool_asks)
         if open_tools:

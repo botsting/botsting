@@ -26,7 +26,7 @@ Promptproof tests a bot its owner controls and reports only what is proven: a fa
    - `pp.planted("slot_name", default)` where a secret lives, called **while a message is handled**, not once at import.
    The library must be installed in the bot's own environment.
 5. **The key.** Ask the user to run `promptproof harness-key`, set `PROMPTPROOF_HARNESS_KEY` where the bot runs and where this session runs, and restart the bot. Never print or store the key.
-6. **Authorization.** Call `authorization_status` with the bot's origin. If there is none, give the user the command it prints and wait until they say it is done.
+6. **Authorization.** Call `authorization_status` with the bot's origin. If there is none, give the user the command it prints, with one `--tool NAME` for each tool marked `never_for_users` (a tool the authorization does not name is left untested), and wait until they say it is done.
 7. **Scan.** Call `first_scan` with the chat address (for example `http://localhost:8000/chat`). If it is refused, relay exactly what it says to fix. For a bot that already has a description, call `doctor` and then `scan` with `http:NAME`.
 8. **Report back in plain language.** Call `read_report`. Lead with the verdict in the report's own words. Then: what was reached and by how many ways; one real exchange, quoted; the fix the report names for each; what was not tested and why; where the browser report is. Do not pad it.
 9. **After a fix**, scan again into a new folder and compare. A finding is closed when its replay no longer works and the legitimate route and normal use still do.

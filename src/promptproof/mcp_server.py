@@ -119,7 +119,8 @@ works out the request shape and the secrets the bot reads, asks the developer to
 their name to authorize a bot on their own machine, and saves the description it
 worked out, under a name it prints (`http:quick-localhost-8000`). Where nobody can type
 (a script, a pipeline, an assistant running the command) the developer first runs
-`promptproof authorize <origin> --by "NAME" --scope "..." --environment test` themselves.
+`promptproof authorize <origin> --by "NAME" --scope "..." --environment test --tool <each
+tool marked never_for_users>` themselves; a tool the authorization does not name is left untested.
 That first scan tests secrets held in the instructions, and tools marked
 `never_for_users="what an attacker would ask for"`. Before any attack it checks that the
 bot can say each secret at all: in one check conversation only, the harness adds a line
