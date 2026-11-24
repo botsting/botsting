@@ -23,6 +23,14 @@ partial edit; a full rewrite is caught by the seal, made when the run ended and 
 separately. Like the seal, the chain cannot show that the program writing the log was
 honest.
 
+No scan starts the trap by itself: a scan does not start the bot either. Run it next to
+the bot, for example when testing a copy of a real system:
+
+    promptproof egress-trap --log run/egress-trap.jsonl --allow api.anthropic.com:443
+
+It prints the proxy settings to start the bot with, runs until Ctrl+C, and closes the
+log. Put the log in the run's folder before sealing it.
+
 Limits, stated in every report that relies on it: this catches traffic that honours
 the proxy settings (ordinary HTTP clients do, unless a program turns that off). It
 does not see raw TCP connections such as SMTP or a database protocol, so it is used
@@ -195,3 +203,39 @@ class EgressTrap:
         self._stopped.set()
         self._server.close()
         self._write({"event": "stopped", "attempts": len(self.attempts)})
+
+
+def _command(args: object) -> int:
+    import time
+
+    try:
+        trap = EgressTrap(Path(args.log), port=args.port, allow=tuple(args.allow))  # type: ignore[attr-defined]
+    except (ValueError, OSError) as error:
+        print(f"error: {error}")
+        return 2
+    print(f"Trap listening on 127.0.0.1:{trap.port}. Log: {Path(args.log).resolve()}")  # type: ignore[attr-defined]
+    print(f"Passed through: {', '.join(sorted(trap.allow)) or 'nothing'}. Everything else is refused and recorded.")
+    print("Start the bot with these settings, so that its web traffic comes here:")
+    for name, value in trap.proxy_environment().items():
+        print(f"  {name}={value}")
+    print("It sees traffic that honours proxy settings, not raw connections such as a database's. Ctrl+C to stop.")
+    try:
+        while True:
+            time.sleep(3600)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        trap.stop()
+    refused = sum(1 for attempt in trap.attempts if attempt.get("allowed") != "true")
+    print(f"Stopped. {len(trap.attempts)} outbound attempt(s) recorded, {refused} refused. The log is closed.")
+    return 0
+
+
+def register(commands: object) -> None:
+    parser = commands.add_parser(  # type: ignore[attr-defined]
+        "egress-trap", help="record, and refuse, the outbound web traffic of a bot you run next to it"
+    )
+    parser.add_argument("--log", required=True, help="where to write the log, for example run/egress-trap.jsonl")
+    parser.add_argument("--allow", action="append", default=[], metavar="HOST:PORT", help="a destination to pass through, such as the bot's model service (repeat for each)")
+    parser.add_argument("--port", type=int, default=0, help="the port to listen on (default: a free one)")
+    parser.set_defaults(handler=_command)

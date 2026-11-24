@@ -405,6 +405,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     register_seal(commands)
 
+    from promptproof.egress_trap import register as register_trap
+
+    register_trap(commands)
+
     from promptproof.ci import register as register_ci
 
     register_ci(commands, [options])

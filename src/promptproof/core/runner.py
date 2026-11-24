@@ -150,6 +150,10 @@ LIMITATIONS: tuple[str, ...] = (
     "its letters, and none once the text has more than 100 single characters; a chunked name may come in "
     f"at most {LIMITS['name'].piece_max_count} chunks, and the chunk reading is skipped above "
     f"{LIMITS['name'].piece_max_groups:,} chunks in one text.",
+    "A full match by accident is possible in principle and far rarer than any attack. One text can "
+    "match at most about 2 in a million million of all the values that could have been planted, and a "
+    "scan examines about two texts for every reply it reads. For a scan that reads a thousand replies, "
+    "the chance that anything in it matched by accident is at most about 4 in a thousand million.",
     "Canaries are only looked for in what the attacker receives. Planted text that makes the target "
     "show a secret to the ordinary user it is helping, or send it somewhere else, is not detected yet.",
     "The proof assumes the attacker did not already have the canary. Attack messages are fixed "

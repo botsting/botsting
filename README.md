@@ -173,7 +173,9 @@ Make a key with `promptproof harness-key` and set it as `PROMPTPROOF_HARNESS_KEY
 - Set `PROMPTPROOF_CHALLENGE` to the token line from `promptproof authorize` and the harness serves the ownership proof for you.
 - The harness uses only the Python standard library.
 
-When something is not working, `promptproof doctor --target http:staging` checks the setup step by step (description, credentials, key, authorization, proof of control, the harness, legitimate use) and prints the command or change that fixes the first step not passed. It sends nothing hostile, and nothing at all before an authorization is on record. Add `--env-file staging.env` (an export of the deployment's settings) and it also refuses to go on if a test deployment holds production keys.
+A scan that writes a browser report (`--html`, and every first scan) opens it in your browser when it ends, if you are at a terminal. `--no-open`, or the environment variable `PROMPTPROOF_NO_OPEN`, stops that; it never happens in a pipeline.
+
+When something is not working, `promptproof doctor --target http:staging` checks the setup step by step (description, credentials, key, authorization, proof of control, the harness, legitimate use) and prints the command or change that fixes the first step not passed. It sends nothing hostile, and nothing at all before an authorization is on record. `--offline` stops before anything that contacts the bot. Add `--env-file staging.env` (an export of the deployment's settings) and it also refuses to go on if a test deployment holds production keys.
 
 Limits:
 
@@ -268,7 +270,7 @@ This tests one thing: whether the bot can be talked into revealing a secret held
 
 ### Testing the real system
 
-A copy is never exactly the real thing: settings, data and connected services differ. The drop-in harness also works on the real deployment, at two levels. Both need an authorization recorded with `--environment production`.
+A copy is never exactly the real thing: settings, data and connected services differ. The drop-in harness also works on the real deployment, at two levels. Record the authorization for it with `--environment production`, so that the report says what was tested. Promptproof cannot tell a real deployment from a copy, so it does not enforce this: what it enforces for real actions is the four switches below.
 
 **Look only.** Set `PROMPTPROOF_HARNESS_KEY` on the real deployment. The real bot, prompt and data are tested; in a test session every marked tool is recorded and not run, and real users are untouched. Fake secrets exist only inside each test conversation.
 
@@ -373,7 +375,7 @@ Licensed under Apache-2.0.
 
 ## Seal the evidence
 
-A finished run's directory (reports, transcripts, the egress trap's log) can be packed into one bundle that anyone can check later:
+A finished run's directory (reports, transcripts, and the egress trap's log if you ran one) can be packed into one bundle that anyone can check later:
 
 ```
 uv run promptproof seal runs/2026-11-21 --out evidence.sealed.zip
@@ -381,6 +383,14 @@ uv run promptproof check-seal evidence.sealed.zip --seal <the printed seal>
 ```
 
 Share the seal separately from the bundle. A matching seal shows that nothing in the bundle changed since it was sealed, and the check also prints which outbound destinations the egress log shows as allowed and refused. It does not show who made the bundle; signing is a later step.
+
+No scan starts the egress trap for you. It is a separate command to run next to a bot, most useful when you test a copy of a real system and want a record of what it tried to reach:
+
+```
+promptproof egress-trap --log run/egress-trap.jsonl --allow api.anthropic.com:443
+```
+
+It prints the proxy settings to start the bot with, refuses and records every other outbound web request, and closes its log on Ctrl+C. It sees traffic that honours proxy settings, not raw connections such as a database's.
 
 The egress trap writes its log as a chain: each line carries a hash of itself and the line before, and the last line records the stop. The check says whether the chain is intact and closed, and fails if a line was changed, removed, added or reordered before sealing. The chain uses no secret, so it catches a partial edit, not a log rewritten in full with every hash recomputed; the seal shared when the run ended is what rules that out.
 

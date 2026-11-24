@@ -7,7 +7,7 @@ Nothing has been released yet. This lists what the first release will contain.
 ### Finding problems
 - Disclosure, forbidden-action and planted-text attacks, with a static list and an adaptive attacker (built in, or PyRIT behind the same interface).
 - Fake secrets ("canaries") in two styles: a code, and an invented name for places where a bot would refuse to repeat a code-like value.
-- A matcher that recognizes a leaked secret in plain text, re-cased, reversed, rot13, URL-encoded, base64, hex, spelled out or split across replies, with the odds of a chance match stated in every report.
+- A matcher that recognizes a leaked secret in plain text, re-cased, reversed, rot13, URL-encoded, base64, hex, spelled out or split across replies, with the odds of a chance match stated in every report's limitations.
 - Every finding is replayed from a clean state, with discovery and reproduction rates and their intervals.
 - A scan that could not have seen a failure is reported as inconclusive, never as clean.
 
@@ -30,7 +30,7 @@ Nothing has been released yet. This lists what the first release will contain.
 - Live testing under caps: a tool runs for real only when a cap in the bot's code, a switch on the deployment, the signed session and the authorization all agree; a call outside a cap is recorded and not run.
 - `promptproof sterile-check` looks for production keys on a test deployment, by name and known prefix only.
 - Limits on messages, tool calls and time, and a stop that takes effect at once.
-- An outbound-traffic trap with a hash-chained log.
+- `promptproof egress-trap`: a trap you run next to a bot to record and refuse its outbound web traffic, with a hash-chained log. No scan starts it by itself.
 - Every scan request is labelled as test traffic.
 
 ### Evidence
