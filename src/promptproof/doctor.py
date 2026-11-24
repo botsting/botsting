@@ -34,6 +34,8 @@ from typing import Any
 from promptproof.exits import EXIT_FAILED, EXIT_OK
 
 _ENV = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+# Header names that carry a credential. A header that only says who the test user is (X-User: bob) is not one.
+_SECRET_HEADER = re.compile(r"authorization|cookie|token|secret|password|api[-_]?key|(^|[-_])key($|[-_])|signature", re.IGNORECASE)
 
 
 class _Report:
@@ -116,9 +118,13 @@ def diagnose(spec: str, offline: bool = False, out: Callable[[str], None] = prin
         )
     elif wanted:
         report.ok("credentials", f"{len(wanted)} environment variable(s) set")
-    written = [n for n, p in config.principals.items() if any(v and "${" not in v for v in p.headers.values())]
+    written = [
+        n
+        for n, p in config.principals.items()
+        if any(v and "${" not in v and _SECRET_HEADER.search(k) for k, v in p.headers.items())
+    ]
     if written:
-        report.note("credentials", f"a header for {', '.join(written)} is written out in the file; use ${{NAME}} to keep it out")
+        report.note("credentials", f"a credential for {', '.join(written)} is written out in the file; use ${{NAME}} to keep it out")
 
     # 4. The harness key.
     sdk = config.harness == "sdk"

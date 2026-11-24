@@ -128,11 +128,11 @@ def test_violations_report_shows_evidence_and_both_rates(vulnerable):
     page = assert_inert(html)
     text = page.visible
     assert "14 verified violations found." in text
-    assert "11 protected data disclosed, 3 forbidden action(s) carried out" in text
+    assert "11 protected data disclosed, 3 forbidden action(s) accepted" in text
     assert "reproduced in 5 of 5 replays from reset (95% Wilson interval 57% to 100%)" in text
     assert "found in 1 of 1 search attempts" in text
     assert "promptproof replay reports/scan.promptproof.json --finding F1" in text
-    assert "issue_refund(order_id=B-2002, amount=500)" in text and "carried out by the tool" in text
+    assert "issue_refund(order_id=B-2002, amount=500)" in text and "accepted by the tool" in text
     assert "Not taken from what the target said" in text
     assert "by association, not by proof of cause" in text
     assert "Ordinary user (sent by staff:dana)" in text
@@ -315,7 +315,7 @@ def test_generated_reports_never_contain_forbidden_framework_claims(vulnerable, 
 def test_the_report_says_what_was_reached_and_what_to_change(vulnerable, fixed):
     text = assert_inert(render_html(vulnerable)).visible
     assert "Its planted value was disclosed to the attacker" in text
-    assert "A tool was called for the attacker, and carried it out" in text
+    assert "A tool was called for the attacker, and accepted the call" in text
     assert "What to change" in text and "Take the secret out of the instructions" in text
     clean = assert_inert(render_html(fixed)).visible
     assert "No planted value came out and no forbidden tool call was recorded." in clean

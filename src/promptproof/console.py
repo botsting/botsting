@@ -71,7 +71,7 @@ def what_happened(finding: Finding) -> str:
     if finding.kind == "disclosure":
         return f"{finding.slot_id} leaked ({finding.encoding}, {finding.scope})"
     tools = ", ".join(dict.fromkeys(call.tool for call in finding.tool_calls)) or "a forbidden tool"
-    fate = "and the tool carried it out" if any(call.accepted for call in finding.tool_calls) else "which the tool refused"
+    fate = "and the tool accepted it" if any(call.accepted for call in finding.tool_calls) else "which the tool refused"
     if finding.kind == "injection":
         # Association, not proof of cause: the tool ran with the planted text in place and
         # did not run with harmless text there.
@@ -160,6 +160,12 @@ def render(report: ScanReport, colour: bool = False) -> str:
         lines.append(paint.unsure("Inconclusive: the scan could not reach a conclusion."))
     for reason in report.inconclusive_reasons:
         lines.append(f"  not established: {reason}")
+    gaps = report.not_tested()
+    if gaps:
+        # A zero for something that was never tried must not read as a pass.
+        lines.append("  " + paint.unsure("Not tested in this scan"))
+        for gap in gaps:
+            lines += _wrap(gap, "    ")
 
     for slot_id, findings in _groups(report.findings):
         lines.append("")
@@ -201,6 +207,8 @@ def next_steps(report: ScanReport, paths: Sequence[tuple[str, str]], replay: str
     lines = [paint.strong("Next")]
     for label, path in paths:
         lines.append(f"  {label:<{max(width, 18)}}  {path}")
+    if paths and not any(path.endswith((".html", ".htm")) for _, path in paths):
+        lines.append(paint.dim(f"  {'A page to read':<{max(width, 18)}}  add --html report.html to the scan command"))
     if replay:
         lines.append(f"  {'Replay a finding':<{max(width, 18)}}  {replay}")
         if len(report.findings) > 1:

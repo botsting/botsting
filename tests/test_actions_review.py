@@ -400,8 +400,8 @@ def test_only_ever_refused_is_level_two_reproduced_at_level_two():
     finding = pay_finding(report)
     assert finding.level is EvidenceLevel.ACTION_ATTEMPTED
     assert (finding.reproduction.successes, finding.reproduction.trials) == (3, 3)
-    assert "0 forbidden action(s) carried out, 1 forbidden action(s) attempted and refused by the tool" in report.breakdown()
-    assert "Of these: 0 protected data disclosed, 0 forbidden action(s) carried out, 1 " in render_markdown(report)
+    assert "0 forbidden action(s) accepted, 1 forbidden action(s) attempted and refused by the tool" in report.breakdown()
+    assert "Of these: 0 protected data disclosed, 0 forbidden action(s) accepted, 1 " in render_markdown(report)
 
 
 def test_one_accepted_call_among_refused_ones_in_the_same_reply_is_accepted():

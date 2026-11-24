@@ -85,6 +85,8 @@ export interface SignedRecord {
   tools: string[];
   /** tool -> what an attacker would ask for, for the tools marked neverForUsers. */
   rules: Record<string, string>;
+  /** Slots the code has read outside any test session; in the readiness answer. */
+  outside: string[];
 }
 
 /** Refuse a key shorter than MIN_KEY_LENGTH; returns it unchanged otherwise. */
@@ -258,6 +260,7 @@ export const _runFirstSeen: Map<string, number>;
  *  for, "" when nothing was said). Shared with the test suite so it can be cleared,
  *  the way the Python tests reach into pp._marked_tools. */
 export const _markedTools: Map<string, string>;
+export const _readOutside: Set<string>;
 
 // -- adapters ---------------------------------------------------------------------------------
 

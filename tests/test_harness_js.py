@@ -153,6 +153,7 @@ def test_a_js_signed_calls_header_is_accepted_by_python_with_the_right_nonce(key
 
 def test_js_reads_a_python_signed_record_with_name_lists(key, monkeypatch):
     monkeypatch.setattr(pp, "_marked_tools", {"example": ""})
+    monkeypatch.setattr(pp, "_read_outside", {"read_at_start"})
     session = pp._Session(sid="s1", fixtures={}, content={}, key=KEY, nonce="n1")
     session.read.append("sample")
     header = session.header_value(tools=True)
@@ -162,7 +163,7 @@ def test_js_reads_a_python_signed_record_with_name_lists(key, monkeypatch):
         {pp.KEY_ENV: KEY},
     )
     ours = pp.read_record(KEY, "s1", header, "n1")
-    assert ours == {"calls": [], "read": ["sample"], "tools": ["example"], "rules": {}}
+    assert ours == {"calls": [], "read": ["sample"], "tools": ["example"], "rules": {}, "outside": ["read_at_start"]}
     assert out == ours  # the JavaScript reader returns rules too, with the same validation
 
 
@@ -187,6 +188,7 @@ def test_python_reads_a_js_signed_readiness_record_with_tools_and_rules(key):
         "read": ["staff_code"],
         "tools": ["issue_refund", "send_email"],
         "rules": {"issue_refund": "a refund of 50 on order A-1001"},
+        "outside": [],
     }
     with pytest.raises(pp.HarnessError, match="not signed"):
         pp.read_record(KEY, "s2", out["calls"], "n1")  # bound to this session, as ever

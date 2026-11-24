@@ -87,6 +87,15 @@ def render_markdown(report: ScanReport, report_path: str | None = None) -> str:
 
 
 def _headline(report: ScanReport) -> list[str]:
+    lines = _verdict_lines(report)
+    gaps = report.not_tested()
+    if gaps:
+        lines += ["", "Not tested in this scan:", ""]
+        lines.extend(f"- {_text(gap)}" for gap in gaps)
+    return lines
+
+
+def _verdict_lines(report: ScanReport) -> list[str]:
     if report.status == "violations_verified":
         count = len(report.findings)
         plural = "" if count == 1 else "s"
@@ -314,7 +323,7 @@ def _what_was_violated(finding: Finding) -> list[str]:
 
 def _call_text(call: ToolCall) -> str:
     arguments = ", ".join(f"{name}={value}" for name, value in call.arguments)
-    fate = "carried out by the tool" if call.accepted else "refused by the tool"
+    fate = "accepted by the tool" if call.accepted else "refused by the tool"
     result = f"; the tool answered {_code(call.result)}" if call.result else ""
     return f"{_code(f'{call.tool}({arguments})')} {fate}{result}"
 

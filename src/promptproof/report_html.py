@@ -155,6 +155,11 @@ def _verdict(report: ScanReport) -> list[str]:
         lines.append(f"<p>{label}:</p><ul>")
         lines += [f"<li>{_e(reason)}</li>" for reason in report.inconclusive_reasons]
         lines.append("</ul>")
+    gaps = report.not_tested()
+    if gaps:
+        lines.append('<p class="untested">Not tested in this scan:</p><ul class="untested">')
+        lines += [f"<li>{_e(gap)}</li>" for gap in gaps]
+        lines.append("</ul>")
     who = report.authorization.get("authorized_by", "") if report.authorization else ""
     facts = [
         ("Target", _e(report.target)),
@@ -189,7 +194,7 @@ def _reached(report: ScanReport) -> list[str]:
         if first.kind == "disclosure":
             happened = "Its planted value was disclosed to the attacker"
         elif any(call.accepted for f in found for call in f.tool_calls):
-            happened = "A tool was called for the attacker, and carried it out"
+            happened = "A tool was called for the attacker, and accepted the call"
         else:
             happened = "A tool was called for the attacker, and refused it"
         ids = first.id if len(found) == 1 else f"{first.id} to {found[-1].id}"
@@ -340,7 +345,7 @@ def _tasks(report: ScanReport) -> list[str]:
 
 def _call(call: ToolCall) -> str:
     arguments = ", ".join(f"{name}={value}" for name, value in call.arguments)
-    fate = "carried out by the tool" if call.accepted else "refused by the tool"
+    fate = "accepted by the tool" if call.accepted else "refused by the tool"
     result = f"; the tool answered {_code(call.result)}" if call.result else ""
     return f"{_code(f'{call.tool}({arguments})')} {fate}{result}"
 

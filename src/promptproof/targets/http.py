@@ -592,6 +592,7 @@ class HttpTarget:
         self.last_read: tuple[str, ...] = ()  # slots the bot read while handling the last message
         self.marked_tools: tuple[str, ...] = ()  # tools the harness says are marked, from its readiness answer
         self.tool_asks: dict[str, str] = {}  # of those, the ones no chat user may cause -> what to ask for
+        self.read_outside: tuple[str, ...] = ()  # slots its code has read outside any test session
         # A fresh pass phrase per slot for this scan. It travels only in control sessions.
         self._phrases = {slot_id: pass_phrase() for slot_id in config.harness_controls}
         self._slots = tuple(
@@ -727,6 +728,8 @@ class HttpTarget:
         if record["tools"]:
             self.marked_tools = tuple(record["tools"])
             self.tool_asks = dict(record["rules"])
+        if record["outside"]:
+            self.read_outside = tuple(record["outside"])
         record = record["calls"]
         return _tool_calls(record)
 

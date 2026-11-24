@@ -347,11 +347,11 @@ export function readRecord(key, sessionId, value, nonce = "") {
   } catch (error) {
     throw new HarnessError(`the tool-call record is unreadable: ${error && error.message ? error.message : error}`);
   }
-  const { calls, dropped, read = [], tools = [], rules = {} } = record;
+  const { calls, dropped, read = [], tools = [], rules = {}, outside = [] } = record;
   if (!Array.isArray(calls) || !isIntegerDropCount(json, dropped)) {
     throw new HarnessError("the tool-call record must hold a list of calls and a count of dropped ones");
   }
-  for (const [name, items] of [["read", read], ["tools", tools]]) {
+  for (const [name, items] of [["read", read], ["tools", tools], ["outside", outside]]) {
     if (!Array.isArray(items) || !items.every((item) => typeof item === "string")) {
       throw new HarnessError(`the record's '${name}' must be a list of names`);
     }
@@ -370,7 +370,7 @@ export function readRecord(key, sessionId, value, nonce = "") {
   ) {
     throw new HarnessError("the record's 'rules' must map tool names to text");
   }
-  return { calls, read, tools, rules };
+  return { calls, read, tools, rules, outside };
 }
 
 function pyFloatsMasked(json) {
@@ -448,6 +448,7 @@ export class Session {
         if (ask) rules[name] = ask; // tools that say nothing about who may use them carry no rule
       }
       record.rules = rules;
+      record.outside = [...readOutside].sort(pyCmp);
     }
     const payload = b64(Buffer.from(pyDumps(record, { compact: true }), "utf8"));
     return payload + "." + mac(this.key, CALLS_DOMAIN, [this.sid, this.nonce, payload]);
@@ -482,6 +483,11 @@ export const MAX_SLOTS_NOTED = 50; // distinct slots one request's record lists 
 export const MAX_TOOLS_NOTED = 200; // tools whose marks fit in one process's readiness answer
 const markedTools = new Map();
 export const _markedTools = markedTools;
+// Slots the code asked for outside any test session: when the app started, or on ordinary
+// requests. A slot read here and never while a test message is handled cannot be tested where
+// it is; a first scan says so by name. Exported as _readOutside for the test suite.
+const readOutside = new Set();
+export const _readOutside = readOutside;
 
 export function markTool(name, neverForUsers = "") {
   // Note that a tool with this name is covered by the harness (done for you by action()).
@@ -582,7 +588,10 @@ export function controlNote(phrase) {
 export function planted(slotId, default_ = "") {
   // The fake secret for this slot during a test session, `default` at any other time.
   const session = storage.getStore();
-  if (session === undefined) return default_;
+  if (session === undefined) {
+    if (!readOutside.has(slotId) && readOutside.size < MAX_SLOTS_NOTED) readOutside.add(slotId);
+    return default_;
+  }
   if (!session.read.includes(slotId) && session.read.length < MAX_SLOTS_NOTED) {
     session.read.push(slotId); // the signed record says which slots this request read
   }

@@ -18,7 +18,7 @@ def test_scan_vulnerable_then_replay(tmp_path, capsys):
     assert main(["scan", "--target", "toy:vulnerable", "--out", str(out), "--replays", "2"]) == EXIT_VIOLATIONS
     printed = capsys.readouterr().out
     assert (
-        "14 verified violation(s): 11 protected data disclosed, 3 forbidden action(s) carried out, "
+        "14 verified violation(s): 11 protected data disclosed, 3 forbidden action(s) accepted, "
         "0 forbidden action(s) attempted and refused by the tool."
     ) in printed
     assert f"promptproof replay {out.as_posix()} --finding F1" in printed

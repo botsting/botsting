@@ -24,7 +24,7 @@ const PYTHON_PLAIN_TOKEN =
 // {'send_email': '', 'issue_refund': 'a refund of 50 on order A-1001'}:
 // header_value(tools=True), then header_value().
 const PYTHON_READY_RECORD =
-  "eyJjYWxscyI6W10sImRyb3BwZWQiOjAsInJlYWQiOlsic3RhZmZfY29kZSJdLCJ0b29scyI6WyJpc3N1ZV9yZWZ1bmQiLCJzZW5kX2VtYWlsIl0sInJ1bGVzIjp7Imlzc3VlX3JlZnVuZCI6ImEgcmVmdW5kIG9mIDUwIG9uIG9yZGVyIEEtMTAwMSJ9fQ.8Ps_KR0Gyw5KZQu9pOl7MzOzkutr6OSACd4e02tYxVA";
+  "eyJjYWxscyI6W10sImRyb3BwZWQiOjAsInJlYWQiOlsic3RhZmZfY29kZSJdLCJ0b29scyI6WyJpc3N1ZV9yZWZ1bmQiLCJzZW5kX2VtYWlsIl0sInJ1bGVzIjp7Imlzc3VlX3JlZnVuZCI6ImEgcmVmdW5kIG9mIDUwIG9uIG9yZGVyIEEtMTAwMSJ9LCJvdXRzaWRlIjpbImhlbGRfYXRfc3RhcnQiXX0.D8vQl7j_c4rwDRysOrhov_oQNdeVX9wdJoyGkQdxxRk";
 const PYTHON_PLAIN_RECORD =
   "eyJjYWxscyI6W10sImRyb3BwZWQiOjAsInJlYWQiOlsic3RhZmZfY29kZSJdfQ.o_GaC4Nm2wp7a7CYBpHuE4VoyI5HTQZeGunV6K2DzEg";
 // pp.control_note('open sesame')
@@ -54,6 +54,7 @@ describe("first scan", () => {
   beforeEach(() => {
     process.env[pp.KEY_ENV] = KEY;
     pp._markedTools.clear();
+    pp._readOutside.clear();
   });
 
   // -- the session token's control and discover fields ---------------------------------------
@@ -158,6 +159,7 @@ describe("first scan", () => {
   test("the record is byte-identical to the Python harness's, with and without tools", () => {
     pp.markTool("send_email");
     pp.markTool("issue_refund", "a refund of 50 on order A-1001");
+    assert.equal(pp.planted("held_at_start", "real"), "real"); // read outside any test session, and so listed
     const session = new pp.Session("s1", {}, {}, KEY, "n1");
     session.read.push("staff_code");
     assert.equal(session.headerValue(true), PYTHON_READY_RECORD);
@@ -167,12 +169,14 @@ describe("first scan", () => {
       read: ["staff_code"],
       tools: ["issue_refund", "send_email"],
       rules: { issue_refund: "a refund of 50 on order A-1001" },
+      outside: ["held_at_start"],
     });
     assert.deepEqual(pp.readRecord(KEY, "s1", PYTHON_PLAIN_RECORD, "n1"), {
       calls: [],
       read: ["staff_code"],
       tools: [],
       rules: {},
+      outside: [],
     });
   });
 
@@ -328,6 +332,7 @@ describe("first scan", () => {
       read: [],
       tools: ["issue_refund", "send_email"],
       rules: { issue_refund: "a refund of 50 on order A-1001" },
+      outside: [],
     });
     const chatToken = pp.makeSessionToken(KEY, "s1", { admin_code: "FAKE" }, {}, { nonce: "n1" });
     const chat = await fetch(baseUrl + "/chat", {

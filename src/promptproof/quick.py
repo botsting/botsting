@@ -280,14 +280,40 @@ def discover(
             shown = next(key for key, value in body.items() if value == "{message}") if "messages" not in body else "messages"
             say(f"It takes the message in {shown!r} and answers at {pointer or 'the top level'!r}.")
             slots = list(candidate.last_read)
+            # Read by the code, but not while a message is handled: the test value cannot be put in there.
+            elsewhere = sorted(set(probe.read_outside) - set(slots))
+            moved = ""
+            if elsewhere:
+                names = ", ".join(f'pp.planted("{slot}")' for slot in elsewhere)
+                moved = (
+                    f"Your code calls {names}, but not while it handles a message (for example once, when the app "
+                    "starts), so a test value cannot be put in there. Call it where each message is handled, for "
+                    "example where the instructions are put together for the model, then restart the bot."
+                )
             if not slots and not rules:
                 raise QuickError(
                     "the bot answered, but its code read no planted secret while doing so, and no marked tool says "
-                    "it is never for users, so there is nothing to test yet.\nWhere the bot builds its instructions, "
-                    'add the secret through the harness, for example:\n  prompt = BASE_PROMPT + pp.planted("admin_code")\n'
-                    "then restart the bot and run this again."
+                    "it is never for users, so there is nothing to test yet.\n"
+                    + (
+                        moved
+                        or "Where the bot builds its instructions for each message, add the secret through the "
+                        'harness, for example:\n  prompt = BASE_PROMPT + pp.planted("admin_code")\n'
+                        "then restart the bot and run this again."
+                    )
                 )
-            say(f"Secrets it reads on an ordinary message: {', '.join(slots) or 'none'}.")
+            if slots:
+                say(f"Secrets it reads on an ordinary message: {', '.join(slots)}.")
+            else:
+                say("Secrets it reads on an ordinary message: none. SECRET LEAKS WILL NOT BE TESTED in this scan.")
+            if moved:
+                say(moved)
+                notes.append(("Not tested: " if slots else "Secret leaks were not tested. ") + moved)
+            elif not slots:
+                notes.append(
+                    "Secret leaks were not tested: the bot read no planted secret while handling a message. To test "
+                    "them, read the secret through the harness where the instructions are put together, for example:\n"
+                    '  prompt = BASE_PROMPT + pp.planted("admin_code")'
+                )
             if rules:
                 say(f"Tools no chat user may cause: {', '.join(sorted(rules))}.")
             return _description(origin, path, body, pointer, slots, rules), notes
@@ -301,18 +327,26 @@ def discover(
 def run(args: Any) -> int:
     """The `promptproof scan URL` command."""
     from promptproof.cli import run_scan_command
+    from promptproof.console import _wrap
     from promptproof.exits import EXIT_INCONCLUSIVE
     from promptproof.practice_server import write_description
     from promptproof.targets.http import targets_file
 
+    def say(text: str) -> None:
+        # Kept to the width of the rest of the output; a line that is already short, or a command, is left alone.
+        for line in text.splitlines():
+            wrapped = _wrap(line, "") if len(line) > 100 and not line.startswith("  ") else [line]
+            for part in wrapped:
+                print(part)
+
     try:
-        name, description, notes = discover(args.url, args.name, args.field, args.session_field, args.reply)
+        name, description, notes = discover(args.url, args.name, args.field, args.session_field, args.reply, say=say)
     except QuickError as error:
         print(f"Not scanned: {error}")
         return EXIT_INCONCLUSIVE
     path: Path = targets_file()
     write_description(path, name, description)
-    print(f"Saved what was worked out as target '{name}' in {path}.")
+    print(f"Saved what was worked out as target http:{name} in {path}.")
     print()
     args.target = f"http:{name}"
     if not args.html:
@@ -320,5 +354,9 @@ def run(args: Any) -> int:
     code = run_scan_command(args)
     for note in notes:
         print()
-        print(note)
+        say(note)
+    print()
+    print("After a change to the bot, the same command scans it again. To use the saved description instead:")
+    print(f"  promptproof doctor --target http:{name}")
+    print(f"  promptproof scan --target http:{name} --html report.html")
     return code

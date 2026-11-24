@@ -269,8 +269,10 @@ def read_record(key: str, session_id: str, value: str | None, nonce: str = "") -
     """What the scanner does with the Promptproof-Tool-Calls header: the whole signed record.
 
     Returns {"calls": [...], "read": [slot ids read in this message], "tools": [marked tools, in the
-    readiness answer], "rules": {tool: what an attacker would ask for, for tools no chat user may cause}}. Raises HarnessError if it was not made by a harness holding the key for this
-    very session and message, or if calls were left out."""
+    readiness answer], "rules": {tool: what an attacker would ask for, for tools no chat user may cause},
+    "outside": [slot ids the code has read outside any test session, in the readiness answer]}.
+    Raises HarnessError if it was not made by a harness holding the key for this very session and
+    message, or if calls were left out."""
     if value is None:
         raise HarnessError(
             f"the reply has no {CALLS_HEADER} header: the harness did not see this as a test session "
@@ -283,11 +285,12 @@ def read_record(key: str, session_id: str, value: str | None, nonce: str = "") -
         record = json.loads(_unb64(payload))
         calls, dropped = record["calls"], record["dropped"]
         read, tools, rules = record.get("read", []), record.get("tools", []), record.get("rules", {})
+        outside = record.get("outside", [])
     except (ValueError, KeyError, TypeError) as error:
         raise HarnessError(f"the tool-call record is unreadable: {error}") from error
     if not isinstance(calls, list) or type(dropped) is not int:
         raise HarnessError("the tool-call record must hold a list of calls and a count of dropped ones")
-    for name, items in (("read", read), ("tools", tools)):
+    for name, items in (("read", read), ("tools", tools), ("outside", outside)):
         if not isinstance(items, list) or not all(isinstance(item, str) for item in items):
             raise HarnessError(f"the record's {name!r} must be a list of names")
     if dropped:
@@ -297,7 +300,7 @@ def read_record(key: str, session_id: str, value: str | None, nonce: str = "") -
         )
     if not isinstance(rules, dict) or not all(isinstance(ask, str) for ask in rules.values()):
         raise HarnessError("the record's 'rules' must map tool names to text")
-    return {"calls": calls, "read": read, "tools": tools, "rules": rules}
+    return {"calls": calls, "read": read, "tools": tools, "rules": rules, "outside": outside}
 
 
 def read_calls_header(key: str, session_id: str, value: str | None, nonce: str = "") -> list[dict[str, Any]]:
@@ -338,6 +341,7 @@ class _Session:
         if tools:
             record["tools"] = sorted(_marked_tools)
             record["rules"] = {name: ask for name, ask in sorted(_marked_tools.items()) if ask}
+            record["outside"] = sorted(_read_outside)
         payload = _b64(json.dumps(record, separators=(",", ":")).encode("utf-8"))
         return payload + "." + _mac(self.key, _CALLS_DOMAIN, self.sid, self.nonce, payload)
 
@@ -346,6 +350,10 @@ _current: ContextVar[_Session | None] = ContextVar("promptproof_session", defaul
 # Every tool marked in this process, for the readiness answer: name -> what an attacker would ask for
 # if no chat user may ever cause it ("" when nothing was said about who may use it).
 _marked_tools: dict[str, str] = {}
+# Slots the code asked for outside any test session: when the app started, or on ordinary requests.
+# A slot that is read here and never while a test message is handled cannot be tested where it is;
+# a first scan says so by name. Names only, written in the bot's own code.
+_read_outside: set[str] = set()
 _MAX_SLOTS_NOTED = 50
 _MAX_TOOLS_NOTED = 200
 
@@ -419,6 +427,8 @@ def planted(slot_id: str, default: str = "") -> str:
     """The fake secret for this slot during a test session, `default` at any other time."""
     session = _current.get()
     if session is None:
+        if slot_id not in _read_outside and len(_read_outside) < _MAX_SLOTS_NOTED:
+            _read_outside.add(slot_id)
         return default
     if slot_id not in session.read and len(session.read) < _MAX_SLOTS_NOTED:
         session.read.append(slot_id)  # the signed record says which slots this request read
@@ -717,14 +727,37 @@ def _challenge() -> bytes | None:
 def wrap(app: Any) -> Any:
     """Wrap an ASGI or WSGI app. Without PROMPTPROOF_HARNESS_KEY set, requests pass straight through."""
     _key()  # a key that is set but too short is a mistake worth stopping on
+    # Flask and Quart serve themselves (`app.run()`, `flask run`), through an inner app they let
+    # middleware replace. Wrapping that in place keeps `app` the framework's own object, so its
+    # routes, its `run()` and its test client all still work, and all of them are wrapped.
+    for inner, wrapper in (("asgi_app", _Asgi), ("wsgi_app", _Wsgi)):
+        served = getattr(app, inner, None)
+        if callable(served) and not isinstance(app, (_Asgi, _Wsgi)):
+            if not isinstance(served, wrapper):
+                setattr(app, inner, wrapper(served))
+            return app
     if inspect.iscoroutinefunction(app) or inspect.iscoroutinefunction(type(app).__call__):
         return _Asgi(app)
     return _Wsgi(app)
 
 
+def _not_on_the_wrapper(name: str) -> AttributeError:
+    return AttributeError(
+        f"{name!r} was asked of the object pp.wrap() returned, which only serves requests. Do everything else "
+        "with your app first (routes, settings), wrap it last, and give the wrapped object to the server. "
+        "If the app serves itself (app.run()), wrap what it serves instead: app.wsgi_app = pp.wrap(app.wsgi_app)."
+    )
+
+
 class _Asgi:
     def __init__(self, app: Any) -> None:
         self.app = app
+
+    def __getattr__(self, name: str) -> Any:
+        # Routes added after wrapping (FastAPI's @app.post) go to the app inside, which this still serves.
+        if name == "app" or name.startswith("__"):
+            raise AttributeError(name)
+        return getattr(self.app, name)
 
     async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
         if scope.get("type") != "http":
@@ -784,6 +817,12 @@ class _Asgi:
 class _Wsgi:
     def __init__(self, app: Any) -> None:
         self.app = app
+
+    def __getattr__(self, name: str) -> Any:
+        # Not passed on to the app inside: its own run() would serve it unwrapped, and no test would reach it.
+        if name == "app" or name.startswith("__"):
+            raise AttributeError(name)
+        raise _not_on_the_wrapper(name)
 
     def __call__(self, environ: dict[str, Any], start_response: Callable[..., Any]) -> Iterable[bytes]:
         challenge = _challenge()

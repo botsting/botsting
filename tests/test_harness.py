@@ -725,3 +725,74 @@ def test_a_bot_that_fails_during_a_test_is_explained(key):
     with pytest.raises(TargetError, match="returns a stand-in, not its usual answer") as raised:
         asyncio.run(talk())
     assert "result=" in str(raised.value) and "own log" in str(raised.value)
+
+
+# -- wrapping an app that serves itself ---------------------------------------------------------
+
+
+class FlaskLike:
+    """The part of Flask that matters here: the app serves itself through `wsgi_app`, so middleware
+    replaces that attribute, and `run()` then serves the wrapped one."""
+
+    def __init__(self):
+        self.seen = []
+
+    def wsgi_app(self, environ, start_response):
+        self.seen.append(pp.active())
+        start_response("200 OK", [("Content-Type", "text/plain")])
+        return [pp.planted("code", "real").encode()]
+
+    def __call__(self, environ, start_response):
+        return self.wsgi_app(environ, start_response)
+
+    def run(self):
+        return "serving"
+
+
+def test_wrapping_a_flask_style_app_keeps_it_the_app_and_wraps_what_it_serves(key):
+    app = FlaskLike()
+    wrapped = pp.wrap(app)
+    assert wrapped is app and wrapped.run() == "serving"  # app.run() and the routes still work
+    assert pp.wrap(app) is app and isinstance(app.wsgi_app, pp._Wsgi) and not isinstance(app.wsgi_app.app, pp._Wsgi)
+    token = pp.make_session_token(KEY, "s1", {"code": "FAKE-1"}, nonce="n1")
+    environ = {"REQUEST_METHOD": "POST", "PATH_INFO": "/chat", "HTTP_PROMPTPROOF_SESSION": token}
+    headers = {}
+
+    def start_response(status, response_headers, exc_info=None):
+        headers.update(response_headers)
+
+    assert b"".join(app(environ, start_response)) == b"FAKE-1"  # what the app itself serves is wrapped
+    assert app.seen == [True] and pp.CALLS_HEADER in headers
+
+
+def test_asking_the_wsgi_wrapper_for_anything_else_says_what_to_do(key):
+    wrapped = pp.wrap(lambda environ, start_response: [b""])
+    with pytest.raises(AttributeError, match=r"wrap it last.*app\.wsgi_app = pp\.wrap\(app\.wsgi_app\)"):
+        wrapped.run()
+    assert not hasattr(wrapped, "__wrapped__")  # a probe for a missing name is still an AttributeError
+
+
+def test_routes_added_to_a_wrapped_asgi_app_reach_the_app_inside(key):
+    class AsgiApp:
+        def __init__(self):
+            self.routes = []
+
+        def post(self, path):
+            self.routes.append(path)
+
+        async def __call__(self, scope, receive, send):
+            pass
+
+    inner = AsgiApp()
+    wrapped = pp.wrap(inner)
+    wrapped.post("/chat")
+    assert isinstance(wrapped, pp._Asgi) and inner.routes == ["/chat"]
+
+
+def test_slots_read_outside_a_test_session_are_listed_in_the_readiness_answer(key, monkeypatch):
+    monkeypatch.setattr(pp, "_read_outside", set())
+    monkeypatch.setattr(pp, "_marked_tools", {})
+    assert pp.planted("held_at_start", "real") == "real"
+    session = pp._Session(sid="s1", fixtures={}, content={}, key=KEY, nonce="n1")
+    assert pp.read_record(KEY, "s1", session.header_value(tools=True), "n1")["outside"] == ["held_at_start"]
+    assert pp.read_record(KEY, "s1", session.header_value(), "n1")["outside"] == []  # only in the readiness answer

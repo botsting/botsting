@@ -234,7 +234,7 @@ def test_reports_round_trip_and_render(vulnerable_report, fixed_report, tmp_path
     assert "Forbidden action accepted" in text
     assert "**Ordinary user (sent by staff:dana):**" in text
     assert "**Attacker (planted at bob\\_order\\_note):**" in text
-    assert "` issue_refund(order_id=B-2002, amount=500) ` carried out by the tool" in text
+    assert "` issue_refund(order_id=B-2002, amount=500) ` accepted by the tool" in text
     assert "Recorded at the tool, not taken from what the target said" in text
     assert "## What was protected" in text
     for word in ("safe", "secure", "clean", "certified", "passed"):
@@ -528,7 +528,7 @@ def test_cli_limits_and_exit_codes(tmp_path, capsys):
 
     assert main(["scan", "--target", "toy:vulnerable", "--out", str(out), "--replays", "1"]) == EXIT_VIOLATIONS
     printed = capsys.readouterr().out
-    assert "with planted text in place, issue_refund was called, and the tool carried it out" in printed
+    assert "with planted text in place, issue_refund was called, and the tool accepted it" in printed
     finding = next(f["id"] for f in json.loads(out.read_text(encoding="utf-8"))["findings"] if f["kind"] == "injection")
     assert main(["replay", str(out), "--finding", finding, "--trials", "2"]) == EXIT_VIOLATIONS
     assert "was violated in 2 of 2 replays" in capsys.readouterr().out

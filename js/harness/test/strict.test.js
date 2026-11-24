@@ -95,19 +95,20 @@ function signedRecord(record) {
 
 test("a signed record can include name lists or omit them", () => {
   const old = signedRecord({ calls: [], dropped: 0 });
-  assert.deepEqual(pp.readRecord(KEY, "s1", old, "n1"), { calls: [], read: [], tools: [], rules: {} });
+  assert.deepEqual(pp.readRecord(KEY, "s1", old, "n1"), { calls: [], read: [], tools: [], rules: {}, outside: [] });
   const current = signedRecord({ calls: [], dropped: 0, read: ["sample"], tools: ["example"], rules: { example: "an ask" } });
   assert.deepEqual(pp.readRecord(KEY, "s1", current, "n1"), {
     calls: [],
     read: ["sample"],
     tools: ["example"],
     rules: { example: "an ask" },
+    outside: [],
   });
   assert.throws(() => pp.readRecord(KEY, "s1", current, "n2"), /not signed/);
 });
 
 test("signed records with malformed name lists or drop counts are rejected", () => {
-  for (const field of ["read", "tools"]) {
+  for (const field of ["read", "tools", "outside"]) {
     for (const bad of [null, "sample", {}, [0]]) {
       const header = signedRecord({ calls: [], dropped: 0, [field]: bad });
       assert.throws(() => pp.readRecord(KEY, "s1", header, "n1"), /must be a list of names/);
@@ -128,6 +129,7 @@ test("signed records with malformed name lists or drop counts are rejected", () 
     read: ["1e10"],
     tools: [],
     rules: {},
+    outside: [],
   });
   const dropped = signedRecord({ calls: [], dropped: 1 });
   assert.throws(() => pp.readRecord(KEY, "s1", dropped, "n1"), /1 were not recorded/);

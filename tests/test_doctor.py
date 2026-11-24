@@ -100,12 +100,16 @@ def test_missing_credentials_are_listed_by_name_only(staging, monkeypatch):
     monkeypatch.setenv(pp.KEY_ENV, KEY)
     monkeypatch.setenv("ALICE_TOKEN", "a-real-looking-token")
     raw = demo.description(staging["port"], "fixed")
-    raw["principals"]["customer:alice"]["headers"] = {"Authorization": "Bearer ${ALICE_TOKEN}", "X-Team": "${TEAM_ID}"}
+    raw["principals"]["customer:alice"]["headers"] = {
+        "Authorization": "Bearer ${ALICE_TOKEN}",
+        "X-Team": "${TEAM_ID}",
+        "X-User": "alice",  # says who the test user is; not a credential, so not worth a note
+    }
     raw["principals"]["customer:bob"]["headers"] = {"Authorization": "Bearer written-out-secret"}
     write_description(staging["folder"] / "promptproof.targets.json", "staging", raw)
     _, text = run()
     assert "FIX   credentials: not set in this environment: TEAM_ID" in text
-    assert "note  credentials: a header for customer:bob is written out" in text
+    assert "note  credentials: a credential for customer:bob is written out" in text
     assert "a-real-looking-token" not in text and "written-out-secret" not in text
 
 

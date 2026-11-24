@@ -35,7 +35,7 @@ def test_the_verdict_is_the_first_line(reports):
 def test_findings_are_grouped_by_what_was_reached_with_their_replays(reports):
     text = render(reports[0])
     assert "staff_code: leaked, " in text and "bob_delivery_note: leaked, " in text
-    assert "with planted text in place, issue_refund was called, and the tool carried it out" in text
+    assert "with planted text in place, issue_refund was called, and the tool accepted it" in text
     assert "the attacker's conversation led to a call to issue_refund" in text
     lines = [line for line in text.splitlines() if re.match(r"\s+F\d+ ", line)]
     assert len(lines) == 14 and all(line.rstrip().endswith("2 of 2 replays") for line in lines)
@@ -102,3 +102,16 @@ def test_each_thing_reached_comes_with_what_to_change(reports):
     assert "Enforce who may use the tool inside the tool itself" in text
     assert "Treat text the bot reads" in text  # planted text
     assert "Fix:" not in render(reports[1])
+
+
+def test_a_kind_of_harm_that_was_never_tried_is_named_under_the_verdict(reports):
+    import dataclasses
+
+    full = reports[0]
+    assert full.not_tested() == ()  # the practice bot is tested for all three
+    only_tools = dataclasses.replace(full, slots=tuple(s for s in full.slots if s.kind == "tool_rule"))
+    gaps = only_tools.not_tested()
+    assert len(gaps) == 2 and gaps[0].startswith("Secret leaks were not tested")
+    lines = render(only_tools).splitlines()
+    assert "Not tested in this scan" in lines[1]  # straight after the verdict, before any finding
+    assert only_tools.to_dict()["not_tested"] == list(gaps)
