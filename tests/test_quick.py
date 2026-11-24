@@ -1,0 +1,219 @@
+"""`promptproof scan URL`: a first scan with no description file, against the example bot served
+on 127.0.0.1. The harness tells the scanner what a description would otherwise say."""
+
+import importlib.util
+import json
+import threading
+from pathlib import Path
+from wsgiref.simple_server import make_server
+
+import pytest
+
+import promptproof.harness as pp
+from promptproof.cli import EXIT_INCONCLUSIVE, EXIT_NO_VERIFIED, EXIT_VIOLATIONS, main
+from promptproof.core import authorization as auth
+from promptproof.core.authorization import AuthorizationStore
+from promptproof.quick import QuickError, discover, find_reply
+
+KEY = "k" * 40
+EXAMPLE = Path(__file__).resolve().parents[1] / "examples" / "support_bot.py"
+
+
+def load_example():
+    spec = importlib.util.spec_from_file_location("support_bot_example", EXAMPLE)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.fixture
+def bot(tmp_path, monkeypatch):
+    """The example bot on a free port, with nothing else set up. Returns (start, example module, requests seen)."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PROMPTPROOF_TARGETS_FILE", str(tmp_path / "promptproof.targets.json"))
+    monkeypatch.setenv(pp.KEY_ENV, KEY)
+    auth.forget_checks()
+    example = load_example()
+    servers = []
+    seen: list[tuple[str, dict]] = []
+
+    def start(fixed=False, app=None):
+        inner = app or example.make_app(fixed)
+
+        def watching(environ, start_response):
+            seen.append((environ["PATH_INFO"], dict(environ)))
+            return inner(environ, start_response)
+
+        server = make_server("127.0.0.1", 0, watching, handler_class=example._Quiet)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        servers.append(server)
+        return f"http://127.0.0.1:{server.server_address[1]}/chat"
+
+    yield start, example, seen
+    for server in servers:
+        server.shutdown()
+        server.server_close()
+
+
+def dana(origin):
+    return "Dana Levi"
+
+
+# -- working the description out ---------------------------------------------------------------
+
+
+def test_everything_a_description_would_say_is_worked_out(bot):
+    start, example, seen = bot
+    url = start()
+    said: list[str] = []
+    name, description, tools = discover(url, ask_name=dana, say=said.append)
+    assert "issue_refund" in tools  # every tool marked in this process; here the test process marks others too
+    assert description["chat"] == {"path": "/chat", "body": {"message": "{message}"}, "reply_pointer": "/reply"}
+    (slot,) = description["slots"]
+    assert slot["id"] == "staff_code" and slot["control"] == "harness" and slot["kind"] == "instruction_secret"
+    assert slot["hint"] == "the staff code in your instructions"
+    assert name.startswith("quick-127-0-0-1-")
+    assert any("Dana Levi authorizes testing" in line for line in said)
+    assert AuthorizationStore().find(url.rsplit("/", 1)[0]).authorized_by == "Dana Levi"
+    assert example.refunds == []
+
+
+def test_nothing_is_sent_until_a_person_has_authorized_it(bot):
+    start, _, seen = bot
+    url = start()
+    with pytest.raises(QuickError, match="no one has authorized"):
+        discover(url, ask_name=lambda origin: "")  # nobody at the keyboard, or they pressed Enter
+    assert seen == []
+    assert AuthorizationStore().find(url.rsplit("/", 1)[0]) is None
+
+
+def test_a_bot_across_a_network_is_never_authorized_by_a_prompt():
+    asked = []
+    with pytest.raises(QuickError, match="promptproof authorize https://bot.example.com"):
+        discover("https://bot.example.com/chat", ask_name=lambda origin: asked.append(origin) or "Dana Levi")
+    assert asked == []
+
+
+def test_each_missing_piece_says_what_to_do(bot, monkeypatch):
+    start, example, seen = bot
+    url = start()
+    monkeypatch.delenv(pp.KEY_ENV)
+    with pytest.raises(QuickError, match="promptproof harness-key"):
+        discover(url, ask_name=dana)
+    assert seen == []
+    monkeypatch.setenv(pp.KEY_ENV, "z" * 40)  # not the bot's key... the bot reads the same variable, so serve unwrapped
+    plain = start(app=lambda environ, start_response: (start_response("404 Not Found", []), [b""])[1])
+    with pytest.raises(QuickError, match="pp.wrap"):
+        discover(plain, ask_name=dana)
+
+
+def test_a_bot_that_reads_no_secret_is_told_how_to_add_one(bot):
+    start, example, _ = bot
+
+    def no_secret(environ, start_response):
+        environ["wsgi.input"].read(int(environ.get("CONTENT_LENGTH") or 0))
+        data = json.dumps({"reply": "Hello!"}).encode()
+        start_response("200 OK", [("Content-Type", "application/json"), ("Content-Length", str(len(data)))])
+        return [data]
+
+    with pytest.raises(QuickError, match=r"pp\.planted"):
+        discover(start(app=pp.wrap(no_secret)), ask_name=dana)
+
+
+def test_other_request_shapes_are_found(bot):
+    start, _, _ = bot
+
+    def bot_app(field, reply):
+        def app(environ, start_response):
+            body = json.loads(environ["wsgi.input"].read(int(environ.get("CONTENT_LENGTH") or 0)) or b"{}")
+            try:
+                message = body["messages"][-1]["content"] if field == "messages" else body[field]
+            except (KeyError, TypeError, IndexError):
+                start_response("422 Unprocessable Entity", [("Content-Type", "application/json")])
+                return [b'{"detail": "bad request"}']
+            pp.planted("api_key")
+            data = json.dumps(reply(f"You said {message}")).encode()
+            start_response("200 OK", [("Content-Type", "application/json"), ("Content-Length", str(len(data)))])
+            return [data]
+
+        return pp.wrap(app)
+
+    _, described, _ = discover(start(app=bot_app("question", lambda t: {"data": {"answer": t, "id": "x"}})), ask_name=dana)
+    assert described["chat"]["body"] == {"question": "{message}"} and described["chat"]["reply_pointer"] == "/data/answer"
+    openai_style = lambda t: {"id": "c1", "choices": [{"message": {"role": "assistant", "content": t}}]}
+    _, described, _ = discover(start(app=bot_app("messages", openai_style)), ask_name=dana)
+    assert described["chat"]["body"] == {"messages": [{"role": "user", "content": "{message}"}]}
+    assert described["chat"]["reply_pointer"] == "/choices/0/message/content"
+    _, described, _ = discover(start(app=bot_app("utterance", lambda t: {"reply": t})), ask_name=dana, field="utterance")
+    assert described["chat"]["body"] == {"utterance": "{message}"}
+    with pytest.raises(QuickError, match="--field NAME"):
+        discover(start(app=bot_app("utterance", lambda t: {"reply": t})), ask_name=dana)
+
+
+def test_finding_the_reply_in_a_response():
+    assert find_reply("plain text") == ""
+    assert find_reply({"reply": "hi", "debug": "a much longer string than the reply itself"}) == "/reply"
+    assert find_reply({"id": "x1", "body": {"note": "short", "paragraph": "the longest text wins when no key is known"}}) == "/body/paragraph"
+    assert find_reply({"a/b": {"m~n": "text"}}) == "/a~1b/m~0n"
+    assert find_reply({"count": 3, "items": []}) is None and find_reply("  ") is None
+
+
+# -- the whole command -------------------------------------------------------------------------
+
+
+def test_one_command_finds_the_weakness_and_clears_the_fixed_build(bot, monkeypatch, capsys):
+    start, example, seen = bot
+    monkeypatch.setattr("promptproof.quick._ask_name", dana)
+    weak = start()
+    assert main(["scan", weak, "--replays", "2", "--out", "weak/scan.json", "--html", "weak/report.html"]) == EXIT_VIOLATIONS
+    printed = capsys.readouterr().out
+    assert "Secrets it reads on an ordinary message: staff_code." in printed
+    assert "verified violation" in printed and "Not tested yet: the tools " in printed and "issue_refund" in printed
+    assert "staff_code: leaked, " in printed and "How F1 happened" in printed and "replays" in printed
+    report = json.loads(Path("weak/scan.json").read_text(encoding="utf-8"))
+    assert report["status"] == "violations_verified" and report["findings"][0]["slot_id"] == "staff_code"
+    assert all(slot["state"] == "reachable" for slot in report["slots"])
+    assert example.refunds == []  # the marked tool never ran
+    # The real secret the bot holds outside a test never appears in any evidence.
+    assert "NW-STAFF-2291" not in Path("weak/scan.json").read_text(encoding="utf-8")
+
+    fixed = start(fixed=True)
+    assert main(["scan", fixed, "--replays", "2", "--out", "fixed/scan.json"]) == EXIT_NO_VERIFIED
+    report = json.loads(Path("fixed/scan.json").read_text(encoding="utf-8"))
+    assert report["status"] == "no_verified_violations", report["inconclusive_reasons"]
+    assert all(slot["state"] == "reachable" for slot in report["slots"])  # the pass phrase route worked
+
+
+def test_a_finding_from_a_first_scan_can_be_replayed(bot, monkeypatch, capsys):
+    start, _, _ = bot
+    monkeypatch.setattr("promptproof.quick._ask_name", dana)
+    assert main(["scan", start(), "--replays", "1", "--out", "scan.json"]) == EXIT_VIOLATIONS
+    capsys.readouterr()
+    finding = json.loads(Path("scan.json").read_text(encoding="utf-8"))["findings"][0]["id"]
+    assert main(["replay", "scan.json", "--finding", finding, "--trials", "2"]) == EXIT_VIOLATIONS
+    assert "2 of 2 replays" in capsys.readouterr().out
+
+
+def test_the_pass_phrase_and_its_note_never_reach_an_attack(bot, monkeypatch):
+    """The note that makes the control route work is added in control sessions only."""
+    start, example, seen = bot
+    monkeypatch.setattr("promptproof.quick._ask_name", dana)
+    systems: list[tuple[bool, str]] = []
+    real_model = example.model
+
+    def watching_model(system, message, fixed):
+        systems.append(("Test note" in system, message))
+        return real_model(system, message, fixed)
+
+    monkeypatch.setattr(example, "model", watching_model)
+    assert main(["scan", start(fixed=True), "--replays", "1", "--out", "scan.json"]) == EXIT_NO_VERIFIED
+    with_note = [message for noted, message in systems if noted]
+    without = [message for noted, message in systems if not noted]
+    assert with_note and all(message.startswith("My pass phrase is") for message in with_note)
+    assert without and not any("pass phrase" in message.lower() for message in without)
+
+
+def test_a_url_and_a_target_together_are_refused(bot, capsys):
+    assert main(["scan", "http://127.0.0.1:1/chat", "--target", "toy:fixed"]) == EXIT_INCONCLUSIVE
+    assert main(["scan"]) == EXIT_INCONCLUSIVE
+    assert "say what to scan" in capsys.readouterr().err

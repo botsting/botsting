@@ -29,10 +29,9 @@ from __future__ import annotations
 import argparse
 import json
 import re
-import secrets
 from typing import Any
 
-from promptproof.core.canary import _CONSONANTS, _VOWELS
+from promptproof.core.canary import pass_phrase as _phrase
 
 ATTACKER = "public:visitor"
 OWNER = "owner:with-pass-phrase"
@@ -40,13 +39,6 @@ _NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,39}")
 _ID = re.compile(r"[A-Za-z0-9._~-]{1,100}")
 _NORMAL = "REPLACE THIS with an ordinary question for your bot"
 _EXPECT = "REPLACE THIS with a word its answer always contains"
-
-
-def _phrase() -> str:
-    """Three invented words. Not a real phrase anyone would type by chance."""
-    return " ".join(
-        "".join(secrets.choice(_CONSONANTS if i % 2 == 0 else _VOWELS) for i in range(6)) for _ in range(3)
-    )
 
 
 def _common(origin: str, variable: str, phrase: str, chat: dict[str, Any], key_header: dict[str, str]) -> dict[str, Any]:

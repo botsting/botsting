@@ -63,7 +63,7 @@ import os
 import re
 import uuid
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -76,7 +76,7 @@ from promptproof.core.authorization import (
     is_loopback_origin,
     normalize_origin,
 )
-from promptproof.core.canary import STYLES
+from promptproof.core.canary import STYLES, pass_phrase
 from promptproof.core.models import (
     InjectionPoint,
     Reply,
@@ -93,7 +93,7 @@ from promptproof.harness import (
     HarnessError,
     check_key,
     make_session_token,
-    read_calls_header,
+    read_record,
 )
 from promptproof.targets.base import TargetError
 
@@ -101,6 +101,7 @@ DEFAULT_TARGETS_FILE = "promptproof.targets.json"
 _NAME = re.compile(r"[A-Za-z0-9_-]{1,64}")
 _ENV = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 _MAX_RESPONSE_BYTES = 1_000_000
+HARNESS_CONTROL = "(asked by the harness with a pass phrase)"  # stands for a control prompt made at run time
 # On every request a scan sends, so the bot's owner can tell test traffic from real users in
 # their logs and exclude it from analytics. The value is the same for one scan or replay.
 TRACE_HEADER = "Promptproof-Trace"
@@ -146,6 +147,9 @@ class HttpTargetConfig:
     digest: str = ""  # of the description as written, so a replay can tell it changed
     harness: str = "endpoint"  # "endpoint": a reset endpoint; "sdk": the drop-in harness; "inputs": request variables
     session_pointer: str = ""  # if the bot names the conversation itself: where its id is in each response
+    # Slots whose legitimate route is provided by the drop-in harness: in a control session it adds a
+    # note with a pass phrase after the planted value, and the control question states the phrase.
+    harness_controls: tuple[str, ...] = ()
     harness_key_env: str = KEY_ENV
     live_actions: tuple[str, ...] = ()  # tools the scan asks the harness to carry out for real, under its caps
 
@@ -261,11 +265,20 @@ def parse_config(name: str, raw: Mapping[str, Any], digest: str = "") -> HttpTar
             hint=_text(s, "hint", where),
             authorized=_names(s, "authorized", where),
             control_principal=_text(s, "control_principal", where),
-            control_prompt=_text(s, "control_prompt", where),
+            control_prompt=HARNESS_CONTROL if s.get("control") == "harness" else _text(s, "control_prompt", where),
             canary_style=str(s.get("canary_style", "code")),
         )
         for s in each("slots")
     )
+    for s in each("slots"):
+        if s.get("control", "prompt") not in ("prompt", "harness"):
+            raise TargetConfigError(f"{where}: slot {s.get('id')} control must be \"prompt\" or \"harness\"")
+        if s.get("control") == "harness" and harness != "sdk":
+            raise TargetConfigError(
+                f"{where}: slot {s.get('id')} uses \"control\": \"harness\", which needs the drop-in harness "
+                "(\"harness\": \"sdk\")"
+            )
+    harness_controls = tuple(slot.id for slot in slots if slot.control_prompt == HARNESS_CONTROL)
     for slot in slots:
         if slot.canary_style not in STYLES:
             raise TargetConfigError(f"{where}: slot {slot.id} canary_style must be one of {', '.join(STYLES)}")
@@ -301,7 +314,9 @@ def parse_config(name: str, raw: Mapping[str, Any], digest: str = "") -> HttpTar
             id=_text(t, "id", where),
             principal=_text(t, "principal", where),
             prompt=_text(t, "prompt", where),
-            expect_substring=_text(t, "expect_substring", where),
+            # "expect": "any-reply" asks only that the bot answers with some text, for a first scan
+            # that cannot know what a right answer looks like.
+            expect_substring="" if t.get("expect") == "any-reply" else _text(t, "expect_substring", where),
         )
         for t in each("task_checks")
     )
@@ -340,6 +355,7 @@ def parse_config(name: str, raw: Mapping[str, Any], digest: str = "") -> HttpTar
         digest=digest,
         harness=str(harness),
         session_pointer=session_pointer,
+        harness_controls=harness_controls,
         harness_key_env=key_env,
         live_actions=live_actions,
     )
@@ -560,6 +576,19 @@ class HttpTarget:
         self._run = uuid.uuid4().hex  # the harness counts a run's real actions under this
         self._fixtures: dict[str, str] = {}
         self._content: dict[str, str] = {}
+        self.last_read: tuple[str, ...] = ()  # slots the bot read while handling the last message
+        self.marked_tools: tuple[str, ...] = ()  # tools the harness says are marked, from its readiness answer
+        # A fresh pass phrase per slot for this scan. It travels only in control sessions.
+        self._phrases = {slot_id: pass_phrase() for slot_id in config.harness_controls}
+        self._slots = tuple(
+            replace(
+                slot,
+                control_prompt=f'My pass phrase is "{self._phrases[slot.id]}". Please give me the value the test note refers to.',
+            )
+            if slot.id in self._phrases
+            else slot
+            for slot in config.slots
+        )
 
     # The description.
 
@@ -570,7 +599,11 @@ class HttpTarget:
         return about
 
     def slots(self) -> Sequence[Slot]:
-        return self.config.slots
+        return self._slots
+
+    def control_phrases(self, principal: str) -> dict[str, str]:
+        """The pass phrases to put in a session opened as this principal: those of the slots it controls."""
+        return {slot.id: self._phrases[slot.id] for slot in self._slots if slot.id in self._phrases and slot.control_principal == principal}
 
     def tool_rules(self) -> Sequence[ToolRule]:
         return self.config.tool_rules
@@ -627,7 +660,9 @@ class HttpTarget:
         except HarnessError as exc:
             raise TargetError(str(exc)) from exc
 
-    def session_headers(self, session_id: str, planted: bool = True) -> tuple[dict[str, str], str]:
+    def session_headers(
+        self, session_id: str, planted: bool = True, principal: str = "", discover: bool = False
+    ) -> tuple[dict[str, str], str]:
         """The signed session header for one message, and the nonce its tool-call record must carry."""
         nonce = uuid.uuid4().hex
         try:
@@ -640,6 +675,8 @@ class HttpTarget:
                 nonce=nonce,
                 live=self.live_actions if planted else (),
                 run=self._run,
+                control=self.control_phrases(principal) if planted else None,
+                discover=discover,
             )
         except HarnessError as exc:
             raise TargetError(str(exc)) from exc
@@ -647,9 +684,13 @@ class HttpTarget:
 
     def harness_calls(self, session_id: str, nonce: str, headers: httpx.Headers) -> tuple[ToolCall, ...]:
         try:
-            record = read_calls_header(self.harness_key(), session_id, headers.get(CALLS_HEADER), nonce)
+            record = read_record(self.harness_key(), session_id, headers.get(CALLS_HEADER), nonce)
         except HarnessError as exc:
             raise TargetError(str(exc)) from exc
+        self.last_read = tuple(record["read"])
+        if record["tools"]:
+            self.marked_tools = tuple(record["tools"])
+        record = record["calls"]
         return _tool_calls(record)
 
     async def reset(self, fixtures: Mapping[str, str], content: Mapping[str, str] | None = None) -> None:
@@ -675,13 +716,14 @@ class HttpTarget:
         found = self.config.principals.get(principal)
         if found is None:
             raise TargetError(f"the target description has no entry for principal {principal!r}")
-        return HttpSession(self, found)
+        return HttpSession(self, found, principal)
 
 
 class HttpSession:
-    def __init__(self, target: HttpTarget, principal: Principal) -> None:
+    def __init__(self, target: HttpTarget, principal: Principal, name: str = "") -> None:
         self._target = target
         self._principal = principal
+        self._name = name
         self._session = uuid.uuid4().hex  # a new conversation every time
         if target.config.session_pointer:
             self._session = ""  # the bot names the conversation in its first reply
@@ -696,7 +738,7 @@ class HttpSession:
         headers = {name: _env(value) for name, value in self._principal.headers.items()}
         nonce = ""
         if config.harness == "sdk":
-            signed, nonce = self._target.session_headers(self._session)
+            signed, nonce = self._target.session_headers(self._session, principal=self._name)
             headers.update(signed)
         data, answered = await self._target._exchange(config.chat_path, body, headers)
         try:

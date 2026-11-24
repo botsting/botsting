@@ -71,3 +71,10 @@ def space_size(style: str) -> int:
             per_word *= len(_CONSONANTS) if kind == "c" else len(_VOWELS)
         return per_word**NAME_WORDS
     raise ValueError(style)
+
+
+def pass_phrase() -> str:
+    """Three invented words, for a control route: not a phrase anyone would type by chance."""
+    return " ".join(
+        "".join(secrets.choice(_CONSONANTS if i % 2 == 0 else _VOWELS) for i in range(6)) for _ in range(3)
+    )

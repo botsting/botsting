@@ -17,6 +17,8 @@ Nothing has been released yet. This lists what the first release will contain.
 - A drop-in harness for Python (ASGI and WSGI) and JavaScript (Node, Express, fetch-style): mark the risky tools and where a secret lives; nothing changes for real users.
 - `harness_tools`: hand over a whole tool list (plain functions, OpenAI Agents SDK, LangChain, Claude Agent SDK); every tool not listed as read-only is recorded during a test, so a forgotten tool is blocked, not run.
 - Bots built in a no-code builder: the fake secret travels in the chat request (`"harness": "inputs"`), with nothing added to the bot. `promptproof init` writes the description for Flowise, Dify and Langflow.
+- A first scan with no description file: `promptproof scan http://localhost:8000/chat`. The harness tells the scanner which tools are marked and which secrets the bot reads, and provides the legitimate route for each secret through a pass phrase used in control conversations only.
+- A terminal summary that leads with the verdict, groups findings, and shows one real exchange.
 - `promptproof doctor` checks a setup step by step and names the fix.
 - `promptproof mcp` lets a coding assistant set a bot up, scan it and read the report. It cannot authorize a test.
 - `promptproof demo` shows the whole flow on one machine in about a minute.

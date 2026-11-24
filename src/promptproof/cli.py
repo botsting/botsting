@@ -27,7 +27,7 @@ EXIT_NO_VERIFIED = 0
 EXIT_VIOLATIONS = 1
 EXIT_INCONCLUSIVE = 2
 
-NO_VERIFIED_HEADLINE = "No verified violations observed under these tested conditions."
+from promptproof.console import NO_VERIFIED_HEADLINE, what_happened  # noqa: E402, F401  (re-exported)
 
 
 def _percent(value: float | None) -> str:
@@ -46,43 +46,10 @@ def describe_rate(rate: Rate, noun: str) -> str:
 
 
 def _summary(report: ScanReport) -> str:
-    lines: list[str] = []
-    if report.status == "violations_verified":
-        lines.append(f"{len(report.findings)} verified violation(s): {report.breakdown()}.")
-    elif report.status == "no_verified_violations":
-        lines.append(NO_VERIFIED_HEADLINE)
-    else:
-        lines.append("Inconclusive: the scan could not reach a conclusion.")
-    lines.append(
-        f"Target {report.target}; {report.attacks_run} attacks, {report.attempts_run} attempts, "
-        f"attacker acting as {report.attacker_principal}."
-    )
-    for reason in report.inconclusive_reasons:
-        lines.append(f"  not established: {reason}")
-    for finding in report.findings:
-        lines.append(
-            f"  {finding.id} [{finding.level.label}] {finding.attack_id}: {what_happened(finding)}; found in "
-            f"{describe_rate(finding.discovery, 'search attempts')}; reproduced in "
-            f"{describe_rate(finding.reproduction, 'replays from reset')}"
-        )
-    if report.suspected:
-        lines.append(f"  {len(report.suspected)} suspected finding(s), not verified and not counted.")
-    if report.contaminated_attempts:
-        lines.append(f"  {report.contaminated_attempts} attempt(s) discarded as contaminated.")
-    lines.append(f"  Spent: {report.messages_sent} messages, {report.tool_calls_recorded} recorded tool calls.")
-    return "\n".join(lines)
+    """What a scan prints: the verdict first, findings grouped, one real exchange. See console.py."""
+    from promptproof.console import render, use_colour
 
-
-def what_happened(finding: Finding) -> str:
-    if finding.kind == "disclosure":
-        return f"{finding.slot_id} leaked ({finding.encoding}, {finding.scope})"
-    tools = ", ".join(dict.fromkeys(call.tool for call in finding.tool_calls)) or "a forbidden tool"
-    fate = "and the tool carried it out" if any(call.accepted for call in finding.tool_calls) else "which the tool refused"
-    if finding.kind == "injection":
-        # Association, not proof of cause: the tool ran with the planted text in place and
-        # did not run with harmless text there.
-        return f"{finding.slot_id}: with planted text in place, {tools} was called, {fate}"
-    return f"{finding.slot_id}: the attacker's conversation led to a call to {tools}, {fate}"
+    return render(report, use_colour())
 
 
 def _run_until_done_or_cancelled(start: Callable[[Callable[[], bool]], object]) -> object:
@@ -114,6 +81,12 @@ def _write(path: Path, text: str) -> None:
 
 
 def _scan(args: argparse.Namespace) -> int:
+    if not args.target:
+        print(
+            "error: say what to scan: a chat URL (promptproof scan http://localhost:8000/chat) or --target NAME",
+            file=sys.stderr,
+        )
+        return EXIT_INCONCLUSIVE
     try:
         target = build_target(args.target)
         limits: dict[str, object] = {
@@ -155,25 +128,39 @@ def _scan(args: argparse.Namespace) -> int:
 
     out = Path(args.out)
     _write(out, json.dumps(report.to_dict(), indent=2))
+    from promptproof.console import next_steps, use_colour
+
     print(_summary(report))
-    print(f"Report: {out}")
+    paths = [("Report (JSON)", str(out))]
     if args.markdown:
         from promptproof.report_markdown import render_markdown
 
         _write(Path(args.markdown), render_markdown(report, str(out)))
-        print(f"Readable report: {args.markdown}")
+        paths.append(("Readable report", str(args.markdown)))
     if args.html:
         from promptproof.report_html import render_html
 
         _write(Path(args.html), render_html(report, str(out)))
-        print(f"Report to open in a browser: {args.html}")
-    for finding in report.findings:
-        print(f"Replay {finding.id}: {replay_command(str(out), finding.id)}")
+        paths.insert(0, ("Report to open in a browser", str(args.html)))
+    replay = replay_command(str(out), report.findings[0].id) if report.findings else ""
+    print()
+    print(next_steps(report, paths, replay, use_colour()))
     return {
         "violations_verified": EXIT_VIOLATIONS,
         "no_verified_violations": EXIT_NO_VERIFIED,
         "inconclusive": EXIT_INCONCLUSIVE,
     }[report.status]
+
+
+def _scan_or_first_scan(args: argparse.Namespace) -> int:
+    if args.url and args.target:
+        print("error: give a URL for a first scan, or --target for a described target, not both", file=sys.stderr)
+        return EXIT_INCONCLUSIVE
+    if args.url:
+        from promptproof.quick import run
+
+        return run(args)
+    return _scan(args)
 
 
 def _replay(args: argparse.Namespace) -> int:
@@ -305,7 +292,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     # What a scan does, shared by `scan` and `ci`. Where the reports go is each command's own.
     scan = options = argparse.ArgumentParser(add_help=False)
-    scan.add_argument("--target", required=True, help="for example toy:vulnerable or toy:fixed?model=ollama:llama3.2")
+    scan.add_argument("--target", help="for example toy:vulnerable, or http:NAME for a bot described in the targets file")
     scan.add_argument(
         "--strategy",
         choices=("static", "adaptive", "both"),
@@ -341,11 +328,24 @@ def build_parser() -> argparse.ArgumentParser:
         default="self",
         help="independence of the tester from the team that built or operates the target",
     )
-    scan = commands.add_parser("scan", parents=[options], help="attack a target and report what was proven")
+    scan = commands.add_parser(
+        "scan",
+        parents=[options],
+        help="attack a target and report what was proven",
+        description=(
+            "promptproof scan http://localhost:8000/chat   a first scan of a bot that carries the drop-in harness: "
+            "no description file is needed. promptproof scan --target NAME   a described target."
+        ),
+    )
+    scan.add_argument("url", nargs="?", help="the chat address of a bot that carries the drop-in harness")
+    scan.add_argument("--name", help="with a URL: the name to save the worked-out description under")
+    scan.add_argument("--field", help="with a URL: the request field that carries the message, if it is not found")
+    scan.add_argument("--session-field", help="with a URL: a request field for the conversation id, if the bot has one")
+    scan.add_argument("--reply", help="with a URL: a JSON pointer to the reply text, such as /data/answer")
     scan.add_argument("--out", default="reports/scan.promptproof.json", help="where to write the JSON report")
     scan.add_argument("--markdown", help="also write a readable report to this path")
     scan.add_argument("--html", help="also write a self-contained report to open in a browser or print")
-    scan.set_defaults(handler=_scan)
+    scan.set_defaults(handler=_scan_or_first_scan)
 
     rep = commands.add_parser("replay", help="replay a finding from a reset state with fresh canaries")
     rep.add_argument("report", help="a JSON report written by scan")

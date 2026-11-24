@@ -988,7 +988,7 @@ async def _check_tasks(target: Target, meter: Meter) -> list[TaskStatus]:
             except _Stop as stop:
                 detail = f"not checked: stopped early ({stop})"
                 break
-            if task.expect_substring.lower() in reply.text.lower():
+            if reply.text.strip() and task.expect_substring.lower() in reply.text.lower():
                 passed = True
                 detail = "" if attempt == 1 else f"worked on try {attempt} of {_CONTROL_TRIES}"
                 break

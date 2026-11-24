@@ -95,6 +95,14 @@ If the bot was built in Flowise, Dify or Langflow there is no code to add lines 
 developer to run `promptproof init --preset <builder> --origin <url>` instead; it writes the
 description and prints the one line to add to the bot's instructions. Skip to step 4.
 
+## 2b. The first scan needs no description
+Once the lines above are in and the bot is running with the harness key set, the
+developer runs `promptproof scan http://localhost:8000/chat` (their chat address). It
+works out the request shape and the secrets the bot reads, asks the developer to type
+their name to authorize a bot on their own machine, and saves the description it
+worked out. That first scan tests secrets held in the instructions. Steps 3 and 4 are
+for going further: tools, other users' data, and bots across a network.
+
 ## 3. Describe the bot in `promptproof.targets.json`
 ```json
 {"targets": {"staging": {

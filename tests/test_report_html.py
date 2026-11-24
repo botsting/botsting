@@ -203,7 +203,8 @@ def test_role_class_cannot_be_injected(vulnerable):
 def test_cli_writes_the_html_report(tmp_path, capsys):
     out, html = tmp_path / "scan.json", tmp_path / "report.html"
     assert main(["scan", "--target", "toy:vulnerable", "--out", str(out), "--html", str(html), "--replays", "1"]) == EXIT_VIOLATIONS
-    assert f"Report to open in a browser: {html}" in capsys.readouterr().out
+    printed = capsys.readouterr().out
+    assert "Report to open in a browser" in printed and str(html) in printed
     page = assert_inert(html.read_text(encoding="utf-8"))
     assert page.headings == SECTIONS
 
