@@ -182,7 +182,7 @@ def render(report: ScanReport, colour: bool = False) -> str:
     else:
         lines.append(paint.unsure("Inconclusive: the scan could not reach a conclusion."))
     for reason in report.inconclusive_reasons:
-        lines.append(f"  not established: {reason}")
+        lines += _wrap(f"not established: {reason}", "  ")
     lines += _errors(report, paint)
     gaps = report.not_tested()
     if gaps:

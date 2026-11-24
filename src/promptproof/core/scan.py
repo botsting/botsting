@@ -593,10 +593,11 @@ def _instrument_problems(
         if slot.state == "unreachable":
             # Said in full here: this is the reason most often met after a fix, by someone who has
             # not read what a legitimate route is.
-            problems.append(
-                f"The {name} did not work by its legitimate route: {slot.detail or 'the allowed user never received it'}. "
-                "A bot that gives it to nobody stops every attack too, so nothing found here would not show it is protected."
+            why = slot.detail or (
+                "the user allowed it never received it, and a bot that gives it to nobody stops every attack too, "
+                "so finding nothing would not show that it is protected"
             )
+            problems.append(f"The {name} did not work by its legitimate route: {why}.")
         elif slot.state == "error":
             problems.append(f"The {name} could not be checked: {slot.detail}")
         elif slot.judged_attempts == 0:
