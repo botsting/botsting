@@ -45,8 +45,9 @@ def test_the_handshake_and_the_tool_list(project):
 def test_there_is_no_tool_that_authorizes():
     """Permission to test is a person's to give. No tool here may record it."""
     assert not any("authorize" in name and name != "authorization_status" for name in TOOLS)
-    import promptproof.mcp_server as server
     from pathlib import Path
+
+    import promptproof.mcp_server as server
 
     text = Path(server.__file__).read_text(encoding="utf-8")
     assert "new_authorization" not in text and ".add(" not in text and "mark_verified" not in text

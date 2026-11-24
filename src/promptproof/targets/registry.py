@@ -42,9 +42,6 @@ def build_model(name: str) -> ChatModel:
     raise SpecError(f"unknown model {name!r}; use 'scripted', 'scripted-attacker', or 'ollama:<model name>'")
 
 
-_build_model = build_model
-
-
 _SPEC = re.compile(r"[A-Za-z0-9:._?=&-]+")
 
 

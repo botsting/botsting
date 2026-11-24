@@ -165,7 +165,7 @@ class ToyTarget:
         self.ledger = []
         self._calls = []
 
-    async def open_session(self, principal: str) -> "ToySession":
+    async def open_session(self, principal: str) -> ToySession:
         if not self._orders:
             raise TargetError("target was not reset before opening a session")
         role, name = _split(principal)

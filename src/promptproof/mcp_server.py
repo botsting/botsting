@@ -453,7 +453,7 @@ def _call(root: Path, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
             text = TOOLS[name][2](root, arguments)
     except ToolError as error:
         text, failed = str(error), True
-    except Exception as error:  # noqa: BLE001 - a tool must never take the server down
+    except Exception as error:
         text, failed = f"{type(error).__name__}: {error}", True
     printed = captured.getvalue().strip()
     if printed:

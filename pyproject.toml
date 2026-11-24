@@ -29,3 +29,19 @@ packages = ["src/promptproof"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 130
+target-version = "py311"
+
+[tool.ruff.lint]
+# The rules the code is written to. Line length is checked by the formatter's width above, not as an error.
+select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
+ignore = [
+    "E501",    # width is the formatter's business
+    "SIM102", "SIM105", "SIM117", "RUF005", "E731",  # rewrites that do not make this code clearer
+    "RUF043", "RUF059", "B905",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["F811", "E402"]  # pytest fixtures are passed by name; one test file sets up before importing

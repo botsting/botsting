@@ -12,9 +12,9 @@ import pytest
 from promptproof.attacks.adaptive import LLMAdaptiveStrategy, ScriptedAttackerModel
 from promptproof.attacks.library import default_attacks
 from promptproof.attacks.strategy import Objective, ProbeChannel, SearchResult
-from promptproof.cli import EXIT_INCONCLUSIVE, EXIT_NO_VERIFIED, EXIT_VIOLATIONS, main
-from promptproof.core.models import EvidenceLevel, Reply, ScanReport, Slot, TaskCheck
-from promptproof.core.runner import ScanConfig, replay_finding, run_scan, run_to_completion
+from promptproof.cli import EXIT_NO_VERIFIED, EXIT_VIOLATIONS, main
+from promptproof.core.models import EvidenceLevel, ScanReport, Slot, TaskCheck
+from promptproof.core.runner import ScanConfig, run_scan, run_to_completion
 from promptproof.llm.base import ChatMessage, ModelError
 from promptproof.report_html import render_html
 from promptproof.report_markdown import render_markdown

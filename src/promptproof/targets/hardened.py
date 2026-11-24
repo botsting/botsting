@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
 from typing import Literal
 
 from promptproof.core.models import InjectionPoint, Reply, Slot, TaskCheck, ToolCall, ToolRule
@@ -219,7 +218,7 @@ class KeywordHardenedTarget(_BaseHardenedTarget):
     def __init__(self, variant: HardenedVariant, spec: str) -> None:
         super().__init__("keyword", variant, spec)
 
-    async def open_session(self, principal: str) -> "_KeywordSession":
+    async def open_session(self, principal: str) -> _KeywordSession:
         if not self._orders:
             raise TargetError("target was not reset before opening a session")
         role, name = _split(principal)
@@ -294,7 +293,7 @@ class MultiTurnHardenedTarget(_BaseHardenedTarget):
         # Multi-turn intake applies to interactive conversations; no injection point here.
         return ()
 
-    async def open_session(self, principal: str) -> "_MultiTurnSession":
+    async def open_session(self, principal: str) -> _MultiTurnSession:
         if not self._orders:
             raise TargetError("target was not reset before opening a session")
         role, name = _split(principal)

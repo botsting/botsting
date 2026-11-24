@@ -18,7 +18,7 @@ from promptproof import __version__
 from promptproof.attacks.adaptive import LLMAdaptiveStrategy
 from promptproof.attacks.library import default_attacks
 from promptproof.core.benchmark import DEFAULT_MARGIN, compare_strategies, render_benchmark_markdown
-from promptproof.core.models import Finding, Rate, ScanReport
+from promptproof.core.models import Rate, ScanReport
 from promptproof.core.runner import ScanConfig, identity_unknown, replay_finding, run_scan, run_to_completion
 from promptproof.shell import replay_command
 from promptproof.targets.registry import SpecError, build_model, build_target
@@ -164,7 +164,7 @@ def open_for_a_person(page: Path, declined: bool = False) -> bool:
         return False
     try:
         return webbrowser.open(page.resolve().as_uri())
-    except Exception:  # noqa: BLE001 - no browser is not a reason to fail a scan
+    except Exception:
         return False
 
 
@@ -459,7 +459,21 @@ def _harness_key(args: argparse.Namespace) -> int:
     return 0
 
 
+def _print_anything() -> None:
+    """A bot may answer in any alphabet, and its words are printed in the summary. A Windows console or
+    pipe in a legacy code page cannot encode all of them, and would stop the command with an error
+    after the scan had finished. Characters it cannot show are replaced instead."""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            try:
+                reconfigure(errors="replace")
+            except (ValueError, OSError):  # a stream that is closed or was replaced by something else
+                pass
+
+
 def main(argv: list[str] | None = None) -> int:
+    _print_anything()
     args = build_parser().parse_args(argv)
     return args.handler(args)
 

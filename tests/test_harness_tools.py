@@ -5,6 +5,7 @@ import json
 from functools import partial
 
 import pytest
+from test_harness import KEY, in_session
 
 import promptproof.harness as pp
 from promptproof.harness_tools import (
@@ -14,7 +15,6 @@ from promptproof.harness_tools import (
     guard_claude_agent,
     guard_langchain,
 )
-from test_harness import KEY, in_session
 
 
 @pytest.fixture

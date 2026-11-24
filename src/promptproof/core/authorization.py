@@ -283,6 +283,7 @@ async def check_proof_async(
             transport=transport if transport is not None else _transport,
             timeout=_FETCH_SECONDS,
             follow_redirects=False,
+            trust_env=False,  # like the scan's own traffic: a proxy from the environment must not answer for the origin
             headers={"User-Agent": _USER_AGENT, "Cache-Control": "no-cache", "Pragma": "no-cache"},
         ) as client:
             async with client.stream("GET", url) as response:

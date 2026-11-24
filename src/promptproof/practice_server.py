@@ -77,7 +77,7 @@ class PracticeBot:
 
 def _handler(bot: PracticeBot) -> type[BaseHTTPRequestHandler]:
     class Handler(BaseHTTPRequestHandler):
-        def log_message(self, format: str, *args: object) -> None:  # noqa: A002
+        def log_message(self, format: str, *args: object) -> None:
             pass  # quiet
 
         def _answer(self, status: int, payload: Any = None) -> None:
@@ -88,7 +88,7 @@ def _handler(bot: PracticeBot) -> type[BaseHTTPRequestHandler]:
             self.end_headers()
             self.wfile.write(data)
 
-        def do_POST(self) -> None:  # noqa: N802
+        def do_POST(self) -> None:
             raw_length = self.headers.get("Content-Length", "0") or "0"
             if not raw_length.isdigit():
                 return self._answer(400, {"error": "Content-Length must be a whole number"})
@@ -110,7 +110,7 @@ def _handler(bot: PracticeBot) -> type[BaseHTTPRequestHandler]:
             except (ValueError, TargetError) as exc:
                 return self._answer(400, {"error": str(exc)})
 
-        def do_GET(self) -> None:  # noqa: N802
+        def do_GET(self) -> None:
             self._answer(404, {"error": "no such endpoint"})
 
     return Handler

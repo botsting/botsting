@@ -96,7 +96,7 @@ class OllamaModel:
                     if isinstance(entry.get("digest"), str):
                         digest = entry["digest"]
                     break
-        except Exception:  # noqa: BLE001 - a fingerprint must never fail a scan
+        except Exception:
             pass
         return {
             "model": self.name,

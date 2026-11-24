@@ -15,7 +15,7 @@ false positives.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from typing import Any
 
 from promptproof.attacks.library import default_attacks

@@ -198,3 +198,26 @@ def test_paths_are_printed_in_full_and_no_browser_opens_without_a_person(tmp_pat
     assert not open_for_a_person(tmp_path / "report.html", declined=True)
     monkeypatch.setenv("CI", "true")
     assert not open_for_a_person(tmp_path / "report.html")
+
+
+def test_a_reply_in_any_alphabet_cannot_stop_the_summary(monkeypatch):
+    """A Windows console or pipe in a legacy code page cannot encode every character a bot may answer
+    with. The scan would finish, write its reports, then stop with an error while printing."""
+    import io
+
+    from promptproof.cli import _print_anything
+
+    raw = io.BytesIO()
+    legacy = io.TextIOWrapper(raw, encoding="cp1252", errors="strict")
+    monkeypatch.setattr("sys.stdout", legacy)
+    _print_anything()
+    print("answer   shalom in Hebrew: שלום, a tick: ✓, an arrow: →")
+    legacy.flush()
+    assert raw.getvalue().startswith(b"answer   shalom in Hebrew: ????")
+
+    class Odd:  # a stream that cannot be reconfigured is left alone, not an error
+        def reconfigure(self, **options):
+            raise ValueError("closed")
+
+    monkeypatch.setattr("sys.stdout", Odd())
+    _print_anything()

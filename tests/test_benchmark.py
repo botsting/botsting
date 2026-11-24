@@ -7,7 +7,7 @@ import json
 
 from promptproof.attacks.adaptive import LLMAdaptiveStrategy, ScriptedAttackerModel
 from promptproof.attacks.strategy import Objective, ProbeChannel, SearchResult
-from promptproof.cli import EXIT_NO_VERIFIED, EXIT_VIOLATIONS, main
+from promptproof.cli import EXIT_NO_VERIFIED, main
 from promptproof.core.benchmark import DEFAULT_MARGIN, compare_strategies, render_benchmark_markdown
 from promptproof.targets.registry import build_target
 

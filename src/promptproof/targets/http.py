@@ -79,6 +79,10 @@ from promptproof.core.authorization import (
 from promptproof.core.canary import STYLES, pass_phrase
 from promptproof.core.models import (
     HARNESS_ATTESTED,
+    RECORDERS_ATTESTED,
+    RECORDERS_KEY,
+    SECRETS_IN_REQUESTS,
+    SECRETS_KEY,
     InjectionPoint,
     Reply,
     Slot,
@@ -605,9 +609,9 @@ class HttpTarget:
     async def describe(self) -> Mapping[str, str]:
         about = {"target": "http", "name": self.config.name, "origin": self.origin, "description_digest": self.config.digest}
         if self.secrets_travel_in_requests:
-            about["secrets"] = "sent with each request"  # runner.REQUEST_BORNE: adds a limitation to the report
+            about[SECRETS_KEY] = SECRETS_IN_REQUESTS  # the runner adds a limitation to the report
         if any(rule.control_prompt == HARNESS_ATTESTED for rule in self.config.tool_rules):
-            about["tool_recorders"] = "attested by the harness"  # also adds a limitation to the report
+            about[RECORDERS_KEY] = RECORDERS_ATTESTED  # also adds a limitation to the report
         return about
 
     def slots(self) -> Sequence[Slot]:

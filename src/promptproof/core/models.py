@@ -112,6 +112,11 @@ class Turn:
     note: str = ""  # for example where planted content was placed
 
 
+# Values a target's describe() uses to tell the runner how it works. The runner adds a limitation
+# to the report for each. They are defined once, here, so the two sides cannot drift apart.
+SECRETS_KEY, SECRETS_IN_REQUESTS = "secrets", "sent with each request"
+RECORDERS_KEY, RECORDERS_ATTESTED = "tool_recorders", "attested by the harness"
+
 # A tool rule's control_prompt when no legitimate request is made: the drop-in harness attests,
 # in its signed readiness answer, that the tool is marked (its recorder is the decorator on it).
 HARNESS_ATTESTED = "(attested by the harness)"
@@ -418,7 +423,7 @@ class ScanReport:
         return data
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "ScanReport":
+    def from_dict(cls, data: dict[str, Any]) -> ScanReport:
         def calls(items: list[dict[str, Any]]) -> tuple[ToolCall, ...]:
             return tuple(
                 ToolCall(

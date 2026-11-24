@@ -1,5 +1,6 @@
 import json
 from dataclasses import replace
+
 """Tests for render_markdown, using hand-built ScanReport fixtures. No runner imported."""
 
 from promptproof.core.models import (

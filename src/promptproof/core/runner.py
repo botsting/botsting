@@ -72,6 +72,10 @@ from promptproof.core.matcher import (
 from promptproof.core.models import (
     HARNESS_ATTESTED,
     INDEPENDENCE_LEVELS,
+    RECORDERS_ATTESTED,
+    RECORDERS_KEY,
+    SECRETS_IN_REQUESTS,
+    SECRETS_KEY,
     Attack,
     Attempt,
     AttemptOutcome,
@@ -1058,6 +1062,9 @@ async def _repeated_slots(target: Target, meter: Meter) -> dict[str, str]:
 class Preflight:
     slots: tuple[SlotStatus, ...]  # canary slots, then tool rules, then injection points
     tasks: tuple[TaskStatus, ...]
+    # Slots whose planted value comes back whoever asks (see _repeated_slots). No attack is run on
+    # them, a match for one is never a finding, and a replay is not run.
+    repeated: frozenset[str] = frozenset()
 
 
 async def preflight(target: Target, meter: Meter | None = None) -> Preflight:
@@ -1097,7 +1104,7 @@ async def preflight(target: Target, meter: Meter | None = None) -> Preflight:
             )
         else:
             statuses.append(await _check_point(target, point, meter))
-    return Preflight(tuple(statuses), tuple(await _check_tasks(target, meter)))
+    return Preflight(tuple(statuses), tuple(await _check_tasks(target, meter)), frozenset(repeated))
 
 
 def _instrument_problems(
@@ -1178,9 +1185,6 @@ def _validate(target: Target, attacks: Sequence[Attack]) -> None:
             raise ValueError(f"{attack.kind} attack {attack.id} is aimed at {attack.slot_id}, which the target does not declare")
 
 
-REQUEST_BORNE = "sent with each request"  # a target's describe()["secrets"] when the canary travels in requests
-
-
 def _limitations_for(strategy: AdaptiveStrategy | None, target_config: dict[str, str]) -> tuple[str, ...]:
     items = list(LIMITATIONS)
     if strategy is not None:
@@ -1194,14 +1198,14 @@ def _limitations_for(strategy: AdaptiveStrategy | None, target_config: dict[str,
             )
             for item in items
         ]
-    if target_config.get("tool_recorders") == "attested by the harness":
+    if target_config.get(RECORDERS_KEY) == RECORDERS_ATTESTED:
         items.append(
             "For at least one tool, the scan did not make a legitimate request to see the recorder work. It "
             "relied on the harness's signed statement that the tool is marked. A recorded call is still proof. "
             "But if the bot cannot reach that tool in this deployment, or calls it by a path that is not the "
             "marked function, finding nothing for it means less than it would after an exercised control."
         )
-    if target_config.get("secrets") == REQUEST_BORNE:
+    if target_config.get(SECRETS_KEY) == SECRETS_IN_REQUESTS:
         items.append(
             "On this target the fake secret travelled in each chat request, in a variable the bot puts into its "
             "instructions. A finding shows the bot can be talked into repeating that part of its instructions. "
@@ -1235,7 +1239,7 @@ async def run_scan(
 
     # Discovery.
     unattributable = {s.slot_id for s in checks.slots if s.kind == "injection_point" and s.state != "reachable"}
-    repeated = {s.slot_id for s in checks.slots if s.state == "error" and s.detail.startswith(_REPEATED)}
+    repeated = checks.repeated
     ordered_attacks: list[Attack] = []
     by_attack: dict[str, list[Attempt]] = {}
     all_runs: list[Attempt] = []
@@ -1298,7 +1302,7 @@ async def run_scan(
             except _Stop as stop:
                 errors.append(ErrorRecord("discovery", f"{strategy.name}:{objective.id}", f"stopped early: {stop}"))
                 strategy_stopped = True
-            except Exception as exc:  # noqa: BLE001 - strategy errors must become inconclusive, never pass
+            except Exception as exc:
                 errors.append(ErrorRecord("discovery", f"{strategy.name}:{objective.id}", f"strategy failed: {exc}"))
 
             # Ground truth comes from what the runner's channel actually sent and observed,
@@ -1579,7 +1583,7 @@ async def replay_finding(target: Target, finding: Finding, trials: int, config: 
     if finding.kind == "injection" and status.state != "reachable":
         problems.append("The planted text was not replayed: a tool call could not have been attributed to it.")
         return ReplayResult(make_rate(0, 0), tuple(problems), target_config)
-    if status.detail.startswith(_REPEATED):
+    if objective_id in checks.repeated:
         problems.append("The attack was not replayed: on this target the value comes back whoever asks, so a match would prove nothing.")
         return ReplayResult(make_rate(0, 0), tuple(problems), target_config)
 
