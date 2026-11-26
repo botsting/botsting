@@ -86,8 +86,7 @@ note = pp.planted("bob_note", note) if user == "bob" else note    # a secret in 
 ```
 Rules:
 - The library must be installed in the bot's own environment, with the bot's Python:
-  `pip install git+https://github.com/kritalon/kritalon`. Installing the `kritalon` command
-  does not do that.
+  `pip install kritalon`. Installing the `kritalon` command does not do that.
 - `pp.wrap(app)` goes last, after the routes, and the wrapped app is what the server runs.
   A Flask or Quart app stays the same object, so `app.run()` still works and is wrapped.
 - Put `@pp.action` on the function that does the deed, below the app's own permission

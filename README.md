@@ -2,23 +2,23 @@
 
 Evidence-first security testing for LLM applications. Kritalon attacks a bot you own and reports only what it can prove: it plants fresh secrets ("canaries") where an attacker should never reach, then shows you the exact conversation in which one came out.
 
-Early development (alpha): no version has been released yet, and it is not on PyPI, so it is installed from this repository. It scans the built-in practice bots and any bot you own.
+Early development: version 0.0.1 is an alpha. Expect changes between versions. It scans the built-in practice bots and any bot you own.
 
 ## Install it as a command
 
 Requires Python 3.11+. Either of these puts the `kritalon` command on your path, so it works from any folder:
 
 ```
-uv tool install git+https://github.com/kritalon/kritalon      # with uv (https://docs.astral.sh/uv/)
-pipx install git+https://github.com/kritalon/kritalon         # or with pipx
+uv tool install kritalon      # with uv (https://docs.astral.sh/uv/)
+pipx install kritalon         # or with pipx
 ```
 
-From a checkout of this repository, `uv tool install .` or `pipx install .` does the same.
+From a checkout of this repository, `uv tool install .` or `pipx install .` installs the code as it is there.
 
 That installs the command. A bot that uses the drop-in harness (below) imports the library, so the library has to be installed where the bot runs as well, in the bot's own environment:
 
 ```
-pip install git+https://github.com/kritalon/kritalon      # run with the bot's Python, in the bot's virtual environment
+pip install kritalon      # run with the bot's Python, in the bot's virtual environment
 ```
 
 The two are separate on purpose: the command lives in its own isolated environment, and `import kritalon.harness` in the bot fails with "No module named kritalon" until the second step is done. The harness itself needs nothing beyond the Python standard library.

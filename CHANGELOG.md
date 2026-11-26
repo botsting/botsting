@@ -1,8 +1,8 @@
 # Changelog
 
-Nothing has been released yet. This lists what the first release will contain.
+## 0.0.1, 2026-11-26 (alpha)
 
-## Unreleased
+The first version on PyPI (`pip install kritalon`). An alpha: names, options and file formats may still change. The JavaScript harness in `js/harness` is not on npm yet. This version contains:
 
 ### Finding problems
 - Disclosure, forbidden-action and planted-text attacks, with a static list and an adaptive attacker (built in, or PyRIT behind the same interface).

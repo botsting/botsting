@@ -5,7 +5,7 @@ A plugin that lets Claude Code set Kritalon up in your project, scan your own bo
 Not published anywhere yet. To try it from a checkout of this repository:
 
 ```
-uv tool install git+https://github.com/kritalon/kritalon          # the kritalon command, once
+uv tool install kritalon                                          # the kritalon command, once
 git clone https://github.com/kritalon/kritalon                    # the plugin lives in the repository
 claude --plugin-dir kritalon/integrations/claude-code             # start Claude Code with the plugin
 ```
