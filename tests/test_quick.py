@@ -1,4 +1,4 @@
-"""`promptproof scan URL`: a first scan with no description file, against the example bot served
+"""`kritalon scan URL`: a first scan with no description file, against the example bot served
 on 127.0.0.1. The harness tells the scanner what a description would otherwise say."""
 
 import importlib.util
@@ -9,11 +9,11 @@ from wsgiref.simple_server import make_server
 
 import pytest
 
-import promptproof.harness as pp
-from promptproof.cli import EXIT_INCONCLUSIVE, EXIT_NO_VERIFIED, EXIT_VIOLATIONS, main
-from promptproof.core import authorization as auth
-from promptproof.core.authorization import AuthorizationStore
-from promptproof.quick import QuickError, discover, find_reply
+import kritalon.harness as pp
+from kritalon.cli import EXIT_INCONCLUSIVE, EXIT_NO_VERIFIED, EXIT_VIOLATIONS, main
+from kritalon.core import authorization as auth
+from kritalon.core.authorization import AuthorizationStore
+from kritalon.quick import QuickError, discover, find_reply
 
 KEY = "k" * 40
 EXAMPLE = Path(__file__).resolve().parents[1] / "examples" / "support_bot.py"
@@ -30,7 +30,7 @@ def load_example():
 def bot(tmp_path, monkeypatch):
     """The example bot on a free port, with nothing else set up. Returns (start, example module, requests seen)."""
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("PROMPTPROOF_TARGETS_FILE", str(tmp_path / "promptproof.targets.json"))
+    monkeypatch.setenv("KRITALON_TARGETS_FILE", str(tmp_path / "kritalon.targets.json"))
     monkeypatch.setenv(pp.KEY_ENV, KEY)
     auth.forget_checks()
     # The harness lists every tool marked in the process. In a real deployment that is one bot's
@@ -102,7 +102,7 @@ def test_nothing_is_sent_until_a_person_has_authorized_it(bot):
 
 def test_a_bot_across_a_network_is_never_authorized_by_a_prompt():
     asked = []
-    with pytest.raises(QuickError, match="promptproof authorize https://bot.example.com"):
+    with pytest.raises(QuickError, match="kritalon authorize https://bot.example.com"):
         discover("https://bot.example.com/chat", ask_name=lambda origin: asked.append(origin) or "Dana Levi")
     assert asked == []
 
@@ -111,7 +111,7 @@ def test_each_missing_piece_says_what_to_do(bot, monkeypatch):
     start, example, seen = bot
     url = start()
     monkeypatch.delenv(pp.KEY_ENV)
-    with pytest.raises(QuickError, match="promptproof harness-key"):
+    with pytest.raises(QuickError, match="kritalon harness-key"):
         discover(url, ask_name=dana)
     assert seen == []
     monkeypatch.setenv(pp.KEY_ENV, "z" * 40)  # not the bot's key... the bot reads the same variable, so serve unwrapped
@@ -177,7 +177,7 @@ def test_finding_the_reply_in_a_response():
 
 def test_one_command_finds_the_weakness_and_clears_the_fixed_build(bot, monkeypatch, capsys):
     start, example, seen = bot
-    monkeypatch.setattr("promptproof.quick._ask_name", dana)
+    monkeypatch.setattr("kritalon.quick._ask_name", dana)
     weak = start()
     assert main(["scan", weak, "--replays", "2", "--out", "weak/scan.json", "--html", "weak/report.html"]) == EXIT_VIOLATIONS
     printed = capsys.readouterr().out
@@ -204,7 +204,7 @@ def test_one_command_finds_the_weakness_and_clears_the_fixed_build(bot, monkeypa
 
 def test_a_finding_from_a_first_scan_can_be_replayed(bot, monkeypatch, capsys):
     start, _, _ = bot
-    monkeypatch.setattr("promptproof.quick._ask_name", dana)
+    monkeypatch.setattr("kritalon.quick._ask_name", dana)
     assert main(["scan", start(), "--replays", "1", "--out", "scan.json"]) == EXIT_VIOLATIONS
     capsys.readouterr()
     finding = json.loads(Path("scan.json").read_text(encoding="utf-8"))["findings"][0]["id"]
@@ -215,7 +215,7 @@ def test_a_finding_from_a_first_scan_can_be_replayed(bot, monkeypatch, capsys):
 def test_the_pass_phrase_and_its_note_never_reach_an_attack(bot, monkeypatch):
     """The note that makes the control route work is added in control sessions only."""
     start, example, seen = bot
-    monkeypatch.setattr("promptproof.quick._ask_name", dana)
+    monkeypatch.setattr("kritalon.quick._ask_name", dana)
     systems: list[tuple[bool, str]] = []
     real_model = example.model
 
@@ -262,7 +262,7 @@ def test_an_existing_authorization_that_does_not_name_a_tool_leaves_it_untested(
     url = start()
     from datetime import UTC, datetime
 
-    from promptproof.core.authorization import new_authorization
+    from kritalon.core.authorization import new_authorization
 
     AuthorizationStore().add(new_authorization(url.rsplit("/", 1)[0], "Dana Levi", "the bot", "test", 1, datetime.now(UTC)))
     _, description, notes = discover(url, ask_name=lambda origin: pytest.fail("a record exists; nobody should be asked"))
@@ -273,18 +273,18 @@ def test_an_existing_authorization_that_does_not_name_a_tool_leaves_it_untested(
 def test_a_tool_marked_never_for_users_but_not_listed_by_the_harness_is_an_error(bot, monkeypatch):
     """The rule relies on the harness's statement. If the statement is missing, the result is not clean."""
     start, example, _ = bot
-    monkeypatch.setattr("promptproof.quick._ask_name", dana)
+    monkeypatch.setattr("kritalon.quick._ask_name", dana)
     url = start(fixed=True)
     name, description, _ = discover(url)
     description["tool_rules"][0].update(id="wire_money", tool="wire_money")  # a tool nobody marked
     description["injection_points"] = []  # this test is about the rule alone
-    from promptproof.practice_server import write_description
-    from promptproof.targets.http import targets_file
+    from kritalon.practice_server import write_description
+    from kritalon.targets.http import targets_file
 
     write_description(targets_file(), name, description)
     from datetime import UTC, datetime
 
-    from promptproof.core.authorization import new_authorization
+    from kritalon.core.authorization import new_authorization
 
     AuthorizationStore().add(
         new_authorization(url.rsplit("/", 1)[0], "Dana Levi", "the bot", "test", 1, datetime.now(UTC), allowed_tools=("wire_money",))
@@ -332,21 +332,21 @@ def test_a_scan_that_cannot_test_secrets_says_so_and_never_reads_as_a_pass(bot, 
     (note,) = [n for n in notes if "from elsewhere" not in n]
     assert note.startswith("Secret leaks were not tested.") and 'pp.planted("staff_code")' in note
     # And the scan itself: the verdict is followed at once by what was not tested, in every output.
-    monkeypatch.setattr("promptproof.quick._ask_name", dana)
+    monkeypatch.setattr("kritalon.quick._ask_name", dana)
     main(["scan", url, "--replays", "1", "--no-open"])
     printed = capsys.readouterr().out
     assert "Not tested in this scan" in printed and "Secret leaks were not tested: no secret was planted" in printed
-    assert f"promptproof scan --target http:{name} --html report.html" in printed
-    report = json.loads(Path("reports/scan.promptproof.json").read_text(encoding="utf-8"))
+    assert f"kritalon scan --target http:{name} --html report.html" in printed
+    report = json.loads(Path("reports/scan.kritalon.json").read_text(encoding="utf-8"))
     assert any(gap.startswith("Secret leaks were not tested") for gap in report["not_tested"])
     assert "Not tested in this scan" in Path("reports/report.html").read_text(encoding="utf-8")
 
 
 def test_the_report_says_the_legitimate_route_was_supplied_by_the_test(bot, monkeypatch, capsys):
     start, _, _ = bot
-    monkeypatch.setattr("promptproof.quick._ask_name", dana)
+    monkeypatch.setattr("kritalon.quick._ask_name", dana)
     main(["scan", start(fixed=True), "--replays", "1", "--no-open"])
-    report = json.loads(Path("reports/scan.promptproof.json").read_text(encoding="utf-8"))
+    report = json.loads(Path("reports/scan.kritalon.json").read_text(encoding="utf-8"))
     assert report["target_config"]["legitimate_route"] == "supplied by the harness in a check session"
     (note,) = [item for item in report["limitations"] if "supplied by the test itself" in item]
     assert "does not show that a real user of the deployed bot has a way to obtain it" in note
@@ -356,19 +356,19 @@ def test_the_report_says_the_legitimate_route_was_supplied_by_the_test(bot, monk
 def test_scanning_again_never_loses_a_description_someone_edited(bot, monkeypatch, capsys):
     start, _, _ = bot
     url = start(fixed=True)
-    monkeypatch.setattr("promptproof.quick._ask_name", dana)
+    monkeypatch.setattr("kritalon.quick._ask_name", dana)
     main(["scan", url, "--replays", "1", "--no-open"])
-    targets = Path("promptproof.targets.json")
-    assert list(Path(".").glob("promptproof.targets.quick-*.json")) == []  # a first save keeps nothing aside
+    targets = Path("kritalon.targets.json")
+    assert list(Path(".").glob("kritalon.targets.quick-*.json")) == []  # a first save keeps nothing aside
     main(["scan", url, "--replays", "1", "--no-open"])
-    assert list(Path(".").glob("promptproof.targets.quick-*.json")) == []  # nor does an unchanged one
+    assert list(Path(".").glob("kritalon.targets.quick-*.json")) == []  # nor does an unchanged one
     data = json.loads(targets.read_text(encoding="utf-8"))
     (name,) = data["targets"]
     data["targets"][name]["task_checks"][0]["prompt"] = "What are your opening hours?"  # extended by hand
     targets.write_text(json.dumps(data), encoding="utf-8")
     capsys.readouterr()
     main(["scan", url, "--replays", "1", "--no-open"])
-    (kept,) = list(Path(".").glob("promptproof.targets.quick-*.json"))
+    (kept,) = list(Path(".").glob("kritalon.targets.quick-*.json"))
     assert json.loads(kept.read_text(encoding="utf-8"))["targets"][name]["task_checks"][0]["prompt"] == "What are your opening hours?"
     assert "The earlier one was kept as" in capsys.readouterr().out
 
@@ -377,7 +377,7 @@ def test_taking_the_secret_out_as_advised_is_acknowledged_on_the_next_scan(bot, 
     """The fix a leaked-secret finding advises is to stop giving the bot the secret. The next scan
     then has no secret to test, and says why in plain words."""
     start, example, _ = bot
-    monkeypatch.setattr("promptproof.quick._ask_name", dana)
+    monkeypatch.setattr("kritalon.quick._ask_name", dana)
     weak = start()
     name = "example"
     assert main(["scan", weak, "--name", name, "--replays", "1", "--no-open"]) == EXIT_VIOLATIONS
@@ -395,7 +395,7 @@ def test_taking_the_secret_out_as_advised_is_acknowledged_on_the_next_scan(bot, 
     AuthorizationStore().add(
         auth.new_authorization(fixed.rsplit("/", 1)[0], "Dana Levi", "the fixed build", "test", 7, allowed_tools=("issue_refund",))
     )
-    main(["scan", fixed, "--name", name, "--replays", "1", "--no-open", "--out", "second/scan.promptproof.json"])
+    main(["scan", fixed, "--name", name, "--replays", "1", "--no-open", "--out", "second/scan.kritalon.json"])
     printed = " ".join(capsys.readouterr().out.split())
     assert "The bot no longer reads staff_code, which an earlier scan tested." in printed
     assert "cannot leak through it" in printed
@@ -406,17 +406,17 @@ def test_taking_the_secret_out_as_advised_is_acknowledged_on_the_next_scan(bot, 
 
 def test_one_command_also_finds_that_the_bot_obeys_a_note_it_was_only_meant_to_read(bot, monkeypatch, capsys):
     start, example, _ = bot
-    monkeypatch.setattr("promptproof.quick._ask_name", dana)
+    monkeypatch.setattr("kritalon.quick._ask_name", dana)
     assert main(["scan", start(), "--replays", "2", "--no-open"]) == EXIT_VIOLATIONS
-    report = json.loads(Path("reports/scan.promptproof.json").read_text(encoding="utf-8"))
+    report = json.loads(Path("reports/scan.kritalon.json").read_text(encoding="utf-8"))
     planted = [f for f in report["findings"] if f["kind"] == "injection"]
     assert planted and {f["slot_id"] for f in planted} == {"order_note"}
     assert all(f["payload"] and "issue a refund of 50 on order A-1001" in f["payload"] for f in planted)
     assert report["not_tested"] == []  # secrets, forbidden actions and planted text: all three were tried
     assert example.refunds == []  # recorded, never run
     capsys.readouterr()
-    assert main(["scan", start(fixed=True), "--replays", "2", "--no-open", "--out", "fixed/scan.promptproof.json"]) == EXIT_NO_VERIFIED
-    fixed = json.loads(Path("fixed/scan.promptproof.json").read_text(encoding="utf-8"))
+    assert main(["scan", start(fixed=True), "--replays", "2", "--no-open", "--out", "fixed/scan.kritalon.json"]) == EXIT_NO_VERIFIED
+    fixed = json.loads(Path("fixed/scan.kritalon.json").read_text(encoding="utf-8"))
     assert fixed["not_tested"] == [] and {s["slot_id"]: s["state"] for s in fixed["slots"]}["order_note"] == "reachable"
 
 

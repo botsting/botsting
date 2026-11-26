@@ -12,9 +12,9 @@ from datetime import UTC, datetime, timedelta
 import httpx
 import pytest
 
-from promptproof.cli import main
-from promptproof.core import authorization as auth
-from promptproof.core.authorization import (
+from kritalon.cli import main
+from kritalon.core import authorization as auth
+from kritalon.core.authorization import (
     CHALLENGE_PATH,
     Authorization,
     AuthorizationError,
@@ -25,10 +25,10 @@ from promptproof.core.authorization import (
     normalize_origin,
     require_authorized,
 )
-from promptproof.core.models import Attack, Slot, TaskCheck
-from promptproof.core.runner import ScanConfig, replay_finding, run_attempt, run_scan
-from promptproof.core.stats import make_rate
-from promptproof.targets.base import NotAuthorizedError, UnsafeTargetError, require_contained_tools
+from kritalon.core.models import Attack, Slot, TaskCheck
+from kritalon.core.runner import ScanConfig, replay_finding, run_attempt, run_scan
+from kritalon.core.stats import make_rate
+from kritalon.targets.base import NotAuthorizedError, UnsafeTargetError, require_contained_tools
 
 NOW = datetime(2026, 11, 21, 12, 0, tzinfo=UTC)
 ORIGIN = "https://staging.example.com"
@@ -154,13 +154,13 @@ def test_proof_found():
     result = check_proof(a, transport)
     assert result.ok
     assert [str(r.url) for r in requests] == [ORIGIN + CHALLENGE_PATH]
-    assert requests[0].headers["User-Agent"] == "promptproof-authorization-check"
+    assert requests[0].headers["User-Agent"] == "kritalon-authorization-check"
 
 
 @pytest.mark.parametrize(
     ("site_args", "reason"),
     [
-        ({"body": "promptproof-challenge=someone-elses-token"}, "does not contain"),
+        ({"body": "kritalon-challenge=someone-elses-token"}, "does not contain"),
         ({"body": "", "status": 404}, "HTTP 404"),
         ({"redirect_to": "https://attacker.example/proof.txt"}, "redirect"),
         ({"size": 5000}, "larger than"),
@@ -202,7 +202,7 @@ def test_store_round_trip_and_one_authorization_per_origin(tmp_path):
     assert store.find("https://STAGING.example.com/") == second
     marked = store.mark_verified(ORIGIN, NOW)
     assert store.find(ORIGIN).verified_at == marked.verified_at == NOW.isoformat(timespec="seconds")
-    assert not list(tmp_path.glob(".promptproof-auth-*")), "no temporary files left behind"
+    assert not list(tmp_path.glob(".kritalon-auth-*")), "no temporary files left behind"
 
 
 def test_unreadable_store_is_an_error(tmp_path):
@@ -469,7 +469,7 @@ def test_expiry_during_a_scan_stops_it_before_the_next_operation(monkeypatch):
             raise AuthorizationError(f"the authorization for {local} expired at {record.expires_at}")
         return None
 
-    from promptproof.targets import base
+    from kritalon.targets import base
 
     monkeypatch.setattr(base, "require_authorized", lambda target, now=None: expire_after_first_message(now))
     two_turns = Attack("two:secret", "test", "Two", "secret", ("first", "second"))
@@ -515,7 +515,7 @@ def test_cancel_during_the_proof_fetch_is_honoured(monkeypatch):
 
 
 def test_replay_against_an_unauthorized_network_target_sends_nothing():
-    from promptproof.core.models import EvidenceLevel, Finding
+    from kritalon.core.models import EvidenceLevel, Finding
 
     finding = Finding(
         id="F1", attack_id="probe:secret", technique="test", title="Probe", slot_id="secret",
@@ -544,7 +544,7 @@ def test_authorize_create_verify_list(tmp_path, capsys, monkeypatch):
     args = ["authorize", ORIGIN, "--by", "Dana Levi", "--scope", "support bot", "--environment", "staging", "--store", store]
     assert main(args) == 0
     printed = capsys.readouterr().out
-    token_line = next(line.strip() for line in printed.splitlines() if line.strip().startswith("promptproof-challenge="))
+    token_line = next(line.strip() for line in printed.splitlines() if line.strip().startswith("kritalon-challenge="))
     assert ORIGIN + CHALLENGE_PATH in printed
 
     transport, _ = site("nothing here")
@@ -580,7 +580,7 @@ def test_authorize_production_warns(tmp_path, capsys):
 
 # -- scope beyond the origin ---------------------------------------------------------------
 
-from promptproof.core.models import InjectionPoint, ToolRule
+from kritalon.core.models import InjectionPoint, ToolRule
 
 RULE = ToolRule("refund", "issue_refund", "Refunds at staff request", "a refund", ("staff:dana",), "staff:dana", "Refund 5")
 POINT = InjectionPoint("note", "Order note", "staff:dana", "Summarize", "order", "hi", ("send_email",), "send an email")
@@ -655,9 +655,9 @@ def test_scope_survives_the_store_and_the_command_line(tmp_path, capsys):
 
 
 def test_report_records_who_authorized_the_scan_but_not_the_token(monkeypatch):
-    from promptproof.core.models import ScanReport
-    from promptproof.report_html import render_html
-    from promptproof.report_markdown import render_markdown
+    from kritalon.core.models import ScanReport
+    from kritalon.report_html import render_html
+    from kritalon.report_markdown import render_markdown
 
     a = verified(now=datetime.now(UTC))
     serve(a, monkeypatch)
@@ -671,8 +671,8 @@ def test_report_records_who_authorized_the_scan_but_not_the_token(monkeypatch):
 
 
 def test_in_process_scan_records_only_where_it_ran():
-    from promptproof.attacks.library import default_attacks
-    from promptproof.targets.registry import build_target
+    from kritalon.attacks.library import default_attacks
+    from kritalon.targets.registry import build_target
 
     target = build_target("toy:fixed")
     report = asyncio.run(run_scan(target, default_attacks(target)))
@@ -755,7 +755,7 @@ def test_a_proof_answered_from_a_cache_is_not_accepted():
 
 
 def test_a_reused_meter_checks_the_new_targets_permission(monkeypatch):
-    from promptproof.core.runner import Meter
+    from kritalon.core.runner import Meter
 
     a = verified(now=datetime.now(UTC))
     serve(a, monkeypatch)
@@ -769,7 +769,7 @@ def test_a_reused_meter_checks_the_new_targets_permission(monkeypatch):
 
 
 def test_expiry_while_the_proof_is_being_fetched_stops_the_operation(monkeypatch):
-    from promptproof.targets import base
+    from kritalon.targets import base
 
     a = verified(now=datetime.now(UTC))
     serve(a, monkeypatch)

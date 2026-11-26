@@ -10,11 +10,11 @@ import re
 
 import pytest
 
-from promptproof.core.canary import STYLES, Canary, new_canary, space_size
-from promptproof.core.matcher import LIMITS, attacker_min, find_canary, known_positions
-from promptproof.core.models import Slot, Turn
-from promptproof.core.runner import _judge
-from promptproof.targets.http import TargetConfigError, parse_config
+from kritalon.core.canary import STYLES, Canary, new_canary, space_size
+from kritalon.core.matcher import LIMITS, attacker_min, find_canary, known_positions
+from kritalon.core.models import Slot, Turn
+from kritalon.core.runner import _judge
+from kritalon.targets.http import TargetConfigError, parse_config
 
 NAME = Canary("nick", "Velomar Tisandu Korapek", style="name")
 WORD = re.compile(r"[BDFGKLMNPRSTVZ][aeiou][bdfgklmnprstvz][aeiou][bdfgklmnprstvz][aeiou][bdfgklmnprstvz]")
@@ -194,7 +194,7 @@ def test_slots_default_to_codes_and_http_descriptions_can_choose_names():
 
 
 def test_a_name_slot_gets_name_canaries_in_the_runner():
-    from promptproof.core.runner import _fresh
+    from kritalon.core.runner import _fresh
 
     slots = [
         Slot("n", "other_user_record", "d", "h", ("member:bob",), "member:bob", "p", canary_style="name"),

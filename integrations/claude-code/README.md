@@ -1,17 +1,17 @@
-# Promptproof for Claude Code
+# Kritalon for Claude Code
 
-A plugin that lets Claude Code set Promptproof up in your project, scan your own bot and read the report back to you. It holds one connection (the `promptproof mcp` server, which runs on your machine) and one skill that tells the assistant how to use it and what it must never do.
+A plugin that lets Claude Code set Kritalon up in your project, scan your own bot and read the report back to you. It holds one connection (the `kritalon mcp` server, which runs on your machine) and one skill that tells the assistant how to use it and what it must never do.
 
 Not published anywhere yet. To try it from a checkout of this repository:
 
 ```
-uv tool install /path/to/checkout                                 # the promptproof command, once
+uv tool install /path/to/checkout                                 # the kritalon command, once
 claude --plugin-dir /path/to/checkout/integrations/claude-code    # start Claude Code with the plugin
 ```
 
 Then, in your bot's project, ask: "test my bot for prompt injection".
 
-Without the plugin, the same server can be added by hand: `claude mcp add promptproof -- promptproof mcp`.
+Without the plugin, the same server can be added by hand: `claude mcp add kritalon -- kritalon mcp`.
 
 ## What the assistant can do
 
@@ -23,7 +23,7 @@ Without the plugin, the same server can be added by hand: `claude mcp add prompt
 
 ## What it cannot do
 
-- **Authorize a test.** That is a person taking responsibility by name. You run `promptproof authorize` in your own terminal; the server has no tool that records one, and a scan of your bot is refused until you have.
+- **Authorize a test.** That is a person taking responsibility by name. You run `kritalon authorize` in your own terminal; the server has no tool that records one, and a scan of your bot is refused until you have.
 - Read or write outside the folder Claude Code was started in.
 - Send anything to a bot before an authorization for that exact address is on record.
 

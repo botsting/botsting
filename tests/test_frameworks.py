@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from urllib.parse import urlsplit
 
-from promptproof.core.models import EvidenceLevel, Finding, Rate, ScanReport, SlotStatus, TaskStatus, Turn
-from promptproof.frameworks import (
+from kritalon.core.models import EvidenceLevel, Finding, Rate, ScanReport, SlotStatus, TaskStatus, Turn
+from kritalon.frameworks import (
     ALL_FRAMEWORK_ENTRIES,
     FRAMEWORK_MAPPINGS,
     OBJECTIVE_KINDS,

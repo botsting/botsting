@@ -1,4 +1,4 @@
-"""Tests for the optional PyRIT adapter behind Promptproof's AdaptiveStrategy interface."""
+"""Tests for the optional PyRIT adapter behind Kritalon's AdaptiveStrategy interface."""
 
 from __future__ import annotations
 
@@ -7,13 +7,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from promptproof.attacks.pyrit_adapter import PyRITAdaptiveStrategy
-from promptproof.core.runner import ScanConfig, run_scan
-from promptproof.targets.registry import build_target
+from kritalon.attacks.pyrit_adapter import PyRITAdaptiveStrategy
+from kritalon.core.runner import ScanConfig, run_scan
+from kritalon.targets.registry import build_target
 
 
 def test_missing_pyrit_raises_helpful_error(monkeypatch):
-    import promptproof.attacks.pyrit_adapter as mod
+    import kritalon.attacks.pyrit_adapter as mod
 
     def fail_import(name: str):
         raise ImportError("No module named 'pyrit'")

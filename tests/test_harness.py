@@ -1,6 +1,6 @@
 """The drop-in harness: a few lines in the bot's code instead of a test endpoint.
 
-It must do nothing for anyone but a signed Promptproof session, must never run a
+It must do nothing for anyone but a signed Kritalon session, must never run a
 decorated tool during a test, and must report calls in a way nothing else can forge.
 The end-to-end tests serve the practice bot with the harness on 127.0.0.1 and scan it
 exactly as a user would. Nothing here leaves this machine.
@@ -15,16 +15,16 @@ from datetime import UTC, datetime
 import httpx
 import pytest
 
-import promptproof.harness as pp
-from promptproof import demo
-from promptproof.attacks.library import default_attacks
-from promptproof.core import authorization as auth
-from promptproof.core.authorization import AuthorizationStore, new_authorization
-from promptproof.core.runner import run_scan
-from promptproof.practice_server import write_description
-from promptproof.targets.base import TargetError
-from promptproof.targets.http import HttpTarget, TargetConfigError, parse_config
-from promptproof.targets.registry import build_target
+import kritalon.harness as pp
+from kritalon import demo
+from kritalon.attacks.library import default_attacks
+from kritalon.core import authorization as auth
+from kritalon.core.authorization import AuthorizationStore, new_authorization
+from kritalon.core.runner import run_scan
+from kritalon.practice_server import write_description
+from kritalon.targets.base import TargetError
+from kritalon.targets.http import HttpTarget, TargetConfigError, parse_config
+from kritalon.targets.registry import build_target
 
 KEY = "k" * 40
 OTHER_KEY = "z" * 40
@@ -230,7 +230,7 @@ def test_the_scanner_and_an_asgi_bot_work_together(key):
 
 @pytest.mark.parametrize("problem", ["not wrapped", "no key on the bot", "a different key on the bot"])
 def test_no_attack_is_sent_unless_the_harness_confirms_test_mode(monkeypatch, problem):
-    # The scanner reads its key from SCANNER_KEY; the bot reads PROMPTPROOF_HARNESS_KEY.
+    # The scanner reads its key from SCANNER_KEY; the bot reads KRITALON_HARNESS_KEY.
     monkeypatch.setenv("SCANNER_KEY", KEY)
     monkeypatch.setenv(pp.KEY_ENV, KEY)
     if problem == "no key on the bot":
@@ -275,7 +275,7 @@ def test_an_ordinary_user_of_the_wrapped_bot_sees_no_difference(key):
 
 def test_the_ownership_proof_is_served_from_the_environment(monkeypatch):
     monkeypatch.delenv(pp.KEY_ENV, raising=False)
-    monkeypatch.setenv(pp.CHALLENGE_ENV, "promptproof-challenge=abc123")
+    monkeypatch.setenv(pp.CHALLENGE_ENV, "kritalon-challenge=abc123")
     app = pp.wrap(asgi_bot)
 
     async def fetch():
@@ -283,7 +283,7 @@ def test_the_ownership_proof_is_served_from_the_environment(monkeypatch):
             return await client.get(pp.CHALLENGE_PATH)
 
     response = asyncio.run(fetch())
-    assert response.status_code == 200 and response.text.strip() == "promptproof-challenge=abc123"
+    assert response.status_code == 200 and response.text.strip() == "kritalon-challenge=abc123"
 
 
 def test_sdk_descriptions_are_checked():
@@ -310,7 +310,7 @@ def test_sdk_descriptions_are_checked():
 @pytest.fixture
 def harness_practice(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("PROMPTPROOF_TARGETS_FILE", str(tmp_path / "promptproof.targets.json"))
+    monkeypatch.setenv("KRITALON_TARGETS_FILE", str(tmp_path / "kritalon.targets.json"))
     monkeypatch.setenv(pp.KEY_ENV, KEY)
     auth.forget_checks()
     servers = []
@@ -322,7 +322,7 @@ def harness_practice(tmp_path, monkeypatch):
         servers.append(server)
         bots.append(bot)
         port = server.server_address[1]
-        write_description(tmp_path / "promptproof.targets.json", "practice", demo.description(port, variant))
+        write_description(tmp_path / "kritalon.targets.json", "practice", demo.description(port, variant))
         origin = f"http://127.0.0.1:{port}"
         record = new_authorization(
             origin,
@@ -363,7 +363,7 @@ def test_scanning_the_fixed_bot_through_the_harness_finds_nothing(harness_practi
 
 
 def test_the_command_line_makes_a_usable_key(capsys):
-    from promptproof.cli import main
+    from kritalon.cli import main
 
     assert main(["harness-key"]) == 0
     printed = capsys.readouterr()
@@ -417,7 +417,7 @@ def test_two_session_headers_are_refused(key):
     wrapped = pp.wrap(app)
     scope = {
         "type": "http", "method": "POST", "path": "/chat",
-        "headers": [(b"promptproof-session", good.encode()), (b"promptproof-session", b"junk")],
+        "headers": [(b"kritalon-session", good.encode()), (b"kritalon-session", b"junk")],
     }  # fmt: skip
     sent = []
 
@@ -444,10 +444,10 @@ def test_the_wsgi_wrapper_refuses_the_same_way(key):
 
     wrapped = pp.wrap(app)
     statuses = []
-    environ = {"REQUEST_METHOD": "POST", "PATH_INFO": "/chat", "HTTP_PROMPTPROOF_SESSION": "junk.\xb5"}
+    environ = {"REQUEST_METHOD": "POST", "PATH_INFO": "/chat", "HTTP_KRITALON_SESSION": "junk.\xb5"}
     body = wrapped(environ, lambda status, headers: statuses.append(status))
     assert statuses == ["403 Forbidden"] and ran == [] and b"was not run" in b"".join(body)
-    del environ["HTTP_PROMPTPROOF_SESSION"]
+    del environ["HTTP_KRITALON_SESSION"]
     assert b"".join(wrapped(environ, lambda status, headers: statuses.append(status))) == b"ok" and ran == ["/chat"]
 
 
@@ -469,7 +469,7 @@ def test_a_wsgi_view_that_runs_lazily_is_still_recorded_and_closed(key):
     real_refunds.clear()
     answered = {}
     token = pp.make_session_token(KEY, "s1", {}, nonce="n1")
-    environ = {"REQUEST_METHOD": "POST", "PATH_INFO": "/chat", "HTTP_PROMPTPROOF_SESSION": token}
+    environ = {"REQUEST_METHOD": "POST", "PATH_INFO": "/chat", "HTTP_KRITALON_SESSION": token}
     body = pp.wrap(lambda environ, start_response: Lazy(start_response))(
         environ, lambda status, headers: answered.update(headers)
     )
@@ -501,7 +501,7 @@ def test_a_bot_that_sends_its_own_record_as_well_fails_closed(key):
     async def lying_bot(scope, receive, send):
         fake = pp._b64(b'{"calls":[],"dropped":0}') + "." + "A" * 43
         await send({"type": "http.response.start", "status": 200,
-                    "headers": [(b"content-type", b"application/json"), (b"promptproof-tool-calls", fake.encode())]})  # fmt: skip
+                    "headers": [(b"content-type", b"application/json"), (b"kritalon-tool-calls", fake.encode())]})  # fmt: skip
         await send({"type": "http.response.body", "body": b'{"reply": "Hello."}'})
 
     target = sdk_target(pp.wrap(lying_bot))
@@ -573,7 +573,7 @@ def test_a_tool_run_in_a_thread_you_start_yourself_is_not_covered(key):
 
 def test_the_ownership_proof_is_only_for_get(monkeypatch):
     monkeypatch.delenv(pp.KEY_ENV, raising=False)
-    monkeypatch.setenv(pp.CHALLENGE_ENV, "promptproof-challenge=abc123")
+    monkeypatch.setenv(pp.CHALLENGE_ENV, "kritalon-challenge=abc123")
     assert post(pp.wrap(asgi_bot), path=pp.CHALLENGE_PATH).status_code == 404  # the bot's own answer
 
 
@@ -593,7 +593,7 @@ def test_a_session_never_outlives_its_request_even_if_closing_the_body_fails(key
         return Body()
 
     token = pp.make_session_token(KEY, "s1", {})
-    environ = {"REQUEST_METHOD": "POST", "PATH_INFO": "/chat", "HTTP_PROMPTPROOF_SESSION": token}
+    environ = {"REQUEST_METHOD": "POST", "PATH_INFO": "/chat", "HTTP_KRITALON_SESSION": token}
     with pytest.raises(RuntimeError):
         pp.wrap(app)(environ, lambda status, headers: None)
     assert not pp.active()
@@ -612,7 +612,7 @@ def test_an_async_stand_in_is_refused_when_the_tool_is_marked():
 
 
 def test_record_call_is_the_public_way_to_record_from_elsewhere(key):
-    with pytest.raises(pp.HarnessError, match="needs a Promptproof test session"):
+    with pytest.raises(pp.HarnessError, match="needs a Kritalon test session"):
         pp.record_call("issue_refund", {"amount": 5})
     token = pp.make_session_token(KEY, "s1", {})
     result, session = in_session(token, pp.record_call, "issue_refund", {"amount": 5, "order": {"id": "A-1"}}, "queued")
@@ -678,7 +678,7 @@ def test_the_harness_knows_when_a_test_request_is_in_flight(key):
     def failing(environ, start_response):
         raise RuntimeError("the app crashed")
 
-    environ = {"REQUEST_METHOD": "POST", "PATH_INFO": "/chat", "HTTP_PROMPTPROOF_SESSION": token}
+    environ = {"REQUEST_METHOD": "POST", "PATH_INFO": "/chat", "HTTP_KRITALON_SESSION": token}
     with pytest.raises(RuntimeError):
         pp.wrap(failing)(environ, lambda status, headers: None)
     assert pp.tests_in_progress() == 0 and not pp.active()
@@ -755,7 +755,7 @@ def test_wrapping_a_flask_style_app_keeps_it_the_app_and_wraps_what_it_serves(ke
     assert wrapped is app and wrapped.run() == "serving"  # app.run() and the routes still work
     assert pp.wrap(app) is app and isinstance(app.wsgi_app, pp._Wsgi) and not isinstance(app.wsgi_app.app, pp._Wsgi)
     token = pp.make_session_token(KEY, "s1", {"code": "FAKE-1"}, nonce="n1")
-    environ = {"REQUEST_METHOD": "POST", "PATH_INFO": "/chat", "HTTP_PROMPTPROOF_SESSION": token}
+    environ = {"REQUEST_METHOD": "POST", "PATH_INFO": "/chat", "HTTP_KRITALON_SESSION": token}
     headers = {}
 
     def start_response(status, response_headers, exc_info=None):

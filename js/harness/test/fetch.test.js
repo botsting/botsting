@@ -96,10 +96,10 @@ test("the ownership proof is served for GET only, when the variable is set", asy
   delete process.env[pp.CHALLENGE_ENV];
   const noProof = await chatBot(new Request(`https://bot.example.com${pp.CHALLENGE_PATH}`));
   assert.equal(noProof.status, 404);
-  process.env[pp.CHALLENGE_ENV] = "promptproof-challenge=abc123";
+  process.env[pp.CHALLENGE_ENV] = "kritalon-challenge=abc123";
   const proof = await chatBot(new Request(`https://bot.example.com${pp.CHALLENGE_PATH}`));
   assert.equal(proof.status, 200);
-  assert.equal(await proof.text(), "promptproof-challenge=abc123\n");
+  assert.equal(await proof.text(), "kritalon-challenge=abc123\n");
   const posted = await call(chatBot, pp.CHALLENGE_PATH, {}, "");
   assert.equal(posted.status, 404); // the app's own answer
   delete process.env[pp.CHALLENGE_ENV];

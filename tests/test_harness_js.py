@@ -18,10 +18,10 @@ from pathlib import Path
 import httpx
 import pytest
 
-import promptproof.harness as pp
-from promptproof.cli import EXIT_NO_VERIFIED, EXIT_VIOLATIONS, main
-from promptproof.core import authorization as auth
-from promptproof.targets.http import HttpTarget, parse_config
+import kritalon.harness as pp
+from kritalon.cli import EXIT_NO_VERIFIED, EXIT_VIOLATIONS, main
+from kritalon.core import authorization as auth
+from kritalon.targets.http import HttpTarget, parse_config
 
 KEY = "k" * 40
 OTHER_KEY = "z" * 40
@@ -328,7 +328,7 @@ def test_a_scan_carries_out_a_small_refund_on_a_node_bot_and_only_records_a_larg
 def first_scan_env(tmp_path, monkeypatch):
     """What test_quick.py sets up for a scan: nothing on disk yet, and the harness key."""
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("PROMPTPROOF_TARGETS_FILE", str(tmp_path / "promptproof.targets.json"))
+    monkeypatch.setenv("KRITALON_TARGETS_FILE", str(tmp_path / "kritalon.targets.json"))
     monkeypatch.setenv(pp.KEY_ENV, KEY)
     auth.forget_checks()
 
@@ -370,13 +370,13 @@ def refunds_really_carried_out(chat_url):
 
 
 def test_a_first_scan_of_the_node_example_finds_and_clears_all_three_weaknesses(first_scan_env, monkeypatch, capsys):
-    """The whole `promptproof scan` command against the Node example bot, the way
+    """The whole `kritalon scan` command against the Node example bot, the way
     test_quick.py runs it against the Python one: no description file, the harness
     tells the scanner everything. The weak build reports a verified leak of staff_code
     and a verified call to issue_refund; the fixed build reports nothing, with every
     slot reachable through the harness's pass-phrase route; and the marked tool never
     really runs in either build."""
-    monkeypatch.setattr("promptproof.quick._ask_name", dana)
+    monkeypatch.setattr("kritalon.quick._ask_name", dana)
     with node_example() as weak:
         assert main(["scan", weak, "--replays", "2", "--out", "weak/scan.json"]) == EXIT_VIOLATIONS
         assert refunds_really_carried_out(weak) == 0  # recorded, never run

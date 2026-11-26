@@ -10,7 +10,7 @@ build/
 
 # Scan output
 /reports/
-*.promptproof.json
+*.kritalon.json
 
 # Internal business documents: kept out of the repository because it is meant to be open-sourced.
 /PROJECT_BRIEF.md
@@ -18,11 +18,11 @@ build/
 /research/
 
 # Authorizations name real people and the sites they control; they stay on this machine.
-promptproof.authorizations.json
-.promptproof-auth-*
+kritalon.authorizations.json
+.kritalon-auth-*
 
 # Descriptions of real bots; may name internal addresses.
-promptproof.targets.json
+kritalon.targets.json
 
 # Adapters and runs for the owner's own systems; internal, never published.
 /local/

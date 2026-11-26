@@ -70,6 +70,6 @@ The owner confirms that the hosting provider's and the AI model provider's terms
 The matching command, run by the person who signed for the owner or on their written instruction:
 
 ```
-promptproof authorize https://staging.example.com --by "NAME" --scope "AS ABOVE" \
+kritalon authorize https://staging.example.com --by "NAME" --scope "AS ABOVE" \
     --environment staging --days 30 --tool issue_refund --tool send_email
 ```

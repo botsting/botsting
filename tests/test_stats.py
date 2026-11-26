@@ -1,6 +1,6 @@
 import pytest
 
-from promptproof.core.stats import make_rate, wilson_interval
+from kritalon.core.stats import make_rate, wilson_interval
 
 
 def test_wilson_known_values():

@@ -1,7 +1,7 @@
 {
-  "name": "promptproof-harness",
+  "name": "kritalon-harness",
   "version": "0.1.0",
-  "description": "The Promptproof drop-in test harness for JavaScript bots: plant fake secrets, record risky tool calls, never run them during a test.",
+  "description": "The Kritalon drop-in test harness for JavaScript bots: plant fake secrets, record risky tool calls, never run them during a test.",
   "license": "Apache-2.0",
   "type": "module",
   "main": "index.js",
@@ -22,10 +22,10 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://example.invalid/promptproof"
+    "url": "https://example.invalid/kritalon"
   },
   "keywords": [
-    "promptproof",
+    "kritalon",
     "security",
     "testing",
     "llm",

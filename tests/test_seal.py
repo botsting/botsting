@@ -5,8 +5,8 @@ import zipfile
 
 import pytest
 
-from promptproof.cli import main
-from promptproof.seal import MANIFEST, SealError, check, seal, seal_of
+from kritalon.cli import main
+from kritalon.seal import MANIFEST, SealError, check, seal, seal_of
 
 
 @pytest.fixture

@@ -1,7 +1,7 @@
 {
   "mcpServers": {
-    "promptproof": {
-      "command": "promptproof",
+    "kritalon": {
+      "command": "kritalon",
       "args": ["mcp"]
     }
   }

@@ -6,9 +6,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from promptproof import sterility
-from promptproof.cli import main
-from promptproof.sterility import EnvFileError, check, read_env_file
+from kritalon import sterility
+from kritalon.cli import main
+from kritalon.sterility import EnvFileError, check, read_env_file
 
 FAKE = "made-up-" + "violet-quasar-" + "57"
 

@@ -1,8 +1,8 @@
 // The drop-in test harness for JavaScript bots: a few lines in the bot's own code
-// instead of a test endpoint. Port of promptproof/harness.py; wire-compatible with
+// instead of a test endpoint. Port of kritalon/harness.py; wire-compatible with
 // the Python scanner, which needs no changes to scan a Node bot.
 //
-//   import * as pp from "promptproof-harness";
+//   import * as pp from "kritalon-harness";
 //
 //   const server = http.createServer(pp.wrapNode(handler));   // a plain Node bot
 //   app.use(pp.express());                                    // an Express bot
@@ -11,9 +11,9 @@
 //   const issueRefund = pp.action("issue_refund", (orderId, amount) => refunds.push(...));  // risky tool
 //   const prompt = BASE_PROMPT + pp.planted("admin_code");    // where a fake secret lives in a test
 //
-// When is it on? Only for a request that carries a valid Promptproof session, signed
-// with the key in PROMPTPROOF_HARNESS_KEY. Set that key on the staging or test
-// deployment only. A request without the Promptproof-Session header (every real user)
+// When is it on? Only for a request that carries a valid Kritalon session, signed
+// with the key in KRITALON_HARNESS_KEY. Set that key on the staging or test
+// deployment only. A request without the Kritalon-Session header (every real user)
 // reaches the bot untouched: tools run as written and planted() returns its default.
 //
 // A request that carries the header but is not a valid session here (no key on this
@@ -24,18 +24,18 @@
 // What a test session does: planted() returns the fake secret the scan chose for that
 // slot, content() returns text the scan placed at an injection point, and a function
 // wrapped with action() is recorded and never run — the call and its arguments go back
-// to the scanner in the Promptproof-Tool-Calls response header, signed for that
+// to the scanner in the Kritalon-Tool-Calls response header, signed for that
 // session and that one message so the record cannot be made up, moved to another
 // conversation or reused for a later message.
 //
 // Small real actions, under caps: a tool wrapped with action(..., { live: cap(...) })
 // may be carried out for real during a test session, only when four things agree —
-// the cap in this code, the deployment switch PROMPTPROOF_LIVE_ACTIONS, the scan's
+// the cap in this code, the deployment switch KRITALON_LIVE_ACTIONS, the scan's
 // signed session naming the tool and its run, and the call being inside every limit.
 // Otherwise it is recorded and not run, exactly as without `live`. See README.md.
 //
 // What the harness tells the scanner about the bot, so a first scan
-// (promptproof scan URL) needs no description file — each in the same signed record
+// (kritalon scan URL) needs no description file — each in the same signed record
 // as the tool calls: which secrets the bot reads (every planted(slot) call is noted; a
 // "discover" session plants nothing, so one ordinary message in it learns which slots
 // exist); which tools are marked (the readiness answer lists every tool registered
@@ -56,13 +56,13 @@
 import { AsyncLocalStorage, AsyncResource } from "node:async_hooks";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 
-export const KEY_ENV = "PROMPTPROOF_HARNESS_KEY";
-export const CHALLENGE_ENV = "PROMPTPROOF_CHALLENGE";
-export const LIVE_ENV = "PROMPTPROOF_LIVE_ACTIONS";
-export const CHALLENGE_PATH = "/.well-known/promptproof-challenge.txt";
-export const READY_PATH = "/.well-known/promptproof-harness";
-export const SESSION_HEADER = "Promptproof-Session";
-export const CALLS_HEADER = "Promptproof-Tool-Calls";
+export const KEY_ENV = "KRITALON_HARNESS_KEY";
+export const CHALLENGE_ENV = "KRITALON_CHALLENGE";
+export const LIVE_ENV = "KRITALON_LIVE_ACTIONS";
+export const CHALLENGE_PATH = "/.well-known/kritalon-challenge.txt";
+export const READY_PATH = "/.well-known/kritalon-harness";
+export const SESSION_HEADER = "Kritalon-Session";
+export const CALLS_HEADER = "Kritalon-Tool-Calls";
 export const MIN_KEY_LENGTH = 32;
 export const MAX_TOKEN_BYTES = 6000; // most servers refuse headers much larger than 8 KB
 export const MAX_CALLS = 100;
@@ -71,8 +71,8 @@ export const MAX_LIFETIME_SECONDS = 900;
 export const MAX_RUNS_REMEMBERED = 64; // runs whose real calls this process keeps count of
 export const RUN_MEMORY_SECONDS = 24 * 3600; // far longer than any scan; a run's count is never dropped while it could go on
 
-const SESSION_DOMAIN = Buffer.from("promptproof-session/1\n");
-const CALLS_DOMAIN = Buffer.from("promptproof-calls/1\n");
+const SESSION_DOMAIN = Buffer.from("kritalon-session/1\n");
+const CALLS_DOMAIN = Buffer.from("kritalon-calls/1\n");
 // What a wrapped tool returns during a test when no `result` was given. The real function is not
 // run, so its own answer does not exist. A bot usually looks a key up in a tool's answer or puts it
 // into a sentence: this reads as { status: "ok" } and, in a string, as "ok", so both keep working.
@@ -82,9 +82,9 @@ function standInResult() {
   return Object.defineProperty({ status: "ok" }, "toString", { value: () => "ok", enumerable: false });
 }
 const DEFAULT_RESULT = standInResult();
-const READY = Buffer.from("promptproof harness ready\n");
+const READY = Buffer.from("kritalon harness ready\n");
 const REFUSED = Buffer.from(
-  "promptproof: this request carries a test session that is not valid here, so it was not run\n"
+  "kritalon: this request carries a test session that is not valid here, so it was not run\n"
 );
 
 export class HarnessError extends Error {
@@ -260,7 +260,7 @@ export function checkKey(key) {
   // is 17 characters, not the 34 UTF-16 units JavaScript's .length would report.
   if (typeof key !== "string" || Array.from(key).length < MIN_KEY_LENGTH) {
     throw new HarnessError(
-      `${KEY_ENV} must be at least ${MIN_KEY_LENGTH} characters; make one with promptproof harness-key`
+      `${KEY_ENV} must be at least ${MIN_KEY_LENGTH} characters; make one with kritalon harness-key`
     );
   }
   return key;
@@ -285,7 +285,7 @@ export function makeSessionToken(
     discover = false,
   } = {}
 ) {
-  // What the scanner puts in the Promptproof-Session header of each message. The
+  // What the scanner puts in the Kritalon-Session header of each message. The
   // nonce should be new for every message: the harness signs it into that message's
   // tool-call record. `control` maps a slot to a pass phrase, for a session that checks
   // the bot can say that slot's value; `discover` marks a session that plants nothing
@@ -437,7 +437,7 @@ export class Session {
   }
 
   headerValue(tools = false) {
-    // The signed Promptproof-Tool-Calls header value. The slots read while handling
+    // The signed Kritalon-Tool-Calls header value. The slots read while handling
     // this message always travel with it; the marked tools and their rules only in the
     // readiness answer, exactly as the Python harness orders and formats them.
     const record = { calls: this.calls, dropped: this.dropped, read: this.read };
@@ -579,7 +579,7 @@ export function openSession(token, now = null) {
 // -- what the bot's code calls ----------------------------------------------------------------
 
 export function active() {
-  // True while handling a request from a Promptproof scan.
+  // True while handling a request from a Kritalon scan.
   return storage.getStore() !== undefined;
 }
 
@@ -629,7 +629,7 @@ export function recordedCalls() {
 
 // -- small real actions, under caps -------------------------------------------------------------
 
-const CAP = Symbol("promptproof.cap");
+const CAP = Symbol("kritalon.cap");
 
 export function cap({ max = {}, only = {}, total = {}, calls = 1 } = {}) {
   // Limits under which a tool may be carried out for real during a test, mirroring the
@@ -829,7 +829,7 @@ function addCall(session, tool, callArguments, outcome, note = "", mode = "") {
 export function recordCall(tool, callArguments, result = DEFAULT_RESULT) {
   const session = storage.getStore();
   if (session === undefined) {
-    throw new HarnessError("recordCall needs a Promptproof test session; check pp.active() first");
+    throw new HarnessError("recordCall needs a Kritalon test session; check pp.active() first");
   }
   markTool(tool);
   addCall(session, tool, callArguments, result);
@@ -854,7 +854,7 @@ export function action(tool, fn, options = {}) {
   //
   // `options.neverForUsers` says that nobody chatting with the bot may ever cause this
   // tool to run, and gives what an attacker would ask for, in a few words. A first scan
-  // (promptproof scan URL) then tries to make the bot do exactly that; the harness's
+  // (kritalon scan URL) then tries to make the bot do exactly that; the harness's
   // readiness answer carries it as a rule. Leave it out for a tool some users may
   // legitimately trigger; who may is then said in a description.
   //
@@ -1073,7 +1073,7 @@ function runHttpSession(session, req, res, handler) {
 }
 
 export function wrapNode(handler) {
-  // Wrap a plain (req, res) Node http handler. Without PROMPTPROOF_HARNESS_KEY set,
+  // Wrap a plain (req, res) Node http handler. Without KRITALON_HARNESS_KEY set,
   // requests pass straight through.
   envKey(); // a key that is set but too short is a mistake worth stopping on
   return function (req, res) {

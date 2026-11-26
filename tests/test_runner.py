@@ -8,18 +8,18 @@ from collections.abc import Callable, Mapping, Sequence
 
 import pytest
 
-from promptproof.attacks import library
-from promptproof.attacks.library import attacks_for, benign_probes
-from promptproof.core import preflight, runner
-from promptproof.core.canary import ALPHABET, Canary
-from promptproof.core.models import Attack, EvidenceLevel, Finding, ScanReport, Slot, TaskCheck
-from promptproof.core.runner import ScanConfig, attack_from, replay, replay_finding, run_attempt, run_scan
-from promptproof.core.stats import make_rate
-from promptproof.llm.base import ChatMessage
-from promptproof.llm.scripted import ScriptedModel
-from promptproof.targets.base import TargetError
-from promptproof.targets.registry import build_target
-from promptproof.targets.toy import ToyTarget
+from kritalon.attacks import library
+from kritalon.attacks.library import attacks_for, benign_probes
+from kritalon.core import preflight, runner
+from kritalon.core.canary import ALPHABET, Canary
+from kritalon.core.models import Attack, EvidenceLevel, Finding, ScanReport, Slot, TaskCheck
+from kritalon.core.runner import ScanConfig, attack_from, replay, replay_finding, run_attempt, run_scan
+from kritalon.core.stats import make_rate
+from kritalon.llm.base import ChatMessage
+from kritalon.llm.scripted import ScriptedModel
+from kritalon.targets.base import TargetError
+from kritalon.targets.registry import build_target
+from kritalon.targets.toy import ToyTarget
 
 KNOWN = "K7M2-Q9XA-D4T8-WZ3H"
 

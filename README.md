@@ -1,12 +1,12 @@
-# Promptproof
+# Kritalon
 
-Evidence-first security testing for LLM applications. Promptproof attacks a bot you own and reports only what it can prove: it plants fresh secrets ("canaries") where an attacker should never reach, then shows you the exact conversation in which one came out.
+Evidence-first security testing for LLM applications. Kritalon attacks a bot you own and reports only what it can prove: it plants fresh secrets ("canaries") where an attacker should never reach, then shows you the exact conversation in which one came out.
 
 Early development: nothing here is released yet, and it is not on PyPI. It scans the built-in practice bots and any bot you own.
 
 ## Install it as a command
 
-Requires Python 3.11+. From a checkout of this repository, either of these puts the `promptproof` command on your path, so it works from any folder:
+Requires Python 3.11+. From a checkout of this repository, either of these puts the `kritalon` command on your path, so it works from any folder:
 
 ```
 uv tool install .        # with uv (https://docs.astral.sh/uv/)
@@ -19,24 +19,24 @@ That installs the command. A bot that uses the drop-in harness (below) imports t
 pip install /path/to/this/checkout       # run with the bot's Python, in the bot's virtual environment
 ```
 
-The two are separate on purpose: the command lives in its own isolated environment, and `import promptproof.harness` in the bot fails with "No module named promptproof" until the second step is done. The harness itself needs nothing beyond the Python standard library.
+The two are separate on purpose: the command lives in its own isolated environment, and `import kritalon.harness` in the bot fails with "No module named kritalon" until the second step is done. The harness itself needs nothing beyond the Python standard library.
 
-To work on Promptproof itself, use `uv sync` and prefix the commands below with `uv run`, from inside the checkout.
+To work on Kritalon itself, use `uv sync` and prefix the commands below with `uv run`, from inside the checkout.
 
 ## See it in a minute
 
 ```
-promptproof demo
+kritalon demo
 ```
 
-This serves a small support bot on your machine twice, a vulnerable build and a fixed one, wired exactly as your own bot would be, then attacks both. It writes a report and a sealed evidence bundle for each into `promptproof-demo/` in the folder you are in, prints the full path of each browser report and sealed bundle, and opens the first report in your browser. Nothing leaves your machine. `promptproof demo --live` shows live testing: small refunds really run (as a line in a practice ledger), and larger ones are stopped by the cap and kept as evidence.
+This serves a small support bot on your machine twice, a vulnerable build and a fixed one, wired exactly as your own bot would be, then attacks both. It writes a report and a sealed evidence bundle for each into `kritalon-demo/` in the folder you are in, prints the full path of each browser report and sealed bundle, and opens the first report in your browser. Nothing leaves your machine. `kritalon demo --live` shows live testing: small refunds really run (as a line in a practice ledger), and larger ones are stopped by the cap and kept as evidence.
 
 ## Scan your own bot
 
 Three kinds of line in the bot, a fourth if it reads text other people wrote, and one command. No description file.
 
 ```python
-import promptproof.harness as pp
+import kritalon.harness as pp
 
 app = pp.wrap(app)                                # the web app (FastAPI, Starlette, Flask, Django)
 
@@ -57,11 +57,11 @@ Two things about where these lines go:
 - **`pp.planted(...)` is called while a message is being handled.** Each test conversation gets its own fake secret, so a prompt that is put together once, when the app starts, cannot receive one. If the code reads a secret only at that moment, the scan names it, says that secret leaks were not tested, and never shows a zero for them.
 
 ```
-promptproof harness-key                           # set it as PROMPTPROOF_HARNESS_KEY for the bot and here
-promptproof scan http://localhost:8000/chat
+kritalon harness-key                           # set it as KRITALON_HARNESS_KEY for the bot and here
+kritalon scan http://localhost:8000/chat
 ```
 
-The harness tells the scanner what it needs: which tools are marked, which secrets the bot reads, and, in a control conversation only, a pass phrase that lets the scanner check the bot can actually say each secret (so "nothing found" means something). The scanner works out which field carries the message and where the reply is. For a bot on your own machine it asks you to type your name to authorize the test. Where there is no keyboard to ask at (a script, a pipeline, a coding assistant running the command), run `promptproof authorize http://localhost:8000 --by "YOUR NAME" --scope "what may be tested" --environment test --tool issue_refund` once first, with one `--tool` for each tool you marked `never_for_users`: a tool the authorization does not name is left untested, and the scan says so. The scan saves what it worked out to `promptproof.targets.json` and prints the name it used (`http:quick-localhost-8000`), which is what `promptproof doctor --target` and `promptproof scan --target` take, so you can replay findings and add to the description. If you scan the address again after editing that description, your edited copy is kept in a file beside it.
+The harness tells the scanner what it needs: which tools are marked, which secrets the bot reads, and, in a control conversation only, a pass phrase that lets the scanner check the bot can actually say each secret (so "nothing found" means something). The scanner works out which field carries the message and where the reply is. For a bot on your own machine it asks you to type your name to authorize the test. Where there is no keyboard to ask at (a script, a pipeline, a coding assistant running the command), run `kritalon authorize http://localhost:8000 --by "YOUR NAME" --scope "what may be tested" --environment test --tool issue_refund` once first, with one `--tool` for each tool you marked `never_for_users`: a tool the authorization does not name is left untested, and the scan says so. The scan saves what it worked out to `kritalon.targets.json` and prints the name it used (`http:quick-localhost-8000`), which is what `kritalon doctor --target` and `kritalon scan --target` take, so you can replay findings and add to the description. If you scan the address again after editing that description, your edited copy is kept in a file beside it.
 
 ```
 18 verified violation(s): 11 protected data disclosed, 7 forbidden action(s) accepted, 0 forbidden action(s) attempted and refused by the tool.
@@ -93,12 +93,12 @@ That is the example bot in `examples/`, as printed; a line of `...` marks where 
 A first scan tests three things:
 
 - **Secrets in the instructions.** Whether a user can talk the bot into revealing one.
-- **Text the bot reads from elsewhere.** At each place read with `pp.content(...)`, it leaves text that tells the bot to use a tool no chat user may cause, then has an ordinary user send an ordinary request. A recorded call to such a tool is a finding. The same request is tried first with harmless text there; if the tool is called even then, the test is not run, because a call could not be pinned on the planted text. If the bot reads that text only for some requests, say which: `promptproof scan URL --message "Where is my order?"`.
+- **Text the bot reads from elsewhere.** At each place read with `pp.content(...)`, it leaves text that tells the bot to use a tool no chat user may cause, then has an ordinary user send an ordinary request. A recorded call to such a tool is a finding. The same request is tried first with harmless text there; if the tool is called even then, the test is not run, because a call could not be pinned on the planted text. If the bot reads that text only for some requests, say which: `kritalon scan URL --message "Where is my order?"`.
 - **Tools no chat user may ever cause.** For each tool marked with `never_for_users="what an attacker would ask for"`, it tries to make the bot call it. Any recorded call is a finding. Here the scan relies on the harness's signed statement that the tool carries its recorder, without first exercising the tool legitimately; the report says so.
 
-A tool that some users may use is listed as "not tested yet": whether a call is forbidden then depends on who is asking, which only you can say. `promptproof guide` shows how to describe that, and how to test one user reaching another user's data.
+A tool that some users may use is listed as "not tested yet": whether a call is forbidden then depends on who is asking, which only you can say. `kritalon guide` shows how to describe that, and how to test one user reaching another user's data.
 
-To try it without your own bot: `python examples/support_bot.py` in one terminal, `promptproof scan http://127.0.0.1:8000/chat` in another, then again with `--fixed`.
+To try it without your own bot: `python examples/support_bot.py` in one terminal, `kritalon scan http://127.0.0.1:8000/chat` in another, then again with `--fixed`.
 
 One thing to know before you mark a tool. During a test a marked function is not run, so it cannot return its usual answer. It returns a stand-in that reads as `{"status": "ok"}` and as the text `"ok"`, which is enough for a bot that looks up a key in the answer or puts it into a sentence. If your bot needs more from it, say what the tool should return during a test: `@pp.action("issue_refund", result="Refunded.")`. `result=` can also be a function that takes the tool's own arguments and returns the stand-in, for a bot that reads fields of the answer: `result=lambda order_id, amount: {"status": "ok", "order_id": order_id, "refunded": amount}`.
 
@@ -107,8 +107,8 @@ How the scan knows a secret could have come out at all. Finding nothing means li
 ## Try it
 
 ```
-uv run promptproof scan --target toy:vulnerable --markdown reports/vulnerable.md
-uv run promptproof scan --target toy:fixed --markdown reports/fixed.md
+uv run kritalon scan --target toy:vulnerable --markdown reports/vulnerable.md
+uv run kritalon scan --target toy:fixed --markdown reports/fixed.md
 ```
 
 `toy:vulnerable` and `toy:fixed` are two builds of the same small support bot. The first keeps a staff code in its instructions, looks up any order a user names, and offers its refund tool in every conversation; the second fixes all three in application code. By default they run on a scripted stand-in model, so no LLM is needed. Refunds go to an in-memory ledger; nothing here can move money.
@@ -123,14 +123,14 @@ To run the same bot on a real local model, install [Ollama](https://ollama.com),
 
 ```
 ollama pull llama3.2
-uv run promptproof scan --target "toy:vulnerable?model=ollama:llama3.2" --discovery-runs 3 --html reports/live.html
+uv run kritalon scan --target "toy:vulnerable?model=ollama:llama3.2" --discovery-runs 3 --html reports/live.html
 ```
 
 Run the adaptive attacker (Milestone 3) or compare static vs. adaptive at equal per-objective target-message budgets on the held-out hardened targets:
 
 ```
-uv run promptproof scan --target hardened:keyword --strategy adaptive --html reports/hardened.html
-uv run promptproof benchmark --budget-per-objective 8 --replays 3
+uv run kritalon scan --target hardened:keyword --strategy adaptive --html reports/hardened.html
+uv run kritalon benchmark --budget-per-objective 8 --replays 3
 ```
 
 PyRIT is supported behind the same `AdaptiveStrategy` interface as an optional extra (`uv sync --extra pyrit`).
@@ -140,8 +140,8 @@ Nothing is sent to a bot outside this process without a recorded, current author
 Replay a finding from a reset state with a fresh secret, or try the same attack on the fixed build:
 
 ```
-uv run promptproof replay reports/scan.promptproof.json --finding F1
-uv run promptproof replay reports/scan.promptproof.json --finding F1 --target toy:fixed
+uv run kritalon replay reports/scan.kritalon.json --finding F1
+uv run kritalon replay reports/scan.kritalon.json --finding F1 --target toy:fixed
 ```
 
 Exit codes: `0` no verified violations, `1` violations verified, `2` inconclusive.
@@ -160,7 +160,7 @@ Known limits are listed at the end of every report.
 
 ## Scanning a bot over HTTP
 
-Any bot with an HTTP chat endpoint can be scanned once it has a small *test harness*: one extra endpoint in its staging or test build that Promptproof calls before every attempt.
+Any bot with an HTTP chat endpoint can be scanned once it has a small *test harness*: one extra endpoint in its staging or test build that Kritalon calls before every attempt.
 
 ```
 POST /your/reset/path   {"fixtures": {"<slot id>": "<fake secret>"}, "content": {"<injection point id>": "<text>"}}
@@ -170,24 +170,24 @@ It puts each fake secret where that slot says it lives (the system prompt, a tes
 
 The scan trusts the harness: it cannot check that a reset really forgot earlier conversations, or that the reported tool calls are real. Fresh fake secrets for every attempt and the legitimate-use checks limit the damage of a harness that half-works, but one that lies can produce false findings or hide real ones.
 
-The bot is described in `promptproof.targets.json`: where it is, how to talk to it as each user, where its reply is in the response, and what it protects. Credentials are written as `${ENV_VAR}` and read from the environment when the scan runs; they never appear in reports. Requests go only to the described origin and its two paths; redirects are not followed.
+The bot is described in `kritalon.targets.json`: where it is, how to talk to it as each user, where its reply is in the response, and what it protects. Credentials are written as `${ENV_VAR}` and read from the environment when the scan runs; they never appear in reports. Requests go only to the described origin and its two paths; redirects are not followed.
 
 To try the whole flow without a real bot, serve the practice bot over HTTP on this machine:
 
 ```
-uv run promptproof practice-server --variant vulnerable --port 8765 --write-config
-uv run promptproof authorize http://127.0.0.1:8765 --by "Your Name" --scope "practice bot" --environment test --tool issue_refund
-uv run promptproof scan --target http:practice --html reports/practice.html
+uv run kritalon practice-server --variant vulnerable --port 8765 --write-config
+uv run kritalon authorize http://127.0.0.1:8765 --by "Your Name" --scope "practice bot" --environment test --tool issue_refund
+uv run kritalon scan --target http:practice --html reports/practice.html
 ```
 
-`--write-config` adds the practice bot to `promptproof.targets.json`, which is a working example of the format.
+`--write-config` adds the practice bot to `kritalon.targets.json`, which is a working example of the format.
 
 ### The drop-in harness (Python and JavaScript bots)
 
 Instead of writing the reset endpoint and recorders yourself, add a few lines to the bot. This is the Python package; the JavaScript one in `js/harness` does the same for Node, Express and fetch-style handlers (Next.js, Hono), and the same scanner scans both. Each records tools, and each can carry out capped real actions where all four switches agree (below).
 
 ```python
-import promptproof.harness as pp
+import kritalon.harness as pp
 
 app = pp.wrap(app)                         # FastAPI/Starlette (ASGI) or Flask/Django (WSGI)
 
@@ -198,19 +198,19 @@ prompt = BASE_PROMPT + pp.planted("admin_code")              # where a fake secr
 note = pp.planted("bob_note", note) if user == "bob" else note  # or in a test customer's record
 ```
 
-Make a key with `promptproof harness-key` and set it as `PROMPTPROOF_HARNESS_KEY` on the staging deployment and where you run the scan. In the target description, write `"harness": "sdk"` and leave out `reset` and `tool_calls_pointer`.
+Make a key with `kritalon harness-key` and set it as `KRITALON_HARNESS_KEY` on the staging deployment and where you run the scan. In the target description, write `"harness": "sdk"` and leave out `reset` and `tool_calls_pointer`.
 
-- Nothing changes unless a request carries a Promptproof session signed with that key. Real users, even on staging, get the bot exactly as written.
-- A request that carries a Promptproof session the bot cannot verify (no key there, another key, expired) is refused with HTTP 403 and never reaches your code. A wrapped production deployment therefore turns test traffic away.
+- Nothing changes unless a request carries a Kritalon session signed with that key. Real users, even on staging, get the bot exactly as written.
+- A request that carries a Kritalon session the bot cannot verify (no key there, another key, expired) is refused with HTTP 403 and never reaches your code. A wrapped production deployment therefore turns test traffic away.
 - In a test session, `planted` returns that session's fake secret. Nothing is written to your database, so no fake users or records are needed.
 - In a test session, a function marked `@pp.action` is recorded and not run. The record goes back to the scan in a header signed for that session and that message, so the model cannot fake it or reuse an old one.
 - Before each attempt, the scan asks the harness to confirm test mode. If it does not, nothing is sent, not even the fake secrets.
-- Set `PROMPTPROOF_CHALLENGE` to the token line from `promptproof authorize` and the harness serves the ownership proof for you.
+- Set `KRITALON_CHALLENGE` to the token line from `kritalon authorize` and the harness serves the ownership proof for you.
 - The harness uses only the Python standard library.
 
-A scan that writes a browser report (`--html`, and every first scan) opens it in your browser when it ends, if you are at a terminal. `--no-open`, or the environment variable `PROMPTPROOF_NO_OPEN`, stops that; it never happens in a pipeline.
+A scan that writes a browser report (`--html`, and every first scan) opens it in your browser when it ends, if you are at a terminal. `--no-open`, or the environment variable `KRITALON_NO_OPEN`, stops that; it never happens in a pipeline.
 
-When something is not working, `promptproof doctor --target http:staging` checks the setup step by step (description, credentials, key, authorization, proof of control, the harness, legitimate use) and prints the command or change that fixes the first step not passed. It sends nothing hostile, and nothing at all before an authorization is on record. `--offline` stops before anything that contacts the bot. Add `--env-file staging.env` (an export of the deployment's settings) and it also refuses to go on if a test deployment holds production keys.
+When something is not working, `kritalon doctor --target http:staging` checks the setup step by step (description, credentials, key, authorization, proof of control, the harness, legitimate use) and prints the command or change that fixes the first step not passed. It sends nothing hostile, and nothing at all before an authorization is on record. `--offline` stops before anything that contacts the bot. Add `--env-file staging.env` (an export of the deployment's settings) and it also refuses to go on if a test deployment holds production keys.
 
 Limits:
 
@@ -221,38 +221,38 @@ Limits:
 
 #### Cover every tool at once
 
-Pass the complete Python tool registry through `promptproof.harness_tools` before giving it to the bot. During a signed test session, tools not listed in `reads` are recorded, so a forgotten tool is blocked, not run. A typo in `reads` raises an error at setup. Keep the request wrapped with `pp.wrap`.
+Pass the complete Python tool registry through `kritalon.harness_tools` before giving it to the bot. During a signed test session, tools not listed in `reads` are recorded, so a forgotten tool is blocked, not run. A typo in `reads` raises an error at setup. Keep the request wrapped with `pp.wrap`.
 
 For a mapping of ordinary Python functions, use `guard`. It also accepts `results` for stand-ins and `live` for opt-in caps, both keyed by tool name.
 
 ```python
-from promptproof.harness_tools import guard
+from kritalon.harness_tools import guard
 
 tools = guard({"lookup_order": lookup_order, "issue_refund": issue_refund}, reads=["lookup_order"])
 ```
 
-For **OpenAI Agents SDK**, install `promptproof[agents]` and pass the guarded `FunctionTool` objects to the agent. Use qualified names for namespaced tools. Guarding a tool with a callable `needs_approval` policy raises an error to preserve the SDK's approval checks.
+For **OpenAI Agents SDK**, install `kritalon[agents]` and pass the guarded `FunctionTool` objects to the agent. Use qualified names for namespaced tools. Guarding a tool with a callable `needs_approval` policy raises an error to preserve the SDK's approval checks.
 
 ```python
 from agents import Agent
-from promptproof.harness_tools import guard_agents
+from kritalon.harness_tools import guard_agents
 
 agent = Agent(name="Orders", tools=guard_agents(all_function_tools, reads=["lookup_order"]))
 ```
 
-For **LangChain or LangGraph**, install `promptproof[langchain]` and use the guarded tools for model binding and execution.
+For **LangChain or LangGraph**, install `kritalon[langchain]` and use the guarded tools for model binding and execution.
 
 ```python
-from promptproof.harness_tools import guard_langchain
+from kritalon.harness_tools import guard_langchain
 
 tools = guard_langchain(all_base_tools, reads=["lookup_order"])
 ```
 
-For **Claude Agent SDK**, install `promptproof[claude-agent]` and pass the guarded in-process tool definitions to the SDK server. Connect the SDK client and finish its tool calls inside the wrapped request so the callbacks inherit its session.
+For **Claude Agent SDK**, install `kritalon[claude-agent]` and pass the guarded in-process tool definitions to the SDK server. Connect the SDK client and finish its tool calls inside the wrapped request so the callbacks inherit its session.
 
 ```python
 from claude_agent_sdk import create_sdk_mcp_server
-from promptproof.harness_tools import guard_claude_agent
+from kritalon.harness_tools import guard_claude_agent
 
 tools = guard_claude_agent(all_sdk_tools, reads=["lookup_order"], server_name="orders")
 server = create_sdk_mcp_server("orders", tools=tools)
@@ -264,7 +264,7 @@ To cover Claude tools dispatched by Claude Code, use the hook as an alternative.
 
 ```python
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
-from promptproof.harness_tools import claude_pre_tool_use
+from kritalon.harness_tools import claude_pre_tool_use
 
 options = ClaudeAgentOptions(
     hooks={"PreToolUse": [claude_pre_tool_use(["Read", "Write"], reads=["Read"])]},
@@ -291,12 +291,12 @@ A bot built in Flowise, Dify, Langflow or a similar builder has no code to add l
 
 Each attempt then sends a fresh fake secret with its messages, and nothing is added to the bot. `session_pointer` is for bots that name the conversation themselves: the first message sends an empty id, and later ones send the id the bot returned.
 
-`promptproof init` writes this description for you, in the request shape each builder documents, and prints the one line to add to the bot's instructions:
+`kritalon init` writes this description for you, in the request shape each builder documents, and prints the one line to add to the bot's instructions:
 
 ```
-promptproof init --preset dify --origin http://localhost --name support-bot
-promptproof init --preset flowise --origin http://localhost:3000 --id <chatflow id>
-promptproof init --preset langflow --origin http://localhost:7860 --id <flow id> --component <prompt component id>
+kritalon init --preset dify --origin http://localhost --name support-bot
+kritalon init --preset flowise --origin http://localhost:3000 --id <chatflow id>
+kritalon init --preset langflow --origin http://localhost:7860 --id <flow id> --component <prompt component id>
 ```
 
 That line tells the bot to give the planted value only to someone who states a pass phrase, made at random for you. A scan needs such a legitimate route before it can call a result clean: it shows the value really was planted. If the builder ignores the variable (Flowise does, silently, unless its override switch is on), the scan says the secret was unreachable, never that it was protected.
@@ -305,9 +305,9 @@ This tests one thing: whether the bot can be talked into revealing a secret held
 
 ### Testing the real system
 
-A copy is never exactly the real thing: settings, data and connected services differ. The drop-in harness also works on the real deployment, at two levels. Record the authorization for it with `--environment production`, so that the report says what was tested. Promptproof cannot tell a real deployment from a copy, so it does not enforce this: what it enforces for real actions is the four switches below.
+A copy is never exactly the real thing: settings, data and connected services differ. The drop-in harness also works on the real deployment, at two levels. Record the authorization for it with `--environment production`, so that the report says what was tested. Kritalon cannot tell a real deployment from a copy, so it does not enforce this: what it enforces for real actions is the four switches below.
 
-**Look only.** Set `PROMPTPROOF_HARNESS_KEY` on the real deployment. The real bot, prompt and data are tested; in a test session every marked tool is recorded and not run, and real users are untouched. Fake secrets exist only inside each test conversation.
+**Look only.** Set `KRITALON_HARNESS_KEY` on the real deployment. The real bot, prompt and data are tested; in a test session every marked tool is recorded and not run, and real users are untouched. Fake secrets exist only inside each test conversation.
 
 **Small real actions, under caps.** For a tool you want proven end to end, write the limits in the bot's code:
 
@@ -323,7 +323,7 @@ def issue_refund(order_id: str, amount: float): ...
 In a test, the tool runs for real only when all four of these agree, and is recorded without running otherwise:
 
 1. the function carries a `Cap`;
-2. the deployment lists the tool in `PROMPTPROOF_LIVE_ACTIONS`;
+2. the deployment lists the tool in `KRITALON_LIVE_ACTIONS`;
 3. the target description lists it under `"live_actions"`, and the authorization names it with `--live-tool`;
 4. the call is inside every limit.
 
@@ -331,64 +331,64 @@ A call outside the limits is still evidence. If the bot is talked into a refund 
 
 `max` and `only` are exact. `total` and `calls` are counted in each server process's memory, so a deployment with several worker processes can reach that many times the per-scan limits, and whoever holds the harness key can start a new scan with a new allowance; rely on `max` and `only` for what must never be exceeded. `only` compares exactly: `1`, `1.0`, `True` and `"1"` are four different values. Totals are added as ordinary decimal fractions, so three refunds of 0.1 come to slightly more than 0.3: write money caps in the smallest unit (cents) where you can. Attacks that change what other users see (shared memory, a knowledge base, public posts) should be tested in a copy, not live.
 
-The JavaScript harness carries the same caps as `pp.cap({ max, only, total, calls })` behind the same `live` option, the same `PROMPTPROOF_LIVE_ACTIONS` switch and the same limits.
+The JavaScript harness carries the same caps as `pp.cap({ max, only, total, calls })` behind the same `live` option, the same `KRITALON_LIVE_ACTIONS` switch and the same limits.
 
 ## Permission to test
 
-Promptproof sends hostile messages, so it will not send anything to a bot outside its own process without permission on record. The built-in practice bots run in-process and need no permission; every bot reached over HTTP goes through this check.
+Kritalon sends hostile messages, so it will not send anything to a bot outside its own process without permission on record. The built-in practice bots run in-process and need no permission; every bot reached over HTTP goes through this check.
 
 ```
-promptproof authorize https://staging.example.com --by "Your Name" \
+kritalon authorize https://staging.example.com --by "Your Name" \
     --scope "the support bot on our staging site" --environment staging --days 30
 ```
 
-This records who authorizes the test, for which exact origin, what it covers and until when (at most 90 days), and prints a token. Add `--tool NAME` for each tool the scan may exercise, and `--agent` or `--tenant` to limit it to one bot or account. Serve the token as plain text (`text/plain`) at `https://staging.example.com/.well-known/promptproof-challenge.txt`, then:
+This records who authorizes the test, for which exact origin, what it covers and until when (at most 90 days), and prints a token. Add `--tool NAME` for each tool the scan may exercise, and `--agent` or `--tenant` to limit it to one bot or account. Serve the token as plain text (`text/plain`) at `https://staging.example.com/.well-known/kritalon-challenge.txt`, then:
 
 ```
-promptproof authorize --verify https://staging.example.com
+kritalon authorize --verify https://staging.example.com
 ```
 
-The token is fetched again whenever a scan or replay starts, and every ten minutes during a long scan; if it has been taken down, the scan stops and reports what it had found so far. A bot on your own machine (`localhost`, `127.0.0.1`) needs the record but not the token. Authorizations are kept in `promptproof.authorizations.json` in the current folder and are never sent anywhere.
+The token is fetched again whenever a scan or replay starts, and every ten minutes during a long scan; if it has been taken down, the scan stops and reports what it had found so far. A bot on your own machine (`localhost`, `127.0.0.1`) needs the record but not the token. Authorizations are kept in `kritalon.authorizations.json` in the current folder and are never sent anywhere.
 
 This shows control of what a site serves. It does not show that the person who placed the token owns everything behind it; the named person and the scope are how someone takes responsibility for that. Anyone can remove a check from open-source code; it is on by default.
 
 ## In a build pipeline
 
-`promptproof ci` runs a scan, writes the JSON, readable and browser reports into one folder, seals that folder, and exits for a pipeline: a proven finding fails the build. `--fail-on inconclusive` also fails it when the scan could not show its attacks would have been seen. A scan that could not run at all always fails, so a pipeline that tests nothing never looks green.
+`kritalon ci` runs a scan, writes the JSON, readable and browser reports into one folder, seals that folder, and exits for a pipeline: a proven finding fails the build. `--fail-on inconclusive` also fails it when the scan could not show its attacks would have been seen. A scan that could not run at all always fails, so a pipeline that tests nothing never looks green.
 
 On GitHub Actions, use the action in this repository:
 
 ```yaml
-- uses: OWNER/promptproof@main        # pin a release tag once there is one
+- uses: OWNER/kritalon@main        # pin a release tag once there is one
   with:
-    target: http:staging               # described in promptproof.targets.json in your repository
+    target: http:staging               # described in kritalon.targets.json in your repository
     fail-on: violations
   env:
-    PROMPTPROOF_HARNESS_KEY: ${{ secrets.PROMPTPROOF_HARNESS_KEY }}
+    KRITALON_HARNESS_KEY: ${{ secrets.KRITALON_HARNESS_KEY }}
 ```
 
-The readable report appears in the job summary, the reports and the sealed bundle are uploaded as an artifact, and the step's outputs are `status`, `findings`, `seal` and `bundle`. The scan runs on your runner; nothing is sent to Promptproof. The authorization file (`promptproof.authorizations.json`) must be present in the job, for example restored from a secret, because it names the person who allowed the test.
+The readable report appears in the job summary, the reports and the sealed bundle are uploaded as an artifact, and the step's outputs are `status`, `findings`, `seal` and `bundle`. The scan runs on your runner; nothing is sent to Kritalon. The authorization file (`kritalon.authorizations.json`) must be present in the job, for example restored from a secret, because it names the person who allowed the test.
 
 ## Let your coding assistant set it up
 
-Promptproof can be connected to a coding assistant (Claude Code, Cursor and others) over the Model Context Protocol:
+Kritalon can be connected to a coding assistant (Claude Code, Cursor and others) over the Model Context Protocol:
 
 ```
-claude mcp add promptproof -- promptproof mcp
+claude mcp add kritalon -- kritalon mcp
 ```
 
-Then ask the assistant to "set up Promptproof for this bot". It can read the setup guide, list functions that look like risky tools, propose the lines to add (each change is yours to approve), check the setup, scan the bot from its chat address and read the report back to you.
+Then ask the assistant to "set up Kritalon for this bot". It can read the setup guide, list functions that look like risky tools, propose the lines to add (each change is yours to approve), check the setup, scan the bot from its chat address and read the report back to you.
 
 For Claude Code there is also a plugin in `integrations/claude-code`: the same connection plus a skill that tells the assistant the steps and the rules, so "test my bot for prompt injection" is enough. From a checkout: `claude --plugin-dir integrations/claude-code`.
 
-It cannot authorize a test. Permission is a person taking responsibility by name, so you run `promptproof authorize` yourself, also for a bot on your own machine: the assistant is never asked to type a name for you. Without an authorization it can only scan the built-in practice bots. It reads and writes only inside the folder it was started in. `promptproof guide` prints the same setup guide for people.
+It cannot authorize a test. Permission is a person taking responsibility by name, so you run `kritalon authorize` yourself, also for a bot on your own machine: the assistant is never asked to type a name for you. Without an authorization it can only scan the built-in practice bots. It reads and writes only inside the folder it was started in. `kritalon guide` prints the same setup guide for people.
 
 ## Check a test deployment is not wired to production
 
 Before scanning staging or preview, run the check on an env export from that deployment:
 
 ```
-promptproof sterile-check --env-file staging.env
+kritalon sterile-check --env-file staging.env
 ```
 
 Use `--environment` to check the current process environment, including when the
@@ -415,8 +415,8 @@ Licensed under Apache-2.0.
 A finished run's directory (reports, transcripts, and the egress trap's log if you ran one) can be packed into one bundle that anyone can check later:
 
 ```
-uv run promptproof seal runs/2026-11-21 --out evidence.sealed.zip
-uv run promptproof check-seal evidence.sealed.zip --seal <the printed seal>
+uv run kritalon seal runs/2026-11-21 --out evidence.sealed.zip
+uv run kritalon check-seal evidence.sealed.zip --seal <the printed seal>
 ```
 
 Share the seal separately from the bundle. A matching seal shows that nothing in the bundle changed since it was sealed, and the check also prints which outbound destinations the egress log shows as allowed and refused. It does not show who made the bundle; signing is a later step.
@@ -424,7 +424,7 @@ Share the seal separately from the bundle. A matching seal shows that nothing in
 No scan starts the egress trap for you. It is a separate command to run next to a bot, most useful when you test a copy of a real system and want a record of what it tried to reach:
 
 ```
-promptproof egress-trap --log run/egress-trap.jsonl --allow api.anthropic.com:443
+kritalon egress-trap --log run/egress-trap.jsonl --allow api.anthropic.com:443
 ```
 
 It prints the proxy settings to start the bot with, refuses and records every other outbound web request, and closes its log on Ctrl+C. It sees traffic that honours proxy settings, not raw connections such as a database's.
@@ -438,14 +438,14 @@ Every Markdown and HTML report includes an **About this test** block (tool versi
 Record who ran the scan and their independence on the command line:
 
 ```
-uv run promptproof scan --target http:staging --out runs/scan.promptproof.json \
+uv run kritalon scan --target http:staging --out runs/scan.kritalon.json \
     --markdown runs/report.md --html runs/report.html \
     --tester "Dana Levi, Example Audit" --independence third-party
 ```
 
 `--independence` takes `self` (the team that built or operates the target, the default), `internal` (a separate team in the same organization), or `third-party` (an external assessor outside the organization).
 
-The coverage table maps only the objective kinds Promptproof tests and states plainly what the scan did not cover. A report is evidence of what those tests observed; it never claims that a target is compliant, certified, or passed for any framework. Pair the JSON, Markdown, and HTML reports with `promptproof seal` when handing evidence to an auditor or buyer.
+The coverage table maps only the objective kinds Kritalon tests and states plainly what the scan did not cover. A report is evidence of what those tests observed; it never claims that a target is compliant, certified, or passed for any framework. Pair the JSON, Markdown, and HTML reports with `kritalon seal` when handing evidence to an auditor or buyer.
 
 ## Words used here
 

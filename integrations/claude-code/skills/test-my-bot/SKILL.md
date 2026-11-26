@@ -1,15 +1,15 @@
 ---
 name: test-my-bot
-description: Use whenever the user asks to security-test, red-team or pentest their own AI chatbot or agent, to check it for prompt injection, a leaked system prompt or secret, one user reaching another user's data, or a tool (refund, email, delete) that a chat user can talk it into calling. Also use when they ask to set up Promptproof, to run a Promptproof scan, or to explain a Promptproof report.
+description: Use whenever the user asks to security-test, red-team or pentest their own AI chatbot or agent, to check it for prompt injection, a leaked system prompt or secret, one user reaching another user's data, or a tool (refund, email, delete) that a chat user can talk it into calling. Also use when they ask to set up Kritalon, to run a Kritalon scan, or to explain a Kritalon report.
 ---
 
-# Test the user's own bot with Promptproof
+# Test the user's own bot with Kritalon
 
-Promptproof tests a bot its owner controls and reports only what is proven: a fake secret it planted came out, or a call to a forbidden tool was recorded at the tool. You drive it through the `promptproof` MCP server. If its tools are missing, the `promptproof` command is not installed: tell the user to install it and stop.
+Kritalon tests a bot its owner controls and reports only what is proven: a fake secret it planted came out, or a call to a forbidden tool was recorded at the tool. You drive it through the `kritalon` MCP server. If its tools are missing, the `kritalon` command is not installed: tell the user to install it and stop.
 
 ## Rules that are not yours to bend
 
-1. **Only the user can authorize a test.** Never run `promptproof authorize` yourself, never type a name into a prompt for them, and never edit `promptproof.authorizations.json`. Give them the exact command and wait.
+1. **Only the user can authorize a test.** Never run `kritalon authorize` yourself, never type a name into a prompt for them, and never edit `kritalon.authorizations.json`. Give them the exact command and wait.
 2. **Only the user's own bot, on an address they control.** If they point you at someone else's service, decline.
 3. **Propose every change to the bot as a diff and wait for approval.** The server never edits the project; neither do you without a yes.
 4. **Never weaken a result.** "Inconclusive" is not "clean". "No verified violations" is a statement about the tests that ran, not "safe". Say what the report says was not tested.
@@ -26,7 +26,7 @@ Promptproof tests a bot its owner controls and reports only what is proven: a fa
    - `pp.planted("slot_name", default)` where a secret lives, called **while a message is handled**, not once at import.
    - `pp.content("point_name", text)` where the bot reads text someone else wrote (a note on an order, a document, a ticket, a web page), if it does. If it reads that text only for some requests, pass such a request as `message` to `first_scan`.
    The library must be installed in the bot's own environment.
-5. **The key.** Ask the user to run `promptproof harness-key`, set `PROMPTPROOF_HARNESS_KEY` where the bot runs and where this session runs, and restart the bot. Never print or store the key.
+5. **The key.** Ask the user to run `kritalon harness-key`, set `KRITALON_HARNESS_KEY` where the bot runs and where this session runs, and restart the bot. Never print or store the key.
 6. **Authorization.** Call `authorization_status` with the bot's origin. If there is none, give the user the command it prints, with one `--tool NAME` for each tool marked `never_for_users` (a tool the authorization does not name is left untested), and wait until they say it is done.
 7. **Scan.** Call `first_scan` with the chat address (for example `http://localhost:8000/chat`). If it is refused, relay exactly what it says to fix. For a bot that already has a description, call `doctor` and then `scan` with `http:NAME`.
 8. **Report back in plain language.** Call `read_report`. Lead with the verdict in the report's own words. Then: what was reached and by how many ways; one real exchange, quoted; the fix the report names for each; what was not tested and why; where the browser report is. Do not pad it.

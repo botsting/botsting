@@ -1,4 +1,4 @@
-"""`promptproof init`: descriptions for bots built in Flowise, Dify and Langflow. Each stand-in bot
+"""`kritalon init`: descriptions for bots built in Flowise, Dify and Langflow. Each stand-in bot
 here answers in the shape that builder documents, and each generated description is used as written."""
 
 import asyncio
@@ -9,12 +9,12 @@ from datetime import UTC, datetime
 import httpx
 import pytest
 
-from promptproof.attacks.library import default_attacks
-from promptproof.cli import main
-from promptproof.core.authorization import new_authorization
-from promptproof.core.runner import ScanConfig, run_scan
-from promptproof.presets import OWNER, PresetError, build
-from promptproof.targets.http import HttpTarget, parse_config
+from kritalon.attacks.library import default_attacks
+from kritalon.cli import main
+from kritalon.core.authorization import new_authorization
+from kritalon.core.runner import ScanConfig, run_scan
+from kritalon.presets import OWNER, PresetError, build
+from kritalon.targets.http import HttpTarget, parse_config
 
 ORIGIN = "http://127.0.0.1:3000"
 ARGS = {
@@ -40,7 +40,7 @@ def stand_in(preset: str, line: str, leaky: bool):
             message, value = body["question"], body["overrideConfig"]["vars"]["pp_reference"]
         elif preset == "dify":
             assert request.url.path == "/v1/chat-messages" and body["response_mode"] == "blocking"
-            assert body["user"].startswith("promptproof-")
+            assert body["user"].startswith("kritalon-")
             conversation = body["conversation_id"]
             if conversation and conversation not in conversations:
                 return httpx.Response(404, json={"code": "not_found", "message": "Conversation Not Exists."})
@@ -90,7 +90,7 @@ def test_a_generated_description_scans_a_bot_in_that_builders_shape(preset, monk
     # The pass phrase is the owner's alone: no message sent as the attacker ever contained it.
     phrase = re.search(r'pass phrase "([^"]+)"', line).group(1)
     owner_only = [json.loads(r.content) for r in seen if phrase in r.content.decode()]
-    assert owner_only and all(body.get("user", "promptproof-owner") == "promptproof-owner" for body in owner_only)
+    assert owner_only and all(body.get("user", "kritalon-owner") == "kritalon-owner" for body in owner_only)
 
 
 def test_a_builder_that_ignores_the_variable_is_reported_as_unreachable_not_as_protected(monkeypatch):
@@ -143,17 +143,17 @@ def test_bad_requests_are_refused(preset, kwargs, reason):
 
 def test_the_command_line_writes_the_file_and_says_what_is_left(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("PROMPTPROOF_TARGETS_FILE", str(tmp_path / "promptproof.targets.json"))
+    monkeypatch.setenv("KRITALON_TARGETS_FILE", str(tmp_path / "kritalon.targets.json"))
     assert main(["init", "--preset", "dify", "--origin", "http://localhost", "--name", "support"]) == 0
     printed = capsys.readouterr().out
     assert "Add this line to the bot's instructions" in printed and "DIFY_APP_KEY" in printed
-    assert "promptproof doctor --target http:support" in printed and "REPLACE THIS" in printed
+    assert "kritalon doctor --target http:support" in printed and "REPLACE THIS" in printed
     assert "Dify Cloud's terms forbid" in printed
-    stored = json.loads((tmp_path / "promptproof.targets.json").read_text(encoding="utf-8"))
+    stored = json.loads((tmp_path / "kritalon.targets.json").read_text(encoding="utf-8"))
     parse_config("support", stored["targets"]["support"])
     # A second run does not silently replace the pass phrase the owner already put in the bot.
     assert main(["init", "--preset", "dify", "--origin", "http://localhost", "--name", "support"]) == 2
     assert "already describes" in capsys.readouterr().out
-    assert json.loads((tmp_path / "promptproof.targets.json").read_text(encoding="utf-8")) == stored
+    assert json.loads((tmp_path / "kritalon.targets.json").read_text(encoding="utf-8")) == stored
     assert main(["init", "--preset", "dify", "--origin", "http://localhost", "--name", "support", "--force"]) == 0
     assert main(["init", "--preset", "flowise", "--origin", "http://localhost:3000", "--name", "other"]) == 2

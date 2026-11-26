@@ -7,8 +7,8 @@ from collections.abc import Callable
 import httpx
 import pytest
 
-from promptproof.llm.base import ChatModel, ModelError
-from promptproof.llm.ollama import OllamaModel
+from kritalon.llm.base import ChatModel, ModelError
+from kritalon.llm.ollama import OllamaModel
 
 Handler = Callable[[httpx.Request], httpx.Response]
 

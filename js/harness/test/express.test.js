@@ -122,6 +122,6 @@ test("the readiness path answers for a valid session", async () => {
     body: "{}",
   });
   assert.equal(response.status, 200);
-  assert.equal(await response.text(), "promptproof harness ready\n");
+  assert.equal(await response.text(), "kritalon harness ready\n");
   assert.deepEqual(pp.readCallsHeader(KEY, "probe", response.headers.get(pp.CALLS_HEADER)), []);
 });

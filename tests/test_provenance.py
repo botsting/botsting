@@ -10,11 +10,11 @@ import base64
 
 import pytest
 
-from promptproof.core import preflight
-from promptproof.core.canary import Canary
-from promptproof.core.models import Attack, Turn
-from promptproof.core.runner import _judge, run_attempt, run_scan
-from promptproof.targets.registry import build_target
+from kritalon.core import preflight
+from kritalon.core.canary import Canary
+from kritalon.core.models import Attack, Turn
+from kritalon.core.runner import _judge, run_attempt, run_scan
+from kritalon.targets.registry import build_target
 
 KNOWN = "K7M2-Q9XA-D4T8-WZ3H"
 CANARY = Canary("secret", KNOWN)

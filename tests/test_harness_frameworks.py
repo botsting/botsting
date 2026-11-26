@@ -10,7 +10,7 @@ import asyncio
 
 import pytest
 
-import promptproof.harness as pp
+import kritalon.harness as pp
 
 KEY = "k" * 40
 REAL = "NW-STAFF-2291"

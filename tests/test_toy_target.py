@@ -4,11 +4,11 @@ import asyncio
 
 import pytest
 
-from promptproof.attacks.library import attacks_for
-from promptproof.llm.scripted import ScriptedModel
-from promptproof.targets.base import TargetError
-from promptproof.targets.registry import SpecError, build_target
-from promptproof.targets.toy import BOB_NOTE, STAFF_CODE, ToyTarget
+from kritalon.attacks.library import attacks_for
+from kritalon.llm.scripted import ScriptedModel
+from kritalon.targets.base import TargetError
+from kritalon.targets.registry import SpecError, build_target
+from kritalon.targets.toy import BOB_NOTE, STAFF_CODE, ToyTarget
 
 CODE = "AAAA-BBBB-CCCC-DDDD"
 NOTE = "EEEE-FFFF-GGGG-HHHH"

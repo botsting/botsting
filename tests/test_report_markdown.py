@@ -3,7 +3,7 @@ from dataclasses import replace
 
 """Tests for render_markdown, using hand-built ScanReport fixtures. No runner imported."""
 
-from promptproof.core.models import (
+from kritalon.core.models import (
     ErrorRecord,
     EvidenceLevel,
     Finding,
@@ -14,7 +14,7 @@ from promptproof.core.models import (
     TaskStatus,
     Turn,
 )
-from promptproof.report_markdown import (
+from kritalon.report_markdown import (
     HEADLINE_NO_VERIFIED_VIOLATIONS,
     INDEPENDENCE_EXPLANATION,
     _fence,
@@ -166,10 +166,10 @@ def test_verified_report_shows_finding_details() -> None:
     assert "1 errored run not counted" in text
     assert "95% Wilson interval 1% to 71%" in text
     assert "reproduced in 5 of 5 replays from reset (95% Wilson interval 57% to 100%)" in text
-    assert "` promptproof replay <report.json> --finding F-001 `" in text
-    assert "promptproof replay out/scan.json --finding F-001" in render_markdown(report, "out/scan.json")
+    assert "` kritalon replay <report.json> --finding F-001 `" in text
+    assert "kritalon replay out/scan.json --finding F-001" in render_markdown(report, "out/scan.json")
     # A path with a space is quoted so the command still works when pasted.
-    assert 'promptproof replay "my reports/scan.json" --finding F-001' in render_markdown(report, "my reports/scan.json")
+    assert 'kritalon replay "my reports/scan.json" --finding F-001' in render_markdown(report, "my reports/scan.json")
 
 
 def test_verified_report_transcript_distinguishes_speakers() -> None:

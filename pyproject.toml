@@ -1,5 +1,5 @@
 [project]
-name = "promptproof"
+name = "kritalon"
 version = "0.0.1"
 description = "Evidence-first security testing for LLM applications: report what was proven, not what looked bad."
 readme = "README.md"
@@ -15,7 +15,7 @@ langchain = ["langchain-core~=1.8.4"]
 claude-agent = ["claude-agent-sdk~=0.2.187"]
 
 [project.scripts]
-promptproof = "promptproof.cli:main"
+kritalon = "kritalon.cli:main"
 
 [dependency-groups]
 dev = ["pytest>=8"]
@@ -25,7 +25,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/promptproof"]
+packages = ["src/kritalon"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

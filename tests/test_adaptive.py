@@ -9,17 +9,17 @@ from collections.abc import Mapping, Sequence
 
 import pytest
 
-from promptproof.attacks.adaptive import LLMAdaptiveStrategy, ScriptedAttackerModel
-from promptproof.attacks.library import default_attacks
-from promptproof.attacks.strategy import Objective, ProbeChannel, SearchResult
-from promptproof.cli import EXIT_NO_VERIFIED, EXIT_VIOLATIONS, main
-from promptproof.core.models import EvidenceLevel, ScanReport, Slot, TaskCheck
-from promptproof.core.runner import ScanConfig, run_scan, run_to_completion
-from promptproof.llm.base import ChatMessage, ModelError
-from promptproof.report_html import render_html
-from promptproof.report_markdown import render_markdown
-from promptproof.targets.base import UnsafeTargetError
-from promptproof.targets.registry import build_target
+from kritalon.attacks.adaptive import LLMAdaptiveStrategy, ScriptedAttackerModel
+from kritalon.attacks.library import default_attacks
+from kritalon.attacks.strategy import Objective, ProbeChannel, SearchResult
+from kritalon.cli import EXIT_NO_VERIFIED, EXIT_VIOLATIONS, main
+from kritalon.core.models import EvidenceLevel, ScanReport, Slot, TaskCheck
+from kritalon.core.runner import ScanConfig, run_scan, run_to_completion
+from kritalon.llm.base import ChatMessage, ModelError
+from kritalon.report_html import render_html
+from kritalon.report_markdown import render_markdown
+from kritalon.targets.base import UnsafeTargetError
+from kritalon.targets.registry import build_target
 
 
 def _strategy() -> LLMAdaptiveStrategy:

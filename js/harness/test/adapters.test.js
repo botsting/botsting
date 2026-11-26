@@ -170,7 +170,7 @@ test("the readiness check answers only for a valid session", async () => {
   const token = pp.makeSessionToken(KEY, "probe-1", {}, {}, { nonce: "probe-nonce" });
   const ready = await post(baseUrl, pp.READY_PATH, { [pp.SESSION_HEADER]: token }, "");
   assert.equal(ready.status, 200);
-  assert.equal(await ready.text(), "promptproof harness ready\n");
+  assert.equal(await ready.text(), "kritalon harness ready\n");
   const calls = pp.readCallsHeader(KEY, "probe-1", ready.headers.get(pp.CALLS_HEADER), "probe-nonce");
   assert.deepEqual(calls, []); // carries no canaries: an empty, signed record
   // without a session header the harness does not reveal itself: the bot's own answer
@@ -184,10 +184,10 @@ test("the ownership proof is served from the environment, for GET only", async (
   delete process.env[pp.CHALLENGE_ENV];
   const baseUrl = await serve(pp.wrapNode(chatBot));
   assert.equal((await fetch(baseUrl + pp.CHALLENGE_PATH)).status, 404); // not set: the bot's answer
-  process.env[pp.CHALLENGE_ENV] = "promptproof-challenge=abc123";
+  process.env[pp.CHALLENGE_ENV] = "kritalon-challenge=abc123";
   const proof = await fetch(baseUrl + pp.CHALLENGE_PATH);
   assert.equal(proof.status, 200);
-  assert.equal(await proof.text(), "promptproof-challenge=abc123\n");
+  assert.equal(await proof.text(), "kritalon-challenge=abc123\n");
   assert.equal((await post(baseUrl, pp.CHALLENGE_PATH)).status, 404); // the bot's own answer
   delete process.env[pp.CHALLENGE_ENV];
 });

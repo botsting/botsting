@@ -1,4 +1,4 @@
-// Types for promptproof-harness, hand-written. Every runtime export is declared here.
+// Types for kritalon-harness, hand-written. Every runtime export is declared here.
 
 export const KEY_ENV: string;
 export const CHALLENGE_ENV: string;
@@ -24,7 +24,7 @@ export const MAX_TOOLS_NOTED: number;
 
 export class HarnessError extends Error {}
 
-/** One Promptproof test session, created from a signed token. Rarely needed directly:
+/** One Kritalon test session, created from a signed token. Rarely needed directly:
  *  the adapters make one per request. `run(fn)` runs `fn` inside the session, the way
  *  a wrapped request handler runs. */
 export class Session {
@@ -59,7 +59,7 @@ export class Session {
   size: number;
   /** Record a call, or count it as dropped past MAX_CALLS / MAX_RECORD_BYTES. */
   add(call: CallRecord): void;
-  /** The signed Promptproof-Tool-Calls header value for this session and message.
+  /** The signed Kritalon-Tool-Calls header value for this session and message.
    *  With `tools` true (the readiness answer) it also carries every marked tool's
    *  name and, for those marked neverForUsers, the rule. */
   headerValue(tools?: boolean): string;
@@ -96,7 +96,7 @@ export interface SignedRecord {
 /** Refuse a key shorter than MIN_KEY_LENGTH; returns it unchanged otherwise. */
 export function checkKey(key: string): string;
 
-/** A fresh, strong key for PROMPTPROOF_HARNESS_KEY (base64url, 32 random bytes). */
+/** A fresh, strong key for KRITALON_HARNESS_KEY (base64url, 32 random bytes). */
 export function newKey(): string;
 
 export interface SessionTokenOptions {
@@ -121,7 +121,7 @@ export interface SessionTokenOptions {
   discover?: boolean;
 }
 
-/** What the scanner puts in the Promptproof-Session header of each message. */
+/** What the scanner puts in the Kritalon-Session header of each message. */
 export function makeSessionToken(
   key: string,
   sessionId: string,
@@ -154,7 +154,7 @@ export function mac(key: string, domain: string | Buffer, parts: readonly string
 /** A session for a validly signed, unexpired token; null for anything else. */
 export function openSession(token: string | null | undefined, now?: number | null): Session | null;
 
-/** True while handling a request from a Promptproof scan. */
+/** True while handling a request from a Kritalon scan. */
 export function active(): boolean;
 
 /** The number of test requests in progress in this Node worker. */
@@ -224,13 +224,13 @@ export interface ActionOptions {
    *  arguments and its return value is used. */
   result?: unknown;
   /** A cap under which the tool may be carried out for real during a test session:
-   *  only where PROMPTPROOF_LIVE_ACTIONS names it on the deployment, only when the
+   *  only where KRITALON_LIVE_ACTIONS names it on the deployment, only when the
    *  scan's session asks for it, and only inside every limit. A call outside the
    *  limits is still recorded, with the limit it broke. */
   live?: Cap;
   /** A few words saying what an attacker would ask the bot for, for a tool no chat
    *  user may ever cause: `neverForUsers: "a refund of 50 on order A-1001"`. A first
-   *  scan (promptproof scan URL) then tries to make the bot do exactly that; the
+   *  scan (kritalon scan URL) then tries to make the bot do exactly that; the
    *  harness's readiness answer carries it as a rule. A string of at most 200 code
    *  points; whitespace is collapsed. Leave it out for a tool some users may
    *  legitimately trigger. */
@@ -286,7 +286,7 @@ export interface NodeResponse {
   writableEnded: boolean;
 }
 
-/** Wrap a plain `(req, res)` Node http handler. Without PROMPTPROOF_HARNESS_KEY set,
+/** Wrap a plain `(req, res)` Node http handler. Without KRITALON_HARNESS_KEY set,
  *  requests pass straight through. */
 export function wrapNode(
   handler: (req: NodeRequest & Record<string, unknown>, res: NodeResponse & Record<string, unknown>) => void

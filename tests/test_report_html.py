@@ -7,13 +7,13 @@ from html.parser import HTMLParser
 
 import pytest
 
-from promptproof.attacks.library import default_attacks
-from promptproof.cli import EXIT_VIOLATIONS, main
-from promptproof.core.models import ErrorRecord, ScanReport, SuspectedFinding, TaskStatus, ToolCall, Turn
-from promptproof.core.runner import run_scan
-from promptproof.report_html import render_html
-from promptproof.report_markdown import HEADLINE_NO_VERIFIED_VIOLATIONS, INDEPENDENCE_EXPLANATION
-from promptproof.targets.registry import build_target
+from kritalon.attacks.library import default_attacks
+from kritalon.cli import EXIT_VIOLATIONS, main
+from kritalon.core.models import ErrorRecord, ScanReport, SuspectedFinding, TaskStatus, ToolCall, Turn
+from kritalon.core.runner import run_scan
+from kritalon.report_html import render_html
+from kritalon.report_markdown import HEADLINE_NO_VERIFIED_VIOLATIONS, INDEPENDENCE_EXPLANATION
+from kritalon.targets.registry import build_target
 
 BANNED = ("safe", "secure", "clean", "certified", "passed", "compliant")
 # Reading order: the verdict (not a section), what was reached, each finding, then how far to trust it.
@@ -125,20 +125,20 @@ def test_no_verified_violations_uses_the_careful_wording(fixed):
 
 
 def test_violations_report_shows_evidence_and_both_rates(vulnerable):
-    html = render_html(vulnerable, "reports/scan.promptproof.json")
+    html = render_html(vulnerable, "reports/scan.kritalon.json")
     page = assert_inert(html)
     text = page.visible
     assert "14 verified violations found." in text
     assert "11 protected data disclosed, 3 forbidden action(s) accepted" in text
     assert "reproduced in 5 of 5 replays from reset (95% Wilson interval 57% to 100%)" in text
     assert "found in 1 of 1 search attempts" in text
-    assert "promptproof replay reports/scan.promptproof.json --finding F1" in text
+    assert "kritalon replay reports/scan.kritalon.json --finding F1" in text
     assert "issue_refund(order_id=B-2002, amount=500)" in text and "accepted by the tool" in text
     assert "Not taken from what the target said" in text
     assert "by association, not by proof of cause" in text
     assert "Ordinary user (sent by staff:dana)" in text
     assert "Attacker (planted at bob_order_note)" in text
-    # Wording written by Promptproof itself never uses the banned words; transcripts are not ours.
+    # Wording written by Kritalon itself never uses the banned words; transcripts are not ours.
     ours = re.sub(r"<pre>.*?</pre>", "", html, flags=re.DOTALL)
     for word in BANNED:
         assert not re.search(rf"\b{word}\b", Page(ours).visible.lower()), word
@@ -245,7 +245,7 @@ def test_html_includes_about_coverage_table_and_per_finding_frameworks(vulnerabl
             "scope": "support bot",
         },
     )
-    html = render_html(custom, "reports/scan.promptproof.json")
+    html = render_html(custom, "reports/scan.kritalon.json")
     page = assert_inert(html)
     text = page.visible
     assert "About this test" in text
@@ -296,7 +296,7 @@ def test_html_renders_old_report_json_without_new_fields(vulnerable):
 
 
 def test_generated_reports_never_contain_forbidden_framework_claims(vulnerable, fixed):
-    from promptproof.report_markdown import render_markdown
+    from kritalon.report_markdown import render_markdown
 
     inconclusive = replace(fixed, status="inconclusive", inconclusive_reasons=("Target stopped early.",))
     for report in (vulnerable, fixed, inconclusive):
@@ -324,7 +324,7 @@ def test_the_report_says_what_was_reached_and_what_to_change(vulnerable, fixed):
 
 
 def test_finding_ids_are_shown_as_runs_only_where_the_numbers_run_on():
-    from promptproof.report_html import _id_runs
+    from kritalon.report_html import _id_runs
 
     assert _id_runs(["F3"]) == "F3"
     assert _id_runs(["F1", "F2", "F3"]) == "F1 to F3"

@@ -12,16 +12,16 @@ from datetime import UTC, datetime
 import httpx
 import pytest
 
-from promptproof.attacks.library import default_attacks
-from promptproof.cli import EXIT_INCONCLUSIVE, EXIT_VIOLATIONS, main
-from promptproof.core import authorization as auth
-from promptproof.core.authorization import AuthorizationStore, new_authorization
-from promptproof.core.runner import run_scan
-from promptproof.llm.scripted import ScriptedModel
-from promptproof.practice_server import PracticeBot, practice_description, start, write_description
-from promptproof.targets.base import NotAuthorizedError, TargetError
-from promptproof.targets.http import HttpTarget, TargetConfigError, load_config, parse_config, resolve_pointer
-from promptproof.targets.registry import SpecError, build_target
+from kritalon.attacks.library import default_attacks
+from kritalon.cli import EXIT_INCONCLUSIVE, EXIT_VIOLATIONS, main
+from kritalon.core import authorization as auth
+from kritalon.core.authorization import AuthorizationStore, new_authorization
+from kritalon.core.runner import run_scan
+from kritalon.llm.scripted import ScriptedModel
+from kritalon.practice_server import PracticeBot, practice_description, start, write_description
+from kritalon.targets.base import NotAuthorizedError, TargetError
+from kritalon.targets.http import HttpTarget, TargetConfigError, load_config, parse_config, resolve_pointer
+from kritalon.targets.registry import SpecError, build_target
 
 ORIGIN = "https://bot.example.com"
 
@@ -88,7 +88,7 @@ def test_bad_descriptions_are_refused(changes, reason):
 def test_descriptions_are_read_from_the_targets_file(tmp_path, monkeypatch):
     path = tmp_path / "targets.json"
     path.write_text(json.dumps({"targets": {"bot": minimal()}}), encoding="utf-8")
-    monkeypatch.setenv("PROMPTPROOF_TARGETS_FILE", str(path))
+    monkeypatch.setenv("KRITALON_TARGETS_FILE", str(path))
     assert load_config("bot").origin == ORIGIN
     with pytest.raises(TargetConfigError, match="no target named 'other'"):
         load_config("other")
@@ -231,7 +231,7 @@ def test_reset_sends_fixtures_and_content():
 def practice(tmp_path, monkeypatch):
     """Start the practice bot over HTTP and describe it in a fresh folder, as a user would."""
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("PROMPTPROOF_TARGETS_FILE", str(tmp_path / "promptproof.targets.json"))
+    monkeypatch.setenv("KRITALON_TARGETS_FILE", str(tmp_path / "kritalon.targets.json"))
     auth.forget_checks()
     servers = []
 
@@ -240,7 +240,7 @@ def practice(tmp_path, monkeypatch):
         server = start(bot)
         servers.append(server)
         port = server.server_address[1]
-        write_description(tmp_path / "promptproof.targets.json", "practice", practice_description(port, variant))
+        write_description(tmp_path / "kritalon.targets.json", "practice", practice_description(port, variant))
         return bot, f"http://127.0.0.1:{port}"
 
     yield run
@@ -286,7 +286,7 @@ def test_scanning_the_vulnerable_bot_over_http_finds_what_the_in_process_scan_fi
     }
     assert report.authorization["reach"] == "loopback" and report.authorization["authorized_by"] == "Dana Levi"
     assert report.target_config["target"] == "http" and report.target_config["description_digest"]
-    assert all(path in ("/chat", "/promptproof/reset") for path, _ in bot.requests)
+    assert all(path in ("/chat", "/kritalon/reset") for path, _ in bot.requests)
 
 
 def test_scanning_the_fixed_bot_over_http_finds_nothing(practice):
@@ -417,6 +417,6 @@ def test_every_request_is_marked_as_test_traffic(monkeypatch):
         await session.send("hello")
 
     asyncio.run(talk())
-    traces = {request.headers["Promptproof-Trace"] for request in requests}
+    traces = {request.headers["Kritalon-Trace"] for request in requests}
     assert len(requests) == 2 and len(traces) == 1 and len(traces.pop()) >= 16
-    assert all(request.headers["User-Agent"] == "promptproof-scan" for request in requests)
+    assert all(request.headers["User-Agent"] == "kritalon-scan" for request in requests)
