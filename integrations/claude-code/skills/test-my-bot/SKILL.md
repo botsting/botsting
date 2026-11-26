@@ -20,10 +20,11 @@ Promptproof tests a bot its owner controls and reports only what is proven: a fa
 1. **Show what a result looks like, if they have not seen one.** Call `scan` with `target: "toy:vulnerable"`, then `read_report`. This scans a practice bot inside the tool and needs no permission.
 2. **Read the guide.** Call `setup_guide` and follow it; it is the source of truth and overrides this page where they differ.
 3. **Find the pieces in their code.** The web app object and the chat endpoint; where the instructions are put together for each message; every function that sends, pays, books, changes or deletes. Call `find_tools` for candidates, then read the code yourself.
-4. **Propose the three kinds of line** (Python shown; for Node see the guide):
+4. **Propose the lines** (Python shown; for Node see the guide):
    - `pp.wrap(app)` last, after the routes. A Flask app stays the same object.
    - `@pp.action("name", never_for_users="what an attacker would ask for")` on each risky function that no chat user may ever cause. Leave `never_for_users` off a tool that some users may use, and say so: it needs a description (guide, step 3).
    - `pp.planted("slot_name", default)` where a secret lives, called **while a message is handled**, not once at import.
+   - `pp.content("point_name", text)` where the bot reads text someone else wrote (a note on an order, a document, a ticket, a web page), if it does. If it reads that text only for some requests, pass such a request as `message` to `first_scan`.
    The library must be installed in the bot's own environment.
 5. **The key.** Ask the user to run `promptproof harness-key`, set `PROMPTPROOF_HARNESS_KEY` where the bot runs and where this session runs, and restart the bot. Never print or store the key.
 6. **Authorization.** Call `authorization_status` with the bot's origin. If there is none, give the user the command it prints, with one `--tool NAME` for each tool marked `never_for_users` (a tool the authorization does not name is left untested), and wait until they say it is done.

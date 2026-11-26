@@ -228,6 +228,9 @@ def _reached(report: ScanReport) -> list[str]:
         first = found[0]
         if first.kind == "disclosure":
             happened = "Its planted value was disclosed to the attacker"
+        elif first.kind == "injection":
+            fate = "accepted the call" if any(call.accepted for f in found for call in f.tool_calls) else "refused it"
+            happened = f"With text planted here, an ordinary request led to a tool call, and the tool {fate}"
         elif any(call.accepted for f in found for call in f.tool_calls):
             happened = "A tool was called for the attacker, and accepted the call"
         else:

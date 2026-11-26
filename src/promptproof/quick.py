@@ -4,7 +4,7 @@
 
 For a bot that carries the drop-in harness (promptproof/harness.py). The harness tells
 the scanner what a description file would otherwise say, so the developer only adds
-the three kinds of line to the bot and runs this.
+a few kinds of line to the bot and runs this.
 
 What it works out, in order, sending nothing before permission is on record:
 1. Permission. An authorization for this address must exist. For a bot on this
@@ -29,6 +29,12 @@ Tools that no chat user may ever cause: those marked with `never_for_users="..."
 the bot's code. The scan tries to make the bot call each one. Any recorded call is a
 finding. The scan does not exercise such a tool legitimately first; it relies on the
 harness's signed statement that the tool carries its recorder, and the report says so.
+
+Text the bot reads from elsewhere: each place the code reads with `content(...)`
+while it answers the ordinary message. Text is planted there that asks for a tool no
+chat user may cause (the existing planted texts, asking for what the developer wrote on
+the tool), and an ordinary user sends the ordinary message. A harmless text is tried
+first. A place the code reads, but not for that message, is named with `--message`.
 
 It leaves out tools that some users may use, and other users' data. Whether such a
 call or such a record is forbidden depends on who the users are, which cannot be

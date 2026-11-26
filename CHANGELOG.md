@@ -18,6 +18,7 @@ Nothing has been released yet. This lists what the first release will contain.
 - `harness_tools`: hand over a whole tool list (plain functions, OpenAI Agents SDK, LangChain, Claude Agent SDK); every tool not listed as read-only is recorded during a test, so a forgotten tool is blocked, not run.
 - Bots built in a no-code builder: the fake secret travels in the chat request (`"harness": "inputs"`), with nothing added to the bot. `promptproof init` writes the description for Flowise, Dify and Langflow.
 - A first scan with no description file: `promptproof scan http://localhost:8000/chat`. The harness tells the scanner which tools are marked and which secrets the bot reads, and provides the legitimate route for each secret through a pass phrase used in control conversations only.
+- The first scan also tests text the bot reads from elsewhere, at each place the code reads with `pp.content(...)`; `--message` names the ordinary request to use.
 - A Flask or Quart app is wrapped in place, so `app.run()` and its routes keep working and are wrapped.
 - A secret that the bot's code reads only once, when it starts, is named by the first scan with what to change.
 - A terminal summary that leads with the verdict, groups findings, and shows one real exchange.

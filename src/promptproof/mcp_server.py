@@ -121,8 +121,10 @@ worked out, under a name it prints (`http:quick-localhost-8000`). Where nobody c
 (a script, a pipeline, an assistant running the command) the developer first runs
 `promptproof authorize <origin> --by "NAME" --scope "..." --environment test --tool <each
 tool marked never_for_users>` themselves; a tool the authorization does not name is left untested.
-That first scan tests secrets held in the instructions, and tools marked
-`never_for_users="what an attacker would ask for"`. Before any attack it checks that the
+That first scan tests secrets held in the instructions, tools marked
+`never_for_users="what an attacker would ask for"`, and text the bot reads from elsewhere at
+each place the code reads with `pp.content("order_note", note)` (if the bot reads it only for
+some requests, pass one as `message`, or `--message` on the command). Before any attack it checks that the
 bot can say each secret at all: in one check conversation only, the harness adds a line
 telling the bot to give the value to a user who states a pass phrase made for that scan.
 The report says that route was supplied by the test. Steps 3 and 4 are for going further:

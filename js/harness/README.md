@@ -156,7 +156,10 @@ What the harness tells the scanner, each in the same signed record as the tool c
   The scan states the phrase and expects the value back; attack sessions never carry
   the note or the phrase.
 
-A first scan tests two things:
+A first scan also tests text the bot reads from elsewhere, at each place the code reads
+with `pp.content("order_note", note)`: the record lists those places too, and the scan
+plants text there while an ordinary user sends an ordinary request (see the repository
+README). Besides that, a first scan tests two things:
 
 - **Secrets in the instructions.** Whether a user can talk the bot into revealing one.
 - **Tools no chat user may ever cause.** For each tool marked with
