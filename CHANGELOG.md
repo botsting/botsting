@@ -2,7 +2,7 @@
 
 ## 0.0.1, 2026-11-26 (alpha)
 
-The first version on PyPI (`pip install kritalon`). An alpha: names, options and file formats may still change. The JavaScript harness in `js/harness` is not on npm yet. This version contains:
+The first version on PyPI (`pip install kritalon`). An alpha: names, options and file formats may still change. The JavaScript harness is on npm as `kritalon-harness` 0.1.0 (`kritalon` there is the same package under the short name). This version contains:
 
 ### Finding problems
 - Disclosure, forbidden-action and planted-text attacks, with a static list and an adaptive attacker (built in, or PyRIT behind the same interface).

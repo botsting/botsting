@@ -12,12 +12,14 @@ only the Node standard library (Node 20+, zero npm dependencies), and it is
 
 ## Install
 
-Copy or vendor the `js/harness` folder into the bot's repository, or install it from a
-checkout:
+Install it in the bot's project:
 
 ```
-npm install /path/to/kritalon/js/harness
+npm install kritalon-harness
 ```
+
+The package `kritalon` on npm is the same thing under the short name. The scanner that
+runs the tests is a Python command: `pip install kritalon`.
 
 Then make a key and set it as `KRITALON_HARNESS_KEY` on the staging deployment and
 where you run the scan (the Python CLI can make one, or use Node):
