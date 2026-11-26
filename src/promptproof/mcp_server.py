@@ -378,8 +378,9 @@ def _first_scan(root: Path, arguments: dict[str, Any]) -> str:
     try:
         # Nobody is asked to type a name here: an authorization is a person's act, made in their own terminal.
         name, description, notes = discover(
-            url, given("name"), given("field"), given("session_field"), given("reply"), ask_name=lambda origin: "", say=said.append
-        )
+            url, given("name"), given("field"), given("session_field"), given("reply"),
+            ask_name=lambda origin: "", say=said.append, message=given("message"),
+        )  # fmt: skip
     except QuickError as error:
         raise ToolError("\n".join([*said, f"Not scanned: {error}"])) from error
     kept = _keep_earlier(path, name, description)
@@ -487,6 +488,11 @@ TOOLS: dict[str, tuple[str, dict[str, Any], Callable[[Path, dict[str, Any]], str
                 "field": {"type": "string", "description": "The request field that carries the message, if it is not found"},
                 "session_field": {"type": "string", "description": "A request field for the conversation id, if the bot has one"},
                 "reply": {"type": "string", "description": "A JSON pointer to the reply text, such as /data/answer"},
+                "message": {
+                    "type": "string",
+                    "description": 'An ordinary request to send while working the bot out. Default "Hello". Give one '
+                    "that makes the bot read its notes or documents, so planted text there is tested",
+                },
                 "strategy": {"type": "string", "enum": ["static", "adaptive", "both"]},
                 "replays": {"type": "integer", "minimum": 1, "maximum": 20},
                 "max_seconds": {"type": "number", "minimum": 1, "maximum": 3600},

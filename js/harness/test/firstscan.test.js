@@ -55,6 +55,7 @@ describe("first scan", () => {
     process.env[pp.KEY_ENV] = KEY;
     pp._markedTools.clear();
     pp._readOutside.clear();
+    pp._contentOutside.clear();
   });
 
   // -- the session token's control and discover fields ---------------------------------------
@@ -170,6 +171,8 @@ describe("first scan", () => {
       tools: ["issue_refund", "send_email"],
       rules: { issue_refund: "a refund of 50 on order A-1001" },
       outside: ["held_at_start"],
+      points: [],
+      points_outside: [],
     });
     assert.deepEqual(pp.readRecord(KEY, "s1", PYTHON_PLAIN_RECORD, "n1"), {
       calls: [],
@@ -177,6 +180,8 @@ describe("first scan", () => {
       tools: [],
       rules: {},
       outside: [],
+      points: [],
+      points_outside: [],
     });
   });
 
@@ -333,6 +338,8 @@ describe("first scan", () => {
       tools: ["issue_refund", "send_email"],
       rules: { issue_refund: "a refund of 50 on order A-1001" },
       outside: [],
+      points: [],
+      points_outside: [],
     });
     const chatToken = pp.makeSessionToken(KEY, "s1", { admin_code: "FAKE" }, {}, { nonce: "n1" });
     const chat = await fetch(baseUrl + "/chat", {

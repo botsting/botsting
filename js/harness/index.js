@@ -347,11 +347,12 @@ export function readRecord(key, sessionId, value, nonce = "") {
   } catch (error) {
     throw new HarnessError(`the tool-call record is unreadable: ${error && error.message ? error.message : error}`);
   }
-  const { calls, dropped, read = [], tools = [], rules = {}, outside = [] } = record;
+  const { calls, dropped, read = [], tools = [], rules = {}, outside = [], points = [], points_outside = [] } = record;
   if (!Array.isArray(calls) || !isIntegerDropCount(json, dropped)) {
     throw new HarnessError("the tool-call record must hold a list of calls and a count of dropped ones");
   }
-  for (const [name, items] of [["read", read], ["tools", tools], ["outside", outside]]) {
+  const lists = [["read", read], ["tools", tools], ["outside", outside], ["points", points], ["points_outside", points_outside]];
+  for (const [name, items] of lists) {
     if (!Array.isArray(items) || !items.every((item) => typeof item === "string")) {
       throw new HarnessError(`the record's '${name}' must be a list of names`);
     }
@@ -370,7 +371,7 @@ export function readRecord(key, sessionId, value, nonce = "") {
   ) {
     throw new HarnessError("the record's 'rules' must map tool names to text");
   }
-  return { calls, read, tools, rules, outside };
+  return { calls, read, tools, rules, outside, points, points_outside };
 }
 
 function pyFloatsMasked(json) {
@@ -419,6 +420,7 @@ export class Session {
     this.discover = discover; // a session that plants nothing and only learns which slots are read
     this.calls = [];
     this.read = []; // slots the bot's code asked for in this request
+    this.points = []; // places for outside text it read, likewise
     this.dropped = 0;
     this.size = 0;
   }
@@ -439,6 +441,7 @@ export class Session {
     // this message always travel with it; the marked tools and their rules only in the
     // readiness answer, exactly as the Python harness orders and formats them.
     const record = { calls: this.calls, dropped: this.dropped, read: this.read };
+    if (this.points.length) record.points = this.points;
     if (tools) {
       const names = [...markedTools.keys()].sort(pyCmp);
       record.tools = names;
@@ -449,6 +452,7 @@ export class Session {
       }
       record.rules = rules;
       record.outside = [...readOutside].sort(pyCmp);
+      if (contentOutside.size) record.points_outside = [...contentOutside].sort(pyCmp);
     }
     const payload = b64(Buffer.from(pyDumps(record, { compact: true }), "utf8"));
     return payload + "." + mac(this.key, CALLS_DOMAIN, [this.sid, this.nonce, payload]);
@@ -488,6 +492,9 @@ export const _markedTools = markedTools;
 // it is; a first scan says so by name. Exported as _readOutside for the test suite.
 const readOutside = new Set();
 export const _readOutside = readOutside;
+// The same for places where the bot reads text someone else wrote (content()).
+const contentOutside = new Set();
+export const _contentOutside = contentOutside;
 
 export function markTool(name, neverForUsers = "") {
   // Note that a tool with this name is covered by the harness (done for you by action()).
@@ -604,7 +611,13 @@ export function planted(slotId, default_ = "") {
 export function content(pointId, default_ = "") {
   // Text the scan placed at this injection point during a test session, `default` otherwise.
   const session = storage.getStore();
-  if (session === undefined) return default_;
+  if (session === undefined) {
+    if (!contentOutside.has(pointId) && contentOutside.size < MAX_SLOTS_NOTED) contentOutside.add(pointId);
+    return default_;
+  }
+  if (!session.points.includes(pointId) && session.points.length < MAX_SLOTS_NOTED) {
+    session.points.push(pointId); // the signed record says which places this request read
+  }
   return Object.hasOwn(session.content, pointId) ? session.content[pointId] : default_;
 }
 

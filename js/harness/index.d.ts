@@ -87,6 +87,10 @@ export interface SignedRecord {
   rules: Record<string, string>;
   /** Slots the code has read outside any test session; in the readiness answer. */
   outside: string[];
+  /** Places for outside text (content()) read while handling this message. */
+  points: string[];
+  /** The same, read outside any test session; in the readiness answer. */
+  points_outside: string[];
 }
 
 /** Refuse a key shorter than MIN_KEY_LENGTH; returns it unchanged otherwise. */
@@ -261,6 +265,7 @@ export const _runFirstSeen: Map<string, number>;
  *  the way the Python tests reach into pp._marked_tools. */
 export const _markedTools: Map<string, string>;
 export const _readOutside: Set<string>;
+export const _contentOutside: Set<string>;
 
 // -- adapters ---------------------------------------------------------------------------------
 

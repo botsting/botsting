@@ -331,6 +331,11 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--field", help="with a URL: the request field that carries the message, if it is not found")
     scan.add_argument("--session-field", help="with a URL: a request field for the conversation id, if the bot has one")
     scan.add_argument("--reply", help="with a URL: a JSON pointer to the reply text, such as /data/answer")
+    scan.add_argument(
+        "--message",
+        help='with a URL: an ordinary request to send while working the bot out (default "Hello"); give one that '
+        "makes the bot read its notes or documents, so planted text there is tested",
+    )
     scan.add_argument("--out", default="reports/scan.promptproof.json", help="where to write the JSON report")
     scan.add_argument("--markdown", help="also write a readable report to this path")
     scan.add_argument("--html", help="also write a self-contained report to open in a browser or print")

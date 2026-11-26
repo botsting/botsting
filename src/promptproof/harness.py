@@ -270,7 +270,9 @@ def read_record(key: str, session_id: str, value: str | None, nonce: str = "") -
 
     Returns {"calls": [...], "read": [slot ids read in this message], "tools": [marked tools, in the
     readiness answer], "rules": {tool: what an attacker would ask for, for tools no chat user may cause},
-    "outside": [slot ids the code has read outside any test session, in the readiness answer]}.
+    "outside": [slot ids the code has read outside any test session, in the readiness answer],
+    "points": [places for outside text read in this message], "points_outside": [the same, read
+    outside any test session, in the readiness answer]}.
     Raises HarnessError if it was not made by a harness holding the key for this very session and
     message, or if calls were left out."""
     if value is None:
@@ -286,11 +288,13 @@ def read_record(key: str, session_id: str, value: str | None, nonce: str = "") -
         calls, dropped = record["calls"], record["dropped"]
         read, tools, rules = record.get("read", []), record.get("tools", []), record.get("rules", {})
         outside = record.get("outside", [])
+        points, points_outside = record.get("points", []), record.get("points_outside", [])
     except (ValueError, KeyError, TypeError) as error:
         raise HarnessError(f"the tool-call record is unreadable: {error}") from error
     if not isinstance(calls, list) or type(dropped) is not int:
         raise HarnessError("the tool-call record must hold a list of calls and a count of dropped ones")
-    for name, items in (("read", read), ("tools", tools), ("outside", outside)):
+    lists = (("read", read), ("tools", tools), ("outside", outside), ("points", points), ("points_outside", points_outside))
+    for name, items in lists:
         if not isinstance(items, list) or not all(isinstance(item, str) for item in items):
             raise HarnessError(f"the record's {name!r} must be a list of names")
     if dropped:
@@ -300,7 +304,15 @@ def read_record(key: str, session_id: str, value: str | None, nonce: str = "") -
         )
     if not isinstance(rules, dict) or not all(isinstance(ask, str) for ask in rules.values()):
         raise HarnessError("the record's 'rules' must map tool names to text")
-    return {"calls": calls, "read": read, "tools": tools, "rules": rules, "outside": outside}
+    return {
+        "calls": calls,
+        "read": read,
+        "tools": tools,
+        "rules": rules,
+        "outside": outside,
+        "points": points,
+        "points_outside": points_outside,
+    }
 
 
 def read_calls_header(key: str, session_id: str, value: str | None, nonce: str = "") -> list[dict[str, Any]]:
@@ -324,6 +336,7 @@ class _Session:
     discover: bool = False
     calls: list[dict[str, Any]] = field(default_factory=list)
     read: list[str] = field(default_factory=list)  # slots the bot's code asked for in this request
+    points: list[str] = field(default_factory=list)  # places for outside text it read, likewise
     dropped: int = 0
     size: int = 0
 
@@ -338,10 +351,14 @@ class _Session:
 
     def header_value(self, tools: bool = False) -> str:
         record: dict[str, Any] = {"calls": self.calls, "dropped": self.dropped, "read": self.read}
+        if self.points:
+            record["points"] = self.points
         if tools:
             record["tools"] = sorted(_marked_tools)
             record["rules"] = {name: ask for name, ask in sorted(_marked_tools.items()) if ask}
             record["outside"] = sorted(_read_outside)
+            if _content_outside:
+                record["points_outside"] = sorted(_content_outside)
         payload = _b64(json.dumps(record, separators=(",", ":")).encode("utf-8"))
         return payload + "." + _mac(self.key, _CALLS_DOMAIN, self.sid, self.nonce, payload)
 
@@ -354,6 +371,8 @@ _marked_tools: dict[str, str] = {}
 # A slot that is read here and never while a test message is handled cannot be tested where it is;
 # a first scan says so by name. Names only, written in the bot's own code.
 _read_outside: set[str] = set()
+# The same for places where the bot reads text someone else wrote (`content`).
+_content_outside: set[str] = set()
 _MAX_SLOTS_NOTED = 50
 _MAX_TOOLS_NOTED = 200
 
@@ -444,7 +463,11 @@ def content(point_id: str, default: str = "") -> str:
     """Text the scan placed at this injection point during a test session, `default` otherwise."""
     session = _current.get()
     if session is None:
+        if point_id not in _content_outside and len(_content_outside) < _MAX_SLOTS_NOTED:
+            _content_outside.add(point_id)
         return default
+    if point_id not in session.points and len(session.points) < _MAX_SLOTS_NOTED:
+        session.points.append(point_id)  # the signed record says which places this request read
     return session.content.get(point_id, default)
 
 

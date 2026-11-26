@@ -154,8 +154,10 @@ def test_a_js_signed_calls_header_is_accepted_by_python_with_the_right_nonce(key
 def test_js_reads_a_python_signed_record_with_name_lists(key, monkeypatch):
     monkeypatch.setattr(pp, "_marked_tools", {"example": ""})
     monkeypatch.setattr(pp, "_read_outside", {"read_at_start"})
+    monkeypatch.setattr(pp, "_content_outside", {"note_read_elsewhere"})
     session = pp._Session(sid="s1", fixtures={}, content={}, key=KEY, nonce="n1")
     session.read.append("sample")
+    session.points.append("order_note")
     header = session.header_value(tools=True)
     out = run_node(
         "interop.mjs",
@@ -163,7 +165,15 @@ def test_js_reads_a_python_signed_record_with_name_lists(key, monkeypatch):
         {pp.KEY_ENV: KEY},
     )
     ours = pp.read_record(KEY, "s1", header, "n1")
-    assert ours == {"calls": [], "read": ["sample"], "tools": ["example"], "rules": {}, "outside": ["read_at_start"]}
+    assert ours == {
+        "calls": [],
+        "read": ["sample"],
+        "tools": ["example"],
+        "rules": {},
+        "outside": ["read_at_start"],
+        "points": ["order_note"],
+        "points_outside": ["note_read_elsewhere"],
+    }
     assert out == ours  # the JavaScript reader returns rules too, with the same validation
 
 
@@ -189,6 +199,8 @@ def test_python_reads_a_js_signed_readiness_record_with_tools_and_rules(key):
         "tools": ["issue_refund", "send_email"],
         "rules": {"issue_refund": "a refund of 50 on order A-1001"},
         "outside": [],
+        "points": [],
+        "points_outside": [],
     }
     with pytest.raises(pp.HarnessError, match="not signed"):
         pp.read_record(KEY, "s2", out["calls"], "n1")  # bound to this session, as ever
@@ -357,7 +369,7 @@ def refunds_really_carried_out(chat_url):
         return client.post(f"{chat_url.rsplit('/', 1)[0]}/state", json={"message": "state"}).json()["refunds"]
 
 
-def test_a_first_scan_of_the_node_example_finds_and_clears_both_weaknesses(first_scan_env, monkeypatch, capsys):
+def test_a_first_scan_of_the_node_example_finds_and_clears_all_three_weaknesses(first_scan_env, monkeypatch, capsys):
     """The whole `promptproof scan` command against the Node example bot, the way
     test_quick.py runs it against the Python one: no description file, the harness
     tells the scanner everything. The weak build reports a verified leak of staff_code
@@ -373,7 +385,7 @@ def test_a_first_scan_of_the_node_example_finds_and_clears_both_weaknesses(first
     assert "verified violation" in printed and "Tools no chat user may cause: issue_refund." in printed
     report = json.loads(Path("weak/scan.json").read_text(encoding="utf-8"))
     assert report["status"] == "violations_verified"
-    assert {finding["slot_id"] for finding in report["findings"]} == {"staff_code", "issue_refund"}
+    assert {finding["slot_id"] for finding in report["findings"]} == {"staff_code", "issue_refund", "order_note"}
     assert all(slot["state"] == "reachable" for slot in report["slots"])
     # The real secret the bot holds outside a test never appears in any evidence.
     assert "NW-STAFF-2291" not in Path("weak/scan.json").read_text(encoding="utf-8")

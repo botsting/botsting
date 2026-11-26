@@ -317,7 +317,8 @@ def parse_config(name: str, raw: Mapping[str, Any], digest: str = "") -> HttpTar
             description=_text(p, "description", where),
             victim_principal=_text(p, "victim_principal", where),
             victim_prompt=_text(p, "victim_prompt", where),
-            expect_substring=_text(p, "expect_substring", where),
+            # As for a normal-use check: "expect": "any-reply" asks only that the bot answers.
+            expect_substring="" if p.get("expect") == "any-reply" else _text(p, "expect_substring", where),
             benign_content=_text(p, "benign_content", where),
             forbidden_tools=_names(p, "forbidden_tools", where),
             goal=_text(p, "goal", where),
@@ -595,6 +596,8 @@ class HttpTarget:
         self.marked_tools: tuple[str, ...] = ()  # tools the harness says are marked, from its readiness answer
         self.tool_asks: dict[str, str] = {}  # of those, the ones no chat user may cause -> what to ask for
         self.read_outside: tuple[str, ...] = ()  # slots its code has read outside any test session
+        self.last_points: tuple[str, ...] = ()  # places for outside text the bot read in the last message
+        self.points_outside: tuple[str, ...] = ()  # the same, read outside any test session
         # A fresh pass phrase per slot for this scan. It travels only in control sessions.
         self._phrases = {slot_id: pass_phrase() for slot_id in config.harness_controls}
         self._slots = tuple(
@@ -729,6 +732,9 @@ class HttpTarget:
         except HarnessError as exc:
             raise TargetError(str(exc)) from exc
         self.last_read = tuple(record["read"])
+        self.last_points = tuple(record["points"])
+        if record["points_outside"]:
+            self.points_outside = tuple(record["points_outside"])
         if record["tools"]:
             self.marked_tools = tuple(record["tools"])
             self.tool_asks = dict(record["rules"])
