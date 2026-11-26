@@ -2,7 +2,7 @@
 
 Evidence-first security testing for LLM applications. Kritalon attacks a bot you own and reports only what it can prove: it plants fresh secrets ("canaries") where an attacker should never reach, then shows you the exact conversation in which one came out.
 
-Early development: version 0.0.1 is an alpha. Expect changes between versions. It scans the built-in practice bots and any bot you own.
+Early development: Kritalon is an alpha. Expect changes between versions. It scans the built-in practice bots and any bot you own.
 
 ## Install it as a command
 

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.2, 2026-11-26 (alpha)
+
+No change to the code. The description shown on PyPI for 0.0.1 was the README from just before that upload, and still said the package was not on PyPI. This version carries the corrected text.
+
 ## 0.0.1, 2026-11-26 (alpha)
 
 The first version on PyPI (`pip install kritalon`). An alpha: names, options and file formats may still change. The JavaScript harness is on npm as `kritalon-harness` 0.1.0 (`kritalon` there is the same package under the short name). This version contains:

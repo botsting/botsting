@@ -1,6 +1,6 @@
 [project]
 name = "kritalon"
-version = "0.0.1"
+version = "0.0.2"
 description = "Evidence-first security testing for LLM applications: report what was proven, not what looked bad."
 readme = "README.md"
 requires-python = ">=3.11"

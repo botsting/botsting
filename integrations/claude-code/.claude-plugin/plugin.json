@@ -1,6 +1,6 @@
 {
   "name": "kritalon",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Test your own AI bot or agent for prompt injection: plants fake secrets, records risky tool calls without running them, and reports only what it can prove. Runs on your machine.",
   "author": { "name": "Kritalon contributors" },
   "license": "Apache-2.0",
