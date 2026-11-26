@@ -1,0 +1,41 @@
+{
+  "name": "kritalon",
+  "version": "0.1.0",
+  "description": "Kritalon's test harness for JavaScript bots, under the short name. It re-exports kritalon-harness. The scanner itself is a Python tool: pip install kritalon.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    }
+  },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "kritalon-harness": "^0.1.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kritalon/kritalon.git",
+    "directory": "js/kritalon"
+  },
+  "homepage": "https://kritalon.com",
+  "keywords": [
+    "kritalon",
+    "security",
+    "testing",
+    "ai agents",
+    "prompt injection",
+    "red teaming"
+  ]
+}
