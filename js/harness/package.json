@@ -22,7 +22,8 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://example.invalid/kritalon"
+    "url": "git+https://github.com/kritalon/kritalon.git",
+    "directory": "js/harness"
   },
   "keywords": [
     "kritalon",
