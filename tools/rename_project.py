@@ -5,9 +5,11 @@
 
 The argument is the name as it is written in prose ("BotPentest"). From it:
 
-    in prose, headers, titles     BotPentest      (was the capitalised working name)
-    package, command, files       botpentest      (was the lower-case working name)
-    environment variables         BOTPENTEST      (was the upper-case working name)
+    in prose, headers, titles     BotPentest      (was the current name, capitalised)
+    package, command, files       botpentest      (was the current name, lower case)
+    environment variables         BOTPENTEST      (was the current name, upper case)
+
+The current name is read from the tree: it is the name of the package folder under src/.
 
 It changes every file git tracks: file contents, and file and folder names. That covers
 the Python package and its command, the environment variables, the HTTP headers and
@@ -37,7 +39,13 @@ import subprocess
 import sys
 from pathlib import Path
 
-OLD = "prompt" + "proof"  # written in two parts so that this file does not rename itself
+def _current_name() -> str:
+    """The name the project has now: the one package folder under src/."""
+    (package,) = [p for p in (Path(__file__).resolve().parents[1] / "src").iterdir() if (p / "harness.py").is_file()]
+    return package.name
+
+
+OLD = _current_name()  # read from the tree, so this file never holds the name and never renames itself
 SKIP = {"uv.lock", "tools/rename_project.py"}
 NAME = re.compile(r"[A-Za-z][A-Za-z0-9]{2,29}")
 
