@@ -528,6 +528,27 @@ TOOLS: dict[str, tuple[str, dict[str, Any], Callable[[Path, dict[str, Any]], str
 }
 
 
+def _note(title: str, reads_only: bool, reaches_out: bool) -> dict[str, Any]:
+    """What an assistant, and a directory that lists this server, may assume about a tool.
+
+    None of the tools deletes or overwrites anything: a scan writes into a new or empty folder
+    and refuses one that holds files. `reaches_out` is true for the tools that send messages to
+    the developer's bot."""
+    return {"title": title, "readOnlyHint": reads_only, "destructiveHint": False, "openWorldHint": reaches_out}
+
+
+ANNOTATIONS: dict[str, dict[str, Any]] = {
+    "setup_guide": _note("Read the setup guide", True, False),
+    "find_tools": _note("Find risky functions in the project", True, False),
+    "check_description": _note("Check a target description", True, False),
+    "authorization_status": _note("See whether a test is authorized", True, False),
+    "doctor": _note("Check the setup step by step", False, True),
+    "first_scan": _note("Scan a bot from its chat address", False, True),
+    "scan": _note("Scan a described bot", False, True),
+    "read_report": _note("Read a finished report", True, False),
+}
+
+
 # -- the protocol ---------------------------------------------------------------------------
 
 
@@ -578,7 +599,12 @@ def handle(root: Path, message: Any) -> dict[str, Any] | None:
         return answer({})
     if method == "tools/list":
         return answer(
-            {"tools": [{"name": n, "description": d, "inputSchema": schema} for n, (d, schema, _) in TOOLS.items()]}
+            {
+                "tools": [
+                    {"name": n, "description": d, "inputSchema": schema, "annotations": ANNOTATIONS[n]}
+                    for n, (d, schema, _) in TOOLS.items()
+                ]
+            }
         )
     if method == "tools/call":
         arguments = params.get("arguments")

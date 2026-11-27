@@ -38,6 +38,12 @@ def test_the_handshake_and_the_tool_list(project):
     listed = handle(project, {"jsonrpc": "2.0", "id": 3, "method": "tools/list"})["result"]["tools"]
     assert [tool["name"] for tool in listed] == list(TOOLS)
     assert all(tool["inputSchema"]["type"] == "object" and tool["description"] for tool in listed)
+    # Every tool says whether it only reads, and none claims to delete: directories that list
+    # assistant tools require it, and an assistant uses it to decide what needs asking first.
+    notes = {tool["name"]: tool["annotations"] for tool in listed}
+    assert all(note["title"] and note["destructiveHint"] is False for note in notes.values())
+    assert {name for name, note in notes.items() if not note["readOnlyHint"]} == {"doctor", "first_scan", "scan"}
+    assert {name for name, note in notes.items() if note["openWorldHint"]} == {"doctor", "first_scan", "scan"}
     assert handle(project, {"jsonrpc": "2.0", "id": 4, "method": "resources/list"})["error"]["code"] == -32601
     assert handle(project, ["not", "a", "request"])["error"]["code"] == -32600
 
