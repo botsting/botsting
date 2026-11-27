@@ -16,6 +16,8 @@ The rules
 - An attack names the place in its source it was taken from, and says whether its text was
   kept as published, had our placeholder put where the source's own request stood, was
   shortened, or had the source's own blanks filled with the source's own default values.
+- Texts written for BotSting are marked `authored`, and only a source whose id ends in `-authored`
+  may hold them; such a source holds nothing else.
 - `{hint}` and `{goal}` are the only placeholders. They are replaced as plain text, so any
   other braces in a text are just braces.
 - No text may repeat another one, here or among the built-in attacks.
@@ -40,7 +42,10 @@ ROOT = Path(__file__).parent / "collections"
 # than keeping the notice. Anything else, including a missing licence, is refused.
 ALLOWED_LICENCES = frozenset({"Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "CC-BY-4.0", "CC0-1.0", "ISC", "MIT", "Unlicense"})
 KINDS = ("instruction_secret", "other_user_record", "action", "injection")
-CHANGES = ("verbatim", "placeholder", "trimmed", "filled")
+CHANGES = ("verbatim", "placeholder", "trimmed", "filled", "authored")
+# Texts written for BotSting itself, not taken from anyone, live in a source of their own whose id ends with this,
+# and every entry there says so. A reused text can never be passed off as ours, nor ours as reused.
+AUTHORED = "-authored"
 HINT = "{hint}"
 GOAL = "{goal}"
 MAX_TURNS = 25
@@ -139,6 +144,11 @@ def _read_entry(found: object, source: Source, where: str) -> Entry:
         raise CollectionError(f"{where}: `kind` must be one of {', '.join(KINDS)}")
     if found["changed"] not in CHANGES:
         raise CollectionError(f"{where}: `changed` must be one of {', '.join(CHANGES)}")
+    if (found["changed"] == "authored") != source.id.endswith(AUTHORED):
+        raise CollectionError(
+            f"{where}: texts written for BotSting are marked `authored` and kept in a source whose id ends in `{AUTHORED}`, "
+            "and only there"
+        )
     turns = found["turns"]
     if not isinstance(turns, list) or not 1 <= len(turns) <= MAX_TURNS:
         raise CollectionError(f"{where}: `turns` must be a list of 1 to {MAX_TURNS} texts")
