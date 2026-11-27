@@ -1,7 +1,7 @@
 {
-  "name": "kritalon-harness",
+  "name": "botsting-harness",
   "version": "0.1.0",
-  "description": "The Kritalon drop-in test harness for JavaScript bots: plant fake secrets, record risky tool calls, never run them during a test.",
+  "description": "The BotSting drop-in test harness for JavaScript bots: plant fake secrets, record risky tool calls, never run them during a test.",
   "license": "Apache-2.0",
   "type": "module",
   "main": "index.js",
@@ -23,11 +23,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/kritalon/kritalon.git",
+    "url": "git+https://github.com/botsting/botsting.git",
     "directory": "js/harness"
   },
   "keywords": [
-    "kritalon",
+    "botsting",
     "security",
     "testing",
     "llm",

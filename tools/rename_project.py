@@ -5,9 +5,11 @@
 
 The argument is the name as it is written in prose ("BotPentest"). From it:
 
-    in prose, headers, titles     BotPentest      (was the capitalised working name)
-    package, command, files       botpentest      (was the lower-case working name)
-    environment variables         BOTPENTEST      (was the upper-case working name)
+    in prose, headers, titles     BotPentest      (was the current name, capitalised)
+    package, command, files       botpentest      (was the current name, lower case)
+    environment variables         BOTPENTEST      (was the current name, upper case)
+
+The current name is read from the tree: it is the name of the package folder under src/.
 
 It changes every file git tracks: file contents, and file and folder names. That covers
 the Python package and its command, the environment variables, the HTTP headers and
@@ -37,7 +39,14 @@ import subprocess
 import sys
 from pathlib import Path
 
-OLD = "prompt" + "proof"  # written in two parts so that this file does not rename itself
+
+def _current_name() -> str:
+    """The name the project has now: the one package folder under src/."""
+    (package,) = [p for p in (Path(__file__).resolve().parents[1] / "src").iterdir() if (p / "harness.py").is_file()]
+    return package.name
+
+
+OLD = _current_name()  # read from the tree, so this file never holds the name and never renames itself
 SKIP = {"uv.lock", "tools/rename_project.py"}
 NAME = re.compile(r"[A-Za-z][A-Za-z0-9]{2,29}")
 
@@ -50,8 +59,6 @@ def tracked(root: Path) -> list[str]:
 def plan(root: Path, display: str) -> tuple[list[tuple[str, int]], list[tuple[str, str]], list[str]]:
     """What would change: (file, replacements) for contents, (old path, new path) for names, and
     files that could not be read as text and are left alone."""
-    lower, upper = display.lower(), display.upper()
-    pairs = ((OLD.upper(), upper), (OLD.capitalize(), display), (OLD, lower))
     contents: list[tuple[str, int]] = []
     moves: list[tuple[str, str]] = []
     skipped: list[str] = []
@@ -63,24 +70,38 @@ def plan(root: Path, display: str) -> tuple[list[tuple[str, int]], list[tuple[st
             skipped.append(name)
             text = None
         if text is not None:
-            count = sum(text.count(old) for old, _ in pairs)
-            left = len(re.findall(OLD, text, flags=re.IGNORECASE)) - count
-            if left:
-                raise SystemExit(f"{name}: {left} spelling(s) of the old name in a case this script does not know; fix by hand first")
+            count = len(_OLD.findall(text))
             if count:
                 contents.append((name, count))
         if OLD in name.lower():
-            moves.append((name, re.sub(OLD, lower, name, flags=re.IGNORECASE)))
+            moves.append((name, _OLD.sub(display.lower(), name)))
     return contents, moves, skipped
 
 
+_OLD = re.compile(re.escape(OLD), re.IGNORECASE)
+
+
+def renamed(text: str, display: str) -> str:
+    """`text` with every spelling of the current name replaced: all lower case and all upper case
+    keep their case, and any other spelling (Name, or a name written with capitals inside it)
+    becomes the new name as it is written in prose."""
+
+    def new(match: re.Match[str]) -> str:
+        found = match.group(0)
+        if found == found.lower():
+            return display.lower()
+        if found == found.upper():
+            return display.upper()
+        return display
+
+    return _OLD.sub(new, text)
+
+
 def apply(root: Path, display: str, contents: list[tuple[str, int]], moves: list[tuple[str, str]]) -> None:
-    lower, upper = display.lower(), display.upper()
     for name, _ in contents:
         path = root / name
         data = path.read_bytes().decode("utf-8")  # bytes in and out: line endings are kept as they are
-        data = data.replace(OLD.upper(), upper).replace(OLD.capitalize(), display).replace(OLD, lower)
-        path.write_bytes(data.encode("utf-8"))
+        path.write_bytes(renamed(data, display).encode("utf-8"))
     for old, new in moves:
         target = root / new
         target.parent.mkdir(parents=True, exist_ok=True)

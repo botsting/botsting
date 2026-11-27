@@ -4,11 +4,11 @@ import asyncio
 
 import pytest
 
-from kritalon.attacks.library import attacks_for
-from kritalon.llm.scripted import ScriptedModel
-from kritalon.targets.base import TargetError
-from kritalon.targets.registry import SpecError, build_target
-from kritalon.targets.toy import BOB_NOTE, STAFF_CODE, ToyTarget
+from botsting.attacks.library import attacks_for
+from botsting.llm.scripted import ScriptedModel
+from botsting.targets.base import TargetError
+from botsting.targets.registry import SpecError, build_target
+from botsting.targets.toy import BOB_NOTE, STAFF_CODE, ToyTarget
 
 CODE = "AAAA-BBBB-CCCC-DDDD"
 NOTE = "EEEE-FFFF-GGGG-HHHH"

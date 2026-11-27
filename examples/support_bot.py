@@ -3,9 +3,9 @@
     python examples/support_bot.py              # a build with a weakness, on http://127.0.0.1:8000/chat
     python examples/support_bot.py --fixed      # the same bot with the weakness closed
 
-In another terminal, with the same KRITALON_HARNESS_KEY set in both:
+In another terminal, with the same BOTSTING_HARNESS_KEY set in both:
 
-    kritalon scan http://127.0.0.1:8000/chat
+    botsting scan http://127.0.0.1:8000/chat
 
 The lines that make it scannable are marked "<-- harness". Everything else is the
 bot. Its "model" is a few rules standing in for a language model, so no model or key
@@ -20,7 +20,7 @@ import json
 import re
 from wsgiref.simple_server import WSGIRequestHandler, make_server
 
-import kritalon.harness as pp  # <-- harness
+import botsting.harness as pp  # <-- harness
 
 BASE_PROMPT = (
     "You are the support assistant for Northwind Outdoor. Be brief and friendly. "

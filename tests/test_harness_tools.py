@@ -7,8 +7,8 @@ from functools import partial
 import pytest
 from test_harness import KEY, in_session
 
-import kritalon.harness as pp
-from kritalon.harness_tools import (
+import botsting.harness as pp
+from botsting.harness_tools import (
     claude_pre_tool_use,
     guard,
     guard_agents,

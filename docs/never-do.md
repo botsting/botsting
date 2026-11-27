@@ -1,4 +1,4 @@
-# What Kritalon never does
+# What BotSting never does
 
 These are properties of the tool, enforced in code and covered by tests. Each line names where.
 
@@ -21,6 +21,6 @@ These are properties of the tool, enforced in code and covered by tests. Each li
 - Run attacks that change what other people see (shared memory, a knowledge base, public posts) against a real system. Use a copy.
 - Point it at a production system at level 3 (real actions) before you have read the caps in your own code.
 
-## What Kritalon cannot promise
+## What BotSting cannot promise
 
 That a bot with no findings is safe, that every tool in your code was marked, or that your own harness code tells the truth. Each report states its limits.

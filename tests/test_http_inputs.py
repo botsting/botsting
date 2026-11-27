@@ -10,10 +10,10 @@ from datetime import UTC, datetime
 import httpx
 import pytest
 
-from kritalon.attacks.library import default_attacks
-from kritalon.core.authorization import new_authorization
-from kritalon.core.runner import ScanConfig, run_scan
-from kritalon.targets.http import HttpTarget, TargetConfigError, _fill, parse_config
+from botsting.attacks.library import default_attacks
+from botsting.core.authorization import new_authorization
+from botsting.core.runner import ScanConfig, run_scan
+from botsting.targets.http import HttpTarget, TargetConfigError, _fill, parse_config
 
 ORIGIN = "http://127.0.0.1:8099"
 
@@ -179,7 +179,7 @@ def test_a_missing_conversation_id_is_an_error():
         await target.reset({"staff_code": "WXYZ-1234"})
         await (await target.open_session("customer:alice")).send("hi")
 
-    from kritalon.targets.base import TargetError
+    from botsting.targets.base import TargetError
 
     with pytest.raises(TargetError, match="no conversation id"):
         asyncio.run(talk())
@@ -237,7 +237,7 @@ def test_reports_for_this_kind_of_target_say_how_the_secret_travelled():
     assert report.target_config["secrets"] == "sent with each request"
     assert any("travelled in each chat request" in item for item in report.limitations)
     # Other targets do not carry the note.
-    from kritalon.targets.registry import build_target
+    from botsting.targets.registry import build_target
 
     toy = build_target("toy:fixed")
     plain = asyncio.run(run_scan(toy, default_attacks(toy), ScanConfig(reproduction_trials=1)))
@@ -284,7 +284,7 @@ def test_a_value_that_simply_comes_back_is_never_a_finding_even_as_a_by_product_
 
 
 def test_the_adaptive_attacker_is_not_set_on_such_a_slot_either():
-    from kritalon.attacks.adaptive import LLMAdaptiveStrategy, ScriptedAttackerModel
+    from botsting.attacks.adaptive import LLMAdaptiveStrategy, ScriptedAttackerModel
 
     target = target_for(echo_bot())
     strategy = LLMAdaptiveStrategy(model=ScriptedAttackerModel(), max_turns=2, max_episodes=2)
@@ -294,7 +294,7 @@ def test_the_adaptive_attacker_is_not_set_on_such_a_slot_either():
 
 
 def test_a_finding_on_such_a_slot_is_not_replayed():
-    from kritalon.core.runner import replay_finding
+    from botsting.core.runner import replay_finding
 
     leaky_transport, _ = builder_bot(leaky=True)
     leaky = target_for(leaky_transport)
@@ -307,7 +307,7 @@ def test_a_finding_on_such_a_slot_is_not_replayed():
 def test_the_plain_replay_function_has_the_same_gate():
     """`replay()` is the function other code builds on. On a bot that repeats its request it must
     not count a match, exactly as a scan and `replay_finding` do not."""
-    from kritalon.core.runner import replay
+    from botsting.core.runner import replay
 
     target = target_for(echo_bot())
     attack = next(a for a in default_attacks(target) if a.slot_id == "staff_code")

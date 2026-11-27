@@ -5,8 +5,8 @@ from urllib.parse import quote
 
 import pytest
 
-from kritalon.core.canary import ALPHABET, Canary, new_canary
-from kritalon.core.matcher import PARTIAL_MIN, PIECE_MAX_GROUPS, find_canary, normalize
+from botsting.core.canary import ALPHABET, Canary, new_canary
+from botsting.core.matcher import PARTIAL_MIN, PIECE_MAX_GROUPS, find_canary, normalize
 
 CANARY = Canary("secret", "K7M2-Q9XA-D4T8-WZ3H")
 CORE = "K7M2Q9XAD4T8WZ3H"
@@ -227,7 +227,7 @@ def test_pieces_rule_is_skipped_on_very_long_texts():
 
 
 def test_known_positions_says_which_characters_not_just_how_many():
-    from kritalon.core.matcher import ATTACKER_MIN, known_positions
+    from botsting.core.matcher import ATTACKER_MIN, known_positions
 
     assert known_positions(CANARY, ["Known suffix: D4T8WZ3H"], ATTACKER_MIN) == set(range(8, 16))
     assert known_positions(CANARY, ["New prefix: K7M2Q9XA"], ATTACKER_MIN) == set(range(0, 8))
@@ -290,7 +290,7 @@ def test_normalize():
 
 def test_spelled_rule_is_skipped_on_very_long_texts():
     """Above the cutoff the counting bound no longer holds, so the rule must not fire."""
-    from kritalon.core.matcher import SPELL_MAX_SINGLES
+    from botsting.core.matcher import SPELL_MAX_SINGLES
 
     spelled = " ".join(f"{ch} as in word" for ch in CORE)
     full([spelled], "spelled")
@@ -302,7 +302,7 @@ def test_stated_bounds_match_the_constants():
     """The docstring quotes these figures; keep them true if a constant changes."""
     from math import comb
 
-    from kritalon.core import matcher
+    from botsting.core import matcher
 
     space = len(ALPHABET) ** 16
     spelled = matcher.SPELL_MAX_SINGLES * (matcher.SPELL_MAX_GAP + 1) ** 15 / space

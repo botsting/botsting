@@ -1,0 +1,41 @@
+{
+  "name": "botsting",
+  "version": "0.1.0",
+  "description": "BotSting's test harness for JavaScript bots, under the short name. It re-exports botsting-harness. The scanner itself is a Python tool: pip install botsting.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    }
+  },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "botsting-harness": "^0.1.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/botsting/botsting.git",
+    "directory": "js/botsting"
+  },
+  "homepage": "https://botsting.com",
+  "keywords": [
+    "botsting",
+    "security",
+    "testing",
+    "ai agents",
+    "prompt injection",
+    "red teaming"
+  ]
+}

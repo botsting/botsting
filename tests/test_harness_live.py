@@ -13,15 +13,15 @@ from datetime import UTC, datetime
 import httpx
 import pytest
 
-import kritalon.harness as pp
-from kritalon.cli import main
-from kritalon.core.authorization import (
+import botsting.harness as pp
+from botsting.cli import main
+from botsting.core.authorization import (
     AuthorizationError,
     AuthorizationStore,
     new_authorization,
     require_authorized,
 )
-from kritalon.targets.http import HttpTarget, TargetConfigError, parse_config
+from botsting.targets.http import HttpTarget, TargetConfigError, parse_config
 
 KEY = "k" * 40
 TEST_ORDERS = ("T-1", "T-2")
@@ -336,9 +336,9 @@ def test_the_command_line_records_and_warns(tmp_path, monkeypatch, capsys):
     record = AuthorizationStore().find(ORIGIN)
     assert record.live_tools == ("issue_refund",) and record.allowed_tools == ("issue_refund",)
     # An older file without the field still loads, with nothing live.
-    stored = json.loads((tmp_path / "kritalon.authorizations.json").read_text(encoding="utf-8"))
+    stored = json.loads((tmp_path / "botsting.authorizations.json").read_text(encoding="utf-8"))
     del stored["authorizations"][0]["live_tools"]
-    (tmp_path / "kritalon.authorizations.json").write_text(json.dumps(stored), encoding="utf-8")
+    (tmp_path / "botsting.authorizations.json").write_text(json.dumps(stored), encoding="utf-8")
     assert AuthorizationStore().find(ORIGIN).live_tools == ()
 
 
@@ -432,7 +432,7 @@ def test_an_old_authorization_file_cannot_be_used_for_real_actions(tmp_path, mon
     monkeypatch.chdir(tmp_path)
     record = new_authorization(ORIGIN, "Dana Levi", "the bot", "test", 1, NOW, allowed_tools=("issue_refund",))
     AuthorizationStore().add(record)
-    path = tmp_path / "kritalon.authorizations.json"
+    path = tmp_path / "botsting.authorizations.json"
     stored = json.loads(path.read_text(encoding="utf-8"))
     del stored["authorizations"][0]["live_tools"]
     path.write_text(json.dumps(stored), encoding="utf-8")

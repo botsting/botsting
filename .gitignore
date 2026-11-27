@@ -10,7 +10,7 @@ build/
 
 # Scan output
 /reports/
-*.kritalon.json
+*.botsting.json
 
 # Internal business documents: kept out of the repository because it is meant to be open-sourced.
 /PROJECT_BRIEF.md
@@ -18,11 +18,11 @@ build/
 /research/
 
 # Authorizations name real people and the sites they control; they stay on this machine.
-kritalon.authorizations.json
-.kritalon-auth-*
+botsting.authorizations.json
+.botsting-auth-*
 
 # Descriptions of real bots; may name internal addresses.
-kritalon.targets.json
+botsting.targets.json
 
 # Adapters and runs for the owner's own systems; internal, never published.
 /local/

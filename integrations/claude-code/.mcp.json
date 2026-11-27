@@ -1,7 +1,7 @@
 {
   "mcpServers": {
-    "kritalon": {
-      "command": "kritalon",
+    "botsting": {
+      "command": "botsting",
       "args": ["mcp"]
     }
   }

@@ -5,8 +5,8 @@ import zipfile
 
 import pytest
 
-from kritalon.cli import main
-from kritalon.seal import MANIFEST, SealError, check, seal, seal_of
+from botsting.cli import main
+from botsting.seal import MANIFEST, SealError, check, seal, seal_of
 
 
 @pytest.fixture

@@ -474,7 +474,7 @@ describe("live actions under caps", () => {
     }
     json += "}";
     const payload = Buffer.from(json, "utf8").toString("base64url");
-    const forged = payload + "." + pp.mac(KEY, Buffer.from("kritalon-session/1\n"), [payload]);
+    const forged = payload + "." + pp.mac(KEY, Buffer.from("botsting-session/1\n"), [payload]);
     assert.equal(pp.openSession(forged), null);
   });
 });

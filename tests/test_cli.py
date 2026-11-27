@@ -2,15 +2,15 @@ import json
 
 import pytest
 
-from kritalon import __version__
-from kritalon.cli import EXIT_INCONCLUSIVE, EXIT_NO_VERIFIED, EXIT_VIOLATIONS, NO_VERIFIED_HEADLINE, main
+from botsting import __version__
+from botsting.cli import EXIT_INCONCLUSIVE, EXIT_NO_VERIFIED, EXIT_VIOLATIONS, NO_VERIFIED_HEADLINE, main
 
 
 def test_version(capsys):
     with pytest.raises(SystemExit) as exit_info:
         main(["--version"])
     assert exit_info.value.code == 0
-    assert capsys.readouterr().out.strip() == f"kritalon {__version__}"
+    assert capsys.readouterr().out.strip() == f"botsting {__version__}"
 
 
 def test_scan_vulnerable_then_replay(tmp_path, capsys):
@@ -21,7 +21,7 @@ def test_scan_vulnerable_then_replay(tmp_path, capsys):
         "14 verified violation(s): 11 protected data disclosed, 3 forbidden action(s) accepted, "
         "0 forbidden action(s) attempted and refused by the tool."
     ) in printed
-    assert f"kritalon replay {out.as_posix()} --finding F1" in printed
+    assert f"botsting replay {out.as_posix()} --finding F1" in printed
 
     data = json.loads(out.read_text(encoding="utf-8"))
     assert data["status"] == "violations_verified"
@@ -88,7 +88,7 @@ class _SaysNo:
 
 def test_replay_against_a_broken_target_is_inconclusive_not_a_pass(tmp_path, capsys, monkeypatch):
     """Review finding 2: this used to exit 0, so a script checking a fix would accept a dead bot."""
-    import kritalon.cli as cli
+    import botsting.cli as cli
 
     out = tmp_path / "scan.json"
     main(["scan", "--target", "toy:vulnerable", "--out", str(out), "--replays", "1"])
@@ -116,7 +116,7 @@ def test_replay_notes_a_changed_configuration(tmp_path, capsys):
 def test_replay_command_is_quoted_when_the_path_needs_it(tmp_path, capsys):
     out = tmp_path / "my reports" / "scan.json"
     main(["scan", "--target", "toy:vulnerable", "--out", str(out), "--replays", "1"])
-    assert f'kritalon replay "{out.as_posix()}" --finding F1' in capsys.readouterr().out
+    assert f'botsting replay "{out.as_posix()}" --finding F1' in capsys.readouterr().out
 
 
 def test_hostile_target_specs_are_rejected(tmp_path, capsys):
@@ -177,7 +177,7 @@ def test_scan_rejects_invalid_independence(tmp_path):
 def test_paths_are_printed_in_full_and_no_browser_opens_without_a_person(tmp_path, monkeypatch, capsys):
     import webbrowser
 
-    from kritalon.cli import open_for_a_person
+    from botsting.cli import open_for_a_person
 
     opened = []
     monkeypatch.setattr(webbrowser, "open", lambda url: opened.append(url) or True)
@@ -193,7 +193,7 @@ def test_paths_are_printed_in_full_and_no_browser_opens_without_a_person(tmp_pat
 
     monkeypatch.setattr("sys.stdout", Terminal())
     monkeypatch.delenv("CI", raising=False)
-    monkeypatch.delenv("KRITALON_NO_OPEN", raising=False)
+    monkeypatch.delenv("BOTSTING_NO_OPEN", raising=False)
     assert open_for_a_person(tmp_path / "report.html") and opened[0].startswith("file:")
     assert not open_for_a_person(tmp_path / "report.html", declined=True)
     monkeypatch.setenv("CI", "true")
@@ -205,7 +205,7 @@ def test_a_reply_in_any_alphabet_cannot_stop_the_summary(monkeypatch):
     with. The scan would finish, write its reports, then stop with an error while printing."""
     import io
 
-    from kritalon.cli import _print_anything
+    from botsting.cli import _print_anything
 
     raw = io.BytesIO()
     legacy = io.TextIOWrapper(raw, encoding="cp1252", errors="strict")
