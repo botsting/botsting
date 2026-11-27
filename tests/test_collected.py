@@ -165,6 +165,17 @@ def test_an_attack_that_breaks_a_rule_stops_the_load_and_names_the_line(tmp_path
         load(write(tmp_path, entries=entries))
 
 
+def test_texts_written_for_botsting_are_kept_apart_and_marked(tmp_path):
+    ours = {**SOURCE, "id": "botsting-authored"}
+    written = [entry(n, id=f"botsting-authored-{n}", changed="authored") for n in range(len(ENTRIES))]
+    sources, entries = load(write(tmp_path / "fine", ours, written))
+    assert sources[0].id == "botsting-authored" and {e.changed for e in entries} == {"authored"}
+    with pytest.raises(CollectionError, match="only there"):
+        load(write(tmp_path / "mixed", ours, [*written[:2], entry(2, id="botsting-authored-x", changed="verbatim")]))
+    with pytest.raises(CollectionError, match="only there"):
+        load(write(tmp_path / "passed-off", entries=[entry(0, changed="authored")]))
+
+
 def test_the_same_text_twice_is_refused_however_it_is_spaced_or_cased(tmp_path):
     again = entry(1, kind="instruction_secret", turns=["  STAND-IN one about   {hint}", "stand-in follow-up!"])
     with pytest.raises(CollectionError, match="already there as `example-set-0`"):

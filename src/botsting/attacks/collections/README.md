@@ -15,5 +15,9 @@ The texts are kept as published, apart from three kinds of change, which each at
 placeholder (`{hint}` or `{goal}`) put where the source's own request stood, shortening, and a
 source's own blanks (a user's name, a model's name) filled with that source's own default values.
 
+Texts written for BotSting itself are kept apart, in a folder whose name ends in `-authored`, under
+BotSting's own licence. Each of them is marked `authored`, so a reader can always tell what was
+reused from what was written here.
+
 `botsting/attacks/collected.py` reads these folders and refuses the whole set if any file breaks a
 rule. The rules are in that module's first lines.
