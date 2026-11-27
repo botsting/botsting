@@ -1,27 +1,27 @@
-# kritalon-harness
+# botsting-harness
 
-The Kritalon drop-in test harness, for JavaScript bots. Instead of writing a reset
+The BotSting drop-in test harness, for JavaScript bots. Instead of writing a reset
 endpoint and tool-call recorders yourself, add a few lines to the bot. It is a port of
-the Python harness (`src/kritalon/harness.py`), wire-compatible with it: the Python
+the Python harness (`src/botsting/harness.py`), wire-compatible with it: the Python
 scanner scans a Node bot through this package with **no scanner changes** — same
 environment variables, headers, paths, limits and signatures.
 
 Like the Python harness, it is for the bot's own staging or test deployment. It uses
 only the Node standard library (Node 20+, zero npm dependencies), and it is
-[Apache-2.0](../../LICENSE) like the rest of Kritalon.
+[Apache-2.0](../../LICENSE) like the rest of BotSting.
 
 ## Install
 
 Install it in the bot's project:
 
 ```
-npm install kritalon-harness
+npm install botsting-harness
 ```
 
-The package `kritalon` on npm is the same thing under the short name. The scanner that
-runs the tests is a Python command: `pip install kritalon`.
+The package `botsting` on npm is the same thing under the short name. The scanner that
+runs the tests is a Python command: `pip install botsting`.
 
-Then make a key and set it as `KRITALON_HARNESS_KEY` on the staging deployment and
+Then make a key and set it as `BOTSTING_HARNESS_KEY` on the staging deployment and
 where you run the scan (the Python CLI can make one, or use Node):
 
 ```
@@ -40,13 +40,13 @@ If your bot needs more from a tool's answer, say what the tool should return dur
 ## The three adapters
 
 Wrap the bot's entry point — the outermost thing that sees a request. Without
-`KRITALON_HARNESS_KEY` set, every request passes straight through.
+`BOTSTING_HARNESS_KEY` set, every request passes straight through.
 
 **A plain Node http server** — `wrapNode(handler)`:
 
 ```js
 import http from "node:http";
-import * as pp from "kritalon-harness";
+import * as pp from "botsting-harness";
 
 const server = http.createServer(
   pp.wrapNode((req, res) => {
@@ -58,7 +58,7 @@ const server = http.createServer(
 **Express** — `express()` middleware, installed as early as possible:
 
 ```js
-import * as pp from "kritalon-harness";
+import * as pp from "botsting-harness";
 
 app.use(pp.express());
 ```
@@ -67,7 +67,7 @@ app.use(pp.express());
 Cloudflare Workers and anything taking a `Request` and returning a `Response`:
 
 ```js
-import * as pp from "kritalon-harness";
+import * as pp from "botsting-harness";
 
 export default pp.wrapFetch(async (request) => {
   const { message } = await request.json();
@@ -85,22 +85,22 @@ const prompt = BASE_PROMPT + pp.planted("admin_code");                  // where
 const note = pp.active() ? pp.content("bob_note", note) : note;        // or text at an injection point
 ```
 
-- Nothing changes unless a request carries a Kritalon session signed with that key.
+- Nothing changes unless a request carries a BotSting session signed with that key.
   Real users, even on staging, get the bot exactly as written.
-- A request that carries a Kritalon session the bot cannot verify (no key there,
+- A request that carries a BotSting session the bot cannot verify (no key there,
   another key, expired, damaged, a doubled header) is refused with HTTP 403 and never
   reaches your code. A wrapped production deployment therefore turns test traffic away.
 - In a test session, `planted` returns that session's fake secret and `content` returns
   the text the scan placed at an injection point. Nothing is written to your database,
   so no fake users or records are needed.
 - In a test session, a function wrapped with `action` is recorded and not run. The
-  record goes back to the scan in the `Kritalon-Tool-Calls` response header, signed
+  record goes back to the scan in the `BotSting-Tool-Calls` response header, signed
   for that session and that message, so the model cannot fake it or reuse an old one.
   A callable `result` option is called as `result(arguments)` with the recorded
   arguments.
-- Before each attempt, the scan asks `/.well-known/kritalon-harness` to confirm test
+- Before each attempt, the scan asks `/.well-known/botsting-harness` to confirm test
   mode. If it does not, nothing is sent, not even the fake secrets.
-- Set `KRITALON_CHALLENGE` to the token line from `kritalon authorize` and the
+- Set `BOTSTING_CHALLENGE` to the token line from `botsting authorize` and the
   harness serves the ownership proof for you (GET only).
 
 In the target description, write `"harness": "sdk"` and leave out `reset` and
@@ -126,7 +126,7 @@ tells the scanner everything a description would say, the same way the Python ha
 does (see "Scan your own bot" in the repository README).
 
 ```js
-import * as pp from "kritalon-harness";
+import * as pp from "botsting-harness";
 
 const server = http.createServer(pp.wrapNode(handler)); // the bot's entry point
 
@@ -139,8 +139,8 @@ const prompt = BASE_PROMPT + pp.planted("staff_code"); // where a secret lives
 ```
 
 ```
-kritalon harness-key                           # set it as KRITALON_HARNESS_KEY for the bot and here
-kritalon scan http://localhost:8000/chat
+botsting harness-key                           # set it as BOTSTING_HARNESS_KEY for the bot and here
+botsting scan http://localhost:8000/chat
 ```
 
 What the harness tells the scanner, each in the same signed record as the tool calls:
@@ -171,7 +171,7 @@ README). Besides that, a first scan tests two things:
   legitimately; the report says so.
 
 A tool that some users may use is listed as "not tested yet": whether a call is
-forbidden then depends on who is asking, which only you can say. `kritalon guide`
+forbidden then depends on who is asking, which only you can say. `botsting guide`
 shows how to describe that, and how to test one user reaching another user's data.
 
 There is a runnable example, a Node twin of the Python one:
@@ -179,7 +179,7 @@ There is a runnable example, a Node twin of the Python one:
 ```
 node js/harness/examples/support-bot.mjs          # a build with a weakness
 node js/harness/examples/support-bot.mjs --fixed  # the same bot, closed
-kritalon scan http://127.0.0.1:8000/chat
+botsting scan http://127.0.0.1:8000/chat
 ```
 
 ## Live actions under caps
@@ -207,7 +207,7 @@ In a test session the function runs for real only if **all four** of these agree
 otherwise it is recorded and not run, exactly as without `live`:
 
 1. the function carries a `cap` (the limits are in the bot's own code);
-2. the deployment names the tool in the environment variable `KRITALON_LIVE_ACTIONS`
+2. the deployment names the tool in the environment variable `BOTSTING_LIVE_ACTIONS`
    (comma-separated tool names; unset means nothing ever runs for real);
 3. the scan asked for it in the signed session, which the scanner does only when the
    target description lists it under `"live_actions"` and the authorization names it

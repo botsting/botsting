@@ -11,12 +11,12 @@ from pathlib import Path
 
 import httpx
 
-import kritalon.harness as pp
-from kritalon.attacks.library import default_attacks
-from kritalon.cli import main
-from kritalon.core.runner import ScanConfig, run_scan
-from kritalon.mcp_server import TOOLS, handle
-from kritalon.targets.registry import build_target
+import botsting.harness as pp
+from botsting.attacks.library import default_attacks
+from botsting.cli import main
+from botsting.core.runner import ScanConfig, run_scan
+from botsting.mcp_server import TOOLS, handle
+from botsting.targets.registry import build_target
 
 SOURCE = Path(pp.__file__).parent
 
@@ -80,7 +80,7 @@ def test_no_assistant_tool_can_leave_an_authorization_behind(tmp_path, monkeypat
     """never-do 11, by behaviour: call every tool with the kind of arguments an assistant might try,
     and no authorization exists afterwards."""
     monkeypatch.chdir(tmp_path)
-    (tmp_path / "kritalon.targets.json").write_text(
+    (tmp_path / "botsting.targets.json").write_text(
         json.dumps({"targets": {"bot": {
             "origin": "https://staging.example.com", "harness": "sdk",
             "chat": {"path": "/chat", "body": {"message": "{message}"}, "reply_pointer": "/reply"},
@@ -90,7 +90,7 @@ def test_no_assistant_tool_can_leave_an_authorization_behind(tmp_path, monkeypat
     )  # fmt: skip
     tries = {
         "origin": "https://staging.example.com", "target": "http:bot", "by": "Dana Levi", "authorize": True,
-        "scope": "everything", "environment": "production", "name": "bot", "path": ".", "file": "kritalon.targets.json",
+        "scope": "everything", "environment": "production", "name": "bot", "path": ".", "file": "botsting.targets.json",
         "dir": "out", "offline": False, "replays": 1,
     }  # fmt: skip
     for number, name in enumerate(TOOLS):
@@ -98,7 +98,7 @@ def test_no_assistant_tool_can_leave_an_authorization_behind(tmp_path, monkeypat
         arguments = {key: value for key, value in tries.items() if key in schema}
         for extra in ({}, {"by": "Dana Levi", "authorize": True}):  # also with arguments the tool does not declare
             handle(tmp_path, {"jsonrpc": "2.0", "id": number, "method": "tools/call", "params": {"name": name, "arguments": {**arguments, **extra}}})
-    assert not (tmp_path / "kritalon.authorizations.json").exists()
+    assert not (tmp_path / "botsting.authorizations.json").exists()
     assert not list(tmp_path.rglob("*authorization*"))
 
 
@@ -106,8 +106,8 @@ def test_every_report_states_the_odds_of_a_chance_match():
     target = build_target("toy:fixed")
     report = asyncio.run(run_scan(target, default_attacks(target), ScanConfig(reproduction_trials=1)))
     assert any("matched by accident is at most about 4 in a thousand million" in item for item in report.limitations)
-    from kritalon.report_html import render_html
-    from kritalon.report_markdown import render_markdown
+    from botsting.report_html import render_html
+    from botsting.report_markdown import render_markdown
 
     assert "by accident" in render_html(report) and "by accident" in render_markdown(report)
 
@@ -116,7 +116,7 @@ def test_the_egress_trap_runs_as_a_command_and_closes_its_log(tmp_path, monkeypa
     """The documents describe a trap a user can run. This is that command."""
     import time
 
-    from kritalon.egress_trap import check_chain
+    from botsting.egress_trap import check_chain
 
     stop = threading.Event()
     started = threading.Event()
@@ -146,7 +146,7 @@ def test_the_egress_trap_runs_as_a_command_and_closes_its_log(tmp_path, monkeypa
 
 def test_every_report_says_that_an_accepted_call_is_not_proof_of_harm():
     """A reader must not take "accepted" for "the refund happened", nor a zero for "impossible"."""
-    from kritalon.core.scan import LIMITATIONS
+    from botsting.core.scan import LIMITATIONS
 
     first = LIMITATIONS[0]
     assert "attempted and refused by the tool (level 2), or accepted by it (level 3)" in first

@@ -6,7 +6,7 @@ import { test } from "node:test";
 import * as pp from "../index.js";
 
 const KEY = "k".repeat(40);
-const DOMAIN = Buffer.from("kritalon-session/1\n");
+const DOMAIN = Buffer.from("botsting-session/1\n");
 
 // Set the key only while one of these tests runs: the suites share a process on newer Node.
 function open(token) {
@@ -90,7 +90,7 @@ test("text that looks like a number is still text", () => {
 function signedRecord(record) {
   const json = typeof record === "string" ? record : JSON.stringify(record);
   const payload = Buffer.from(json).toString("base64url");
-  return payload + "." + pp.mac(KEY, "kritalon-calls/1\n", ["s1", "n1", payload]);
+  return payload + "." + pp.mac(KEY, "botsting-calls/1\n", ["s1", "n1", payload]);
 }
 
 test("a signed record can include name lists or omit them", () => {

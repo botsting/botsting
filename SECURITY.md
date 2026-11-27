@@ -1,8 +1,8 @@
 # Security policy
 
-Kritalon sends hostile messages to bots and handles evidence about their weaknesses, so problems in Kritalon itself matter.
+BotSting sends hostile messages to bots and handles evidence about their weaknesses, so problems in BotSting itself matter.
 
-## Reporting a problem in Kritalon
+## Reporting a problem in BotSting
 
 Use GitHub's private vulnerability reporting on this repository ("Security" tab, "Report a vulnerability"). Please do not open a public issue for a security problem.
 
@@ -12,7 +12,7 @@ We aim to acknowledge a report within 3 working days and to tell you what we wil
 
 ## What counts
 
-- A way to make Kritalon send anything to a target without a valid authorization, or to an address other than the one authorized.
+- A way to make BotSting send anything to a target without a valid authorization, or to an address other than the one authorized.
 - A way for a test message to be handled as an ordinary request by a bot that carries the drop-in harness.
 - A way for a marked tool to run for real outside its caps, or without every switch described in the README.
 - A reported finding that the evidence does not support, or a leak that the matcher misses in a form the documentation says it catches.
@@ -25,6 +25,6 @@ We aim to acknowledge a report within 3 working days and to tell you what we wil
 - The built-in practice bots are vulnerable on purpose.
 - That open-source checks can be removed by editing the code. They are on by default; they cannot bind someone who rewrites them.
 
-## Using Kritalon on systems you do not own
+## Using BotSting on systems you do not own
 
-Do not. Kritalon asks for a named person's authorization and proof of control of the address because testing someone else's system without permission is, in most places, against the law. See `docs/never-do.md`.
+Do not. BotSting asks for a named person's authorization and proof of control of the address because testing someone else's system without permission is, in most places, against the law. See `docs/never-do.md`.

@@ -6,9 +6,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from kritalon import sterility
-from kritalon.cli import main
-from kritalon.sterility import EnvFileError, check, read_env_file
+from botsting import sterility
+from botsting.cli import main
+from botsting.sterility import EnvFileError, check, read_env_file
 
 FAKE = "made-up-" + "violet-quasar-" + "57"
 

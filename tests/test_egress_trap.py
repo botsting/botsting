@@ -5,7 +5,7 @@ import json
 import httpx
 import pytest
 
-from kritalon.egress_trap import EgressTrap
+from botsting.egress_trap import EgressTrap
 
 
 def test_requests_through_the_trap_are_refused_and_recorded(tmp_path):
@@ -86,7 +86,7 @@ def test_allow_entries_must_name_host_and_port(tmp_path):
 
 
 def a_finished_log(tmp_path):
-    from kritalon.egress_trap import check_chain
+    from botsting.egress_trap import check_chain
 
     trap = EgressTrap(tmp_path / "egress.jsonl", allow=("api.example.invalid:443",))
     proxy = f"http://127.0.0.1:{trap.port}"
@@ -132,8 +132,8 @@ def test_a_log_cut_short_is_not_closed(tmp_path):
 
 
 def test_a_seal_reports_the_state_of_the_chain(tmp_path, capsys):
-    from kritalon.cli import main
-    from kritalon.seal import check, seal
+    from botsting.cli import main
+    from botsting.seal import check, seal
 
     run = tmp_path / "run"
     run.mkdir()
@@ -163,7 +163,7 @@ def test_the_chain_catches_a_partial_edit_not_a_full_rewrite(tmp_path):
     """Pinned on purpose. The hashes use no secret, so a log rewritten in full with every hash
     recomputed checks. The seal shared when the run ended is what rules that out. If the chain is
     ever keyed, this test should change with it."""
-    from kritalon.egress_trap import CHAIN_START, chain_hash
+    from botsting.egress_trap import CHAIN_START, chain_hash
 
     lines, check_chain = a_finished_log(tmp_path)
     forged, previous = [], CHAIN_START

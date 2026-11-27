@@ -5,16 +5,16 @@ import re
 
 import pytest
 
-from kritalon.attacks.library import default_attacks
-from kritalon.console import (
+from botsting.attacks.library import default_attacks
+from botsting.console import (
     NO_VERIFIED_HEADLINE,
     _one_line,
     next_steps,
     render,
     use_colour,
 )
-from kritalon.core.runner import ScanConfig, run_scan
-from kritalon.targets.registry import build_target
+from botsting.core.runner import ScanConfig, run_scan
+from botsting.targets.registry import build_target
 
 
 @pytest.fixture(scope="module")
@@ -60,7 +60,7 @@ def test_a_clean_result_makes_no_claim_of_safety(reports):
 
 def test_no_line_is_wider_than_a_terminal_and_everything_is_plain_ascii(reports):
     for report in reports:
-        text = render(report) + "\n" + next_steps(report, [("Report (JSON)", "reports/scan.json")], "kritalon replay x --finding F1")
+        text = render(report) + "\n" + next_steps(report, [("Report (JSON)", "reports/scan.json")], "botsting replay x --finding F1")
         assert text.isascii()  # a Windows console in an old code page prints anything else as a box
         assert max(len(line) for line in text.splitlines()) <= 150
 
@@ -89,8 +89,8 @@ def test_a_long_answer_keeps_the_part_where_the_secret_came_out():
 
 
 def test_next_steps_names_one_replay_command_not_one_per_finding(reports):
-    text = next_steps(reports[0], [("Report (JSON)", "scan.json")], "kritalon replay scan.json --finding F1")
-    assert text.count("kritalon replay") == 1 and "(any id from F1 to F14)" in text
+    text = next_steps(reports[0], [("Report (JSON)", "scan.json")], "botsting replay scan.json --finding F1")
+    assert text.count("botsting replay") == 1 and "(any id from F1 to F14)" in text
     assert "Replay" not in next_steps(reports[1], [("Report (JSON)", "scan.json")])
 
 
@@ -121,7 +121,7 @@ def test_errors_are_shown_where_the_person_is_looking(reports):
     """An error message usually says what to change. The terminal shows each different one once."""
     import dataclasses
 
-    from kritalon.core.models import ErrorRecord
+    from botsting.core.models import ErrorRecord
 
     hint = '/chat answered HTTP 500. Say what it should return with result=, for example @pp.action("issue_refund", result="Refunded.")'
     errors = (

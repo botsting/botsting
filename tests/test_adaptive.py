@@ -9,17 +9,17 @@ from collections.abc import Mapping, Sequence
 
 import pytest
 
-from kritalon.attacks.adaptive import LLMAdaptiveStrategy, ScriptedAttackerModel
-from kritalon.attacks.library import default_attacks
-from kritalon.attacks.strategy import Objective, ProbeChannel, SearchResult
-from kritalon.cli import EXIT_NO_VERIFIED, EXIT_VIOLATIONS, main
-from kritalon.core.models import EvidenceLevel, ScanReport, Slot, TaskCheck
-from kritalon.core.runner import ScanConfig, run_scan, run_to_completion
-from kritalon.llm.base import ChatMessage, ModelError
-from kritalon.report_html import render_html
-from kritalon.report_markdown import render_markdown
-from kritalon.targets.base import UnsafeTargetError
-from kritalon.targets.registry import build_target
+from botsting.attacks.adaptive import LLMAdaptiveStrategy, ScriptedAttackerModel
+from botsting.attacks.library import default_attacks
+from botsting.attacks.strategy import Objective, ProbeChannel, SearchResult
+from botsting.cli import EXIT_NO_VERIFIED, EXIT_VIOLATIONS, main
+from botsting.core.models import EvidenceLevel, ScanReport, Slot, TaskCheck
+from botsting.core.runner import ScanConfig, run_scan, run_to_completion
+from botsting.llm.base import ChatMessage, ModelError
+from botsting.report_html import render_html
+from botsting.report_markdown import render_markdown
+from botsting.targets.base import UnsafeTargetError
+from botsting.targets.registry import build_target
 
 
 def _strategy() -> LLMAdaptiveStrategy:

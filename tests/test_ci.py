@@ -1,9 +1,9 @@
-"""`kritalon ci`: one command for a build pipeline. Uses the built-in practice bots only."""
+"""`botsting ci`: one command for a build pipeline. Uses the built-in practice bots only."""
 
 import pytest
 
-from kritalon.cli import main
-from kritalon.seal import check
+from botsting.cli import main
+from botsting.seal import check
 
 
 @pytest.fixture
@@ -23,12 +23,12 @@ def test_a_vulnerable_bot_fails_the_build_and_leaves_sealed_evidence(pipeline):
     assert main(["ci", "--target", "toy:vulnerable", "--replays", "1"]) == 1
     out = outputs(pipeline)
     assert out["status"] == "violations_verified" and int(out["findings"]) > 0
-    for name in ("scan.kritalon.json", "report.md", "report.html"):
-        assert (pipeline / "kritalon-report" / name).exists()
+    for name in ("scan.botsting.json", "report.md", "report.html"):
+        assert (pipeline / "botsting-report" / name).exists()
     manifest = check(pipeline / out["bundle"], out["seal"])
     assert len(manifest["files"]) == 3
     summary = (pipeline / "summary.md").read_text(encoding="utf-8")
-    assert summary.startswith("## Kritalon: ") and "proven finding(s)" in summary and out["seal"] in summary
+    assert summary.startswith("## BotSting: ") and "proven finding(s)" in summary and out["seal"] in summary
 
 
 def test_a_fixed_bot_passes(pipeline):
@@ -53,7 +53,7 @@ def test_a_scan_that_could_not_run_never_looks_green(pipeline, capsys):
 
 
 def test_an_inconclusive_scan_is_said_to_be_not_clean(pipeline, capsys, monkeypatch):
-    from kritalon import cli
+    from botsting import cli
 
     real = cli.run_scan_command
 
@@ -68,8 +68,8 @@ def test_an_inconclusive_scan_is_said_to_be_not_clean(pipeline, capsys, monkeypa
 
 
 def test_old_evidence_is_never_mixed_in(pipeline, capsys):
-    (pipeline / "kritalon-report").mkdir()
-    (pipeline / "kritalon-report" / "old.md").write_text("an earlier run", encoding="utf-8")
+    (pipeline / "botsting-report").mkdir()
+    (pipeline / "botsting-report" / "old.md").write_text("an earlier run", encoding="utf-8")
     assert main(["ci", "--target", "toy:fixed"]) == 2
     assert "not empty" in capsys.readouterr().err
 
@@ -79,7 +79,7 @@ def test_it_works_outside_github(tmp_path, monkeypatch):
     monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
     monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
     assert main(["ci", "--target", "toy:fixed", "--replays", "1"]) == 0
-    assert (tmp_path / "kritalon-report.sealed.zip").exists()
+    assert (tmp_path / "botsting-report.sealed.zip").exists()
 
 
 def test_a_dir_that_is_a_file_is_a_plain_error(pipeline, capsys):
@@ -89,7 +89,7 @@ def test_a_dir_that_is_a_file_is_a_plain_error(pipeline, capsys):
 
 
 def test_evidence_that_cannot_be_sealed_fails_the_build(pipeline, monkeypatch, capsys):
-    import kritalon.ci as ci
+    import botsting.ci as ci
 
     def broken(run_dir, out):
         raise ci.SealError("the disk is full")

@@ -23,15 +23,15 @@ from test_actions import (  # noqa: F401  (fixtures are used by name)
     vulnerable_report,
 )
 
-from kritalon.cli import EXIT_INCONCLUSIVE, main
-from kritalon.core.models import EvidenceLevel, Reply, ScanReport
-from kritalon.core.runner import ScanConfig, replay_finding, run_attempt, run_scan, run_to_completion
-from kritalon.llm.base import ChatMessage
-from kritalon.llm.scripted import ScriptedModel
-from kritalon.report_markdown import render_markdown
-from kritalon.targets.base import UnsafeTargetError
-from kritalon.targets.registry import build_target
-from kritalon.targets.toy import ToyTarget
+from botsting.cli import EXIT_INCONCLUSIVE, main
+from botsting.core.models import EvidenceLevel, Reply, ScanReport
+from botsting.core.runner import ScanConfig, replay_finding, run_attempt, run_scan, run_to_completion
+from botsting.llm.base import ChatMessage
+from botsting.llm.scripted import ScriptedModel
+from botsting.report_markdown import render_markdown
+from botsting.targets.base import UnsafeTargetError
+from botsting.targets.registry import build_target
+from botsting.targets.toy import ToyTarget
 
 # -- 1. the fixed build must accept only a refund a staff member actually ordered -----------
 
@@ -150,7 +150,7 @@ def test_replay_that_sees_the_tool_fire_with_harmless_text_is_unattributable(tmp
     assert "cannot be attributed" in result.unattributable
 
     # And the command line must not report that as a reproduced violation.
-    import kritalon.cli as cli
+    import botsting.cli as cli
 
     out = tmp_path / "scan.json"
     out.write_text(json.dumps(report.to_dict()), encoding="utf-8")
@@ -178,7 +178,7 @@ def control_breaks_after_preflight(harmless_reply) -> Responder:
 
 
 def _control_errors():
-    from kritalon.targets.base import TargetError
+    from botsting.targets.base import TargetError
 
     raise TargetError("control unavailable")
 
@@ -198,7 +198,7 @@ def test_a_control_that_fails_is_a_comparison_that_was_not_made(harmless_reply, 
     assert result.rate.successes == 2
     assert "not completed" in result.unattributable and result.problems
 
-    import kritalon.cli as cli
+    import botsting.cli as cli
 
     out = tmp_path / "scan.json"
     out.write_text(json.dumps(honest_report().to_dict()), encoding="utf-8")
@@ -228,7 +228,7 @@ def test_cancel_is_noticed_while_the_target_is_still_answering():
 
 
 def test_nothing_is_started_once_the_scan_is_cancelled():
-    from kritalon.core.runner import Meter
+    from botsting.core.runner import Meter
 
     resets = {"n": 0}
 

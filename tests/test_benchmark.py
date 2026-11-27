@@ -5,11 +5,11 @@ from __future__ import annotations
 import asyncio
 import json
 
-from kritalon.attacks.adaptive import LLMAdaptiveStrategy, ScriptedAttackerModel
-from kritalon.attacks.strategy import Objective, ProbeChannel, SearchResult
-from kritalon.cli import EXIT_NO_VERIFIED, main
-from kritalon.core.benchmark import DEFAULT_MARGIN, compare_strategies, render_benchmark_markdown
-from kritalon.targets.registry import build_target
+from botsting.attacks.adaptive import LLMAdaptiveStrategy, ScriptedAttackerModel
+from botsting.attacks.strategy import Objective, ProbeChannel, SearchResult
+from botsting.cli import EXIT_NO_VERIFIED, main
+from botsting.core.benchmark import DEFAULT_MARGIN, compare_strategies, render_benchmark_markdown
+from botsting.targets.registry import build_target
 
 
 def test_adaptive_beats_static_on_held_out_hardened_targets_at_equal_budget():

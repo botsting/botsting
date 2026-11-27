@@ -1,4 +1,4 @@
-"""`kritalon mcp`: what a coding assistant can and cannot do through it."""
+"""`botsting mcp`: what a coding assistant can and cannot do through it."""
 
 import io
 import json
@@ -8,9 +8,9 @@ from datetime import UTC, datetime
 
 import pytest
 
-from kritalon.cli import main
-from kritalon.core.authorization import AuthorizationStore, new_authorization
-from kritalon.mcp_server import GUIDE, TOOLS, handle, serve
+from botsting.cli import main
+from botsting.core.authorization import AuthorizationStore, new_authorization
+from botsting.mcp_server import GUIDE, TOOLS, handle, serve
 
 
 @pytest.fixture
@@ -53,7 +53,7 @@ def test_there_is_no_tool_that_authorizes():
     assert not any("authorize" in name and name != "authorization_status" for name in TOOLS)
     from pathlib import Path
 
-    import kritalon.mcp_server as server
+    import botsting.mcp_server as server
 
     text = Path(server.__file__).read_text(encoding="utf-8")
     assert "new_authorization" not in text and ".add(" not in text and "mark_verified" not in text
@@ -71,13 +71,13 @@ def test_one_message_per_line_and_nothing_else_on_the_channel(project):
     replies = [json.loads(line) for line in out.getvalue().splitlines()]  # every line is one JSON message
     assert [r.get("id") for r in replies] == [1, None, 2] and replies[1]["error"]["code"] == -32700
     text = replies[2]["result"]["content"][0]["text"]
-    assert "no verified violations" in text.lower() and "Reports are in kritalon-report/" in text
+    assert "no verified violations" in text.lower() and "Reports are in botsting-report/" in text
 
 
 def test_it_runs_as_a_real_process(project):
     request = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "setup_guide", "arguments": {}}})
     done = subprocess.run(
-        [sys.executable, "-m", "kritalon.cli", "mcp"], check=True, input=request + "\n", capture_output=True, text=True,
+        [sys.executable, "-m", "botsting.cli", "mcp"], check=True, input=request + "\n", capture_output=True, text=True,
         encoding="utf-8", timeout=60, cwd=project,
     )  # fmt: skip
     (line,) = done.stdout.splitlines()
@@ -98,7 +98,7 @@ def test_scanning_the_practice_bot_and_reading_the_report(project):
 
 
 def test_a_real_target_is_refused_without_a_persons_authorization(project):
-    (project / "kritalon.targets.json").write_text(json.dumps({"targets": {"staging": DESCRIPTION}}), encoding="utf-8")
+    (project / "botsting.targets.json").write_text(json.dumps({"targets": {"staging": DESCRIPTION}}), encoding="utf-8")
     text, failed = call(project, "scan", target="http:staging", replays=1, dir="first")
     assert failed and "no authorization" in text.lower() and "NOT RUN" in text and "Reports are in" not in text
     status, failed = call(project, "authorization_status", origin="https://staging.example.com")
@@ -122,7 +122,7 @@ def test_authorization_status_reads_what_a_person_recorded(project):
         ("read_report", {"path": "C:/Windows/win.ini"}),
         ("read_report", {"path": "/etc/passwd"}),
         ("find_tools", {"path": ".."}),
-        ("check_description", {"file": "../kritalon.targets.json"}),
+        ("check_description", {"file": "../botsting.targets.json"}),
         ("scan", {"target": "toy:fixed", "dir": "../elsewhere"}),
     ],
 )
@@ -146,7 +146,7 @@ def test_find_tools_lists_candidates_and_skips_marked_ones(project):
     (project / "app").mkdir()
     (project / "app" / "tools.py").write_text(
         """
-import kritalon.harness as pp
+import botsting.harness as pp
 from agents import function_tool
 
 @pp.action("issue_refund")
@@ -191,7 +191,7 @@ def test_check_description_says_what_is_wrong(project):
         "bad": {**DESCRIPTION, "origin": "staging.example.com"},
         "leaky": written_out,
     }
-    (project / "kritalon.targets.json").write_text(json.dumps({"targets": targets}), encoding="utf-8")
+    (project / "botsting.targets.json").write_text(json.dumps({"targets": targets}), encoding="utf-8")
     text, failed = call(project, "check_description")
     assert not failed
     assert "bad: PROBLEM:" in text and "good: OK." in text
@@ -205,12 +205,12 @@ def test_the_guide_matches_the_code(project, capsys):
     """Every command and option the guide tells an assistant to use must exist."""
     assert main(["guide"]) == 0 and capsys.readouterr().out.strip() == GUIDE.strip()
     example = GUIDE.split("```json")[1].split("```")[0]
-    from kritalon.targets.http import parse_config
+    from botsting.targets.http import parse_config
 
     (name, raw), = json.loads(example)["targets"].items()
     config = parse_config(name, raw)
     assert config.harness == "sdk" and len(config.slots) == 2 and config.slots[1].canary_style == "name"
-    import kritalon.harness as pp
+    import botsting.harness as pp
 
     for used in ("wrap", "action", "planted"):
         assert f"pp.{used}" in GUIDE and hasattr(pp, used)
@@ -232,7 +232,7 @@ def test_find_tools_does_not_follow_a_link_out_of_the_project(tmp_path):
 
 
 def test_read_report_refuses_a_huge_file(project):
-    from kritalon import mcp_server
+    from botsting import mcp_server
 
     big = project / "huge.md"
     big.write_bytes(b"x" * (mcp_server._MAX_REPORT_BYTES + 1))
@@ -251,11 +251,11 @@ def example_bot(project, monkeypatch):
     from pathlib import Path
     from wsgiref.simple_server import make_server
 
-    import kritalon.harness as pp
-    from kritalon.core import authorization as auth
+    import botsting.harness as pp
+    from botsting.core import authorization as auth
 
     monkeypatch.setenv(pp.KEY_ENV, "k" * 40)
-    monkeypatch.setenv("KRITALON_TARGETS_FILE", str(project / "kritalon.targets.json"))
+    monkeypatch.setenv("BOTSTING_TARGETS_FILE", str(project / "botsting.targets.json"))
     monkeypatch.setattr(pp, "_marked_tools", {})
     monkeypatch.setattr(pp, "_read_outside", set())
     auth.forget_checks()
@@ -282,7 +282,7 @@ def test_first_scan_sends_nothing_and_authorizes_nothing_by_itself(example_bot, 
     machine. An assistant is not that person: through this server the same scan is refused."""
     url, origin, seen = example_bot
     text, failed = call(project, "first_scan", url=url)
-    assert failed and "no one has authorized" in text and f"kritalon authorize {origin}" in text
+    assert failed and "no one has authorized" in text and f"botsting authorize {origin}" in text
     assert seen == [] and AuthorizationStore().find(origin) is None
 
 
@@ -295,10 +295,10 @@ def test_first_scan_works_the_bot_out_and_scans_it_once_a_person_has_authorized(
     assert not failed, text
     assert "Secrets it reads on an ordinary message: staff_code." in text
     assert "Saved what was worked out as target http:quick-127-0-0-1-" in text
-    assert "verified violation" in text and "Reports are in kritalon-report/" in text
+    assert "verified violation" in text and "Reports are in botsting-report/" in text
     report, failed = call(project, "read_report")
     assert not failed and "verified violations found" in report
-    saved = json.loads((project / "kritalon.targets.json").read_text(encoding="utf-8"))["targets"]
+    saved = json.loads((project / "botsting.targets.json").read_text(encoding="utf-8"))["targets"]
     (name,) = saved
     assert saved[name]["harness"] == "sdk" and [rule["tool"] for rule in saved[name]["tool_rules"]] == ["issue_refund"]
 

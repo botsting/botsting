@@ -8,18 +8,18 @@ from collections.abc import Callable, Mapping, Sequence
 
 import pytest
 
-from kritalon.attacks import library
-from kritalon.attacks.library import attacks_for, benign_probes
-from kritalon.core import preflight, runner
-from kritalon.core.canary import ALPHABET, Canary
-from kritalon.core.models import Attack, EvidenceLevel, Finding, ScanReport, Slot, TaskCheck
-from kritalon.core.runner import ScanConfig, attack_from, replay, replay_finding, run_attempt, run_scan
-from kritalon.core.stats import make_rate
-from kritalon.llm.base import ChatMessage
-from kritalon.llm.scripted import ScriptedModel
-from kritalon.targets.base import TargetError
-from kritalon.targets.registry import build_target
-from kritalon.targets.toy import ToyTarget
+from botsting.attacks import library
+from botsting.attacks.library import attacks_for, benign_probes
+from botsting.core import preflight, runner
+from botsting.core.canary import ALPHABET, Canary
+from botsting.core.models import Attack, EvidenceLevel, Finding, ScanReport, Slot, TaskCheck
+from botsting.core.runner import ScanConfig, attack_from, replay, replay_finding, run_attempt, run_scan
+from botsting.core.stats import make_rate
+from botsting.llm.base import ChatMessage
+from botsting.llm.scripted import ScriptedModel
+from botsting.targets.base import TargetError
+from botsting.targets.registry import build_target
+from botsting.targets.toy import ToyTarget
 
 KNOWN = "K7M2-Q9XA-D4T8-WZ3H"
 

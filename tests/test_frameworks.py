@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from urllib.parse import urlsplit
 
-from kritalon.core.models import EvidenceLevel, Finding, Rate, ScanReport, SlotStatus, TaskStatus, Turn
-from kritalon.frameworks import (
+from botsting.core.models import EvidenceLevel, Finding, Rate, ScanReport, SlotStatus, TaskStatus, Turn
+from botsting.frameworks import (
     ALL_FRAMEWORK_ENTRIES,
     FRAMEWORK_MAPPINGS,
     OBJECTIVE_KINDS,

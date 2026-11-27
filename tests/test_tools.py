@@ -48,3 +48,11 @@ def test_a_name_that_cannot_be_a_package_or_is_the_current_one_is_refused(rename
         name = rename.OLD.capitalize() if name[0].isupper() else rename.OLD
     assert rename.main([name]) == 2
     assert "error:" in capsys.readouterr().out
+
+
+def test_a_name_written_with_capitals_inside_it_is_found_whatever_its_case(rename):
+    """BotSting is written three ways in the tree. Each keeps its kind of case under a new name."""
+    now = rename.OLD
+    sample = f"{now} {now.upper()}_KEY {now.capitalize()} {now[:3].capitalize()}{now[3:].capitalize()}-Session"
+    assert rename.renamed(sample, "NewName") == "newname NEWNAME_KEY NewName NewName-Session"
+

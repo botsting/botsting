@@ -1,6 +1,6 @@
 import pytest
 
-from kritalon.core.stats import make_rate, wilson_interval
+from botsting.core.stats import make_rate, wilson_interval
 
 
 def test_wilson_known_values():
