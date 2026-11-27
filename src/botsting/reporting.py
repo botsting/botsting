@@ -49,6 +49,7 @@ def write_reports(
     markdown: Path | None = None,
     html: Path | None = None,
     sarif: Path | None = None,
+    statement: Path | None = None,
 ) -> list[tuple[str, str]]:
     """Write the JSON report, and the readable, browser and SARIF reports when paths are given.
 
@@ -56,8 +57,15 @@ def write_reports(
     relative one is wrong as soon as the reader is in another folder.
     """
     # Read the report this one replaces first: it is what "since the last scan" is measured against.
-    write_file(out, json.dumps(with_ratings(report, earlier_report(out)), indent=2))
+    previous = earlier_report(out)
+    write_file(out, json.dumps(with_ratings(report, previous), indent=2))
     paths = [("Report (JSON)", str(out.resolve()))]
+    if statement is not None:
+        from botsting.statement import fingerprint, render_statement
+
+        # The statement carries the fingerprint of the report file exactly as it was just written.
+        write_file(statement, render_statement(report, fingerprint(out.read_bytes())))
+        paths.append(("Scan statement (one page, to show someone)", str(statement.resolve())))
     if sarif is not None:
         from botsting import ratings
 
@@ -66,12 +74,12 @@ def write_reports(
     if markdown is not None:
         from botsting.report_markdown import render_markdown
 
-        write_file(markdown, render_markdown(report, str(out)))
+        write_file(markdown, render_markdown(report, str(out), previous))
         paths.append(("Readable report", str(markdown.resolve())))
     if html is not None:
         from botsting.report_html import render_html
 
-        write_file(html, render_html(report, str(out)))
+        write_file(html, render_html(report, str(out), previous))
         paths.insert(0, ("Report to open in a browser", str(html.resolve())))
     return paths
 

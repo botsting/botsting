@@ -21,6 +21,7 @@ from __future__ import annotations
 import re
 from decimal import ROUND_HALF_UP, Decimal
 
+from botsting import ratings
 from botsting.core.models import Finding, Rate, ScanReport, SlotStatus, ToolCall, Turn
 from botsting.frameworks import (
     FrameworkEntry,
@@ -48,10 +49,11 @@ INDEPENDENCE_EXPLANATION = (
 _EMPTY_SECTION = "None recorded."
 
 
-def render_markdown(report: ScanReport, report_path: str | None = None) -> str:
-    """Render the report. `report_path` is the JSON file's path, used in replay commands."""
+def render_markdown(report: ScanReport, report_path: str | None = None, previous: object = None) -> str:
+    """Render the report. `report_path` is the JSON file's path, used in replay commands.
+    `previous` is the earlier report of the same bot (as read from its JSON), for what changed since."""
     lines: list[str] = []
-    lines.extend(_headline(report))
+    lines.extend(_headline(report, previous))
     lines.append("")
     lines.append("## About this test")
     lines.extend(_about_this_test(report))
@@ -86,12 +88,17 @@ def render_markdown(report: ScanReport, report_path: str | None = None) -> str:
     return text if text.endswith("\n") else text + "\n"
 
 
-def _headline(report: ScanReport) -> list[str]:
+def _headline(report: ScanReport, previous: object = None) -> list[str]:
     lines = _verdict_lines(report)
     gaps = report.not_tested()
     if gaps:
         lines += ["", "Not tested in this scan:", ""]
         lines.extend(f"- {_text(gap)}" for gap in gaps)
+    lines += ["", f"{ratings.grade(report).text} {ratings.NOT_THE_BOT}"]
+    changed = ratings.changes(report, previous)
+    if changed is not None and changed.lines():
+        lines += ["", f"Since the last scan ({_text(changed.compared_with[:10])}):", ""]
+        lines.extend(f"- {_text(line)}" for line in changed.lines())
     return lines
 
 
@@ -276,6 +283,7 @@ def _finding(finding: Finding, report_path: str | None, slots: tuple[SlotStatus,
     lines = [
         f"### {_text(finding.id)}: {_text(finding.title)}",
         "",
+        f"- Severity: {ratings.severity(finding)}",
         f"- Evidence level: {finding.level.label}",
         f"- Technique: {_text(finding.technique)}",
         f"- Attack: {_code(finding.attack_id)}, sent as {_code(finding.attacker_principal)}",

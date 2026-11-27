@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from html import escape
 
+from botsting import ratings
 from botsting.console import advice
 from botsting.core.models import EvidenceLevel, Finding, Rate, ScanReport, SlotStatus, ToolCall, Turn
 from botsting.frameworks import (
@@ -124,6 +125,9 @@ details .card { border-top:0; padding-top:.4rem; grid-template-columns:minmax(0,
 details .card > *, details .card > .num { grid-column:1; grid-row:auto; }
 details .card > .num, details .card > h3 { display:none; }
 
+/* The grade and what changed since the scan before, under the verdict. */
+p.grade { margin:1rem 0 0; } p.grade span { font-family:var(--display); font-weight:700; }
+p.since { font-family:var(--display); font-weight:700; margin:1rem 0 0; } ul.since { margin-top:.2rem; }
 /* What the scan never tried, beside the verdict. */
 p.untested { font-family:var(--display); font-weight:700; color:var(--unsure); margin:1rem 0 0; }
 ul.untested { margin-top:.2rem; }
@@ -154,7 +158,7 @@ def _principals(principals: tuple[str, ...]) -> str:
     return ", ".join(_code(p) for p in principals) if principals else "none listed"
 
 
-def _verdict(report: ScanReport) -> list[str]:
+def _verdict(report: ScanReport, previous: object = None) -> list[str]:
     if report.status == "violations_verified":
         count = len(report.findings)
         kind, headline = "bad", f"{count} verified violation{'' if count == 1 else 's'} found."
@@ -177,9 +181,27 @@ def _verdict(report: ScanReport) -> list[str]:
         lines.append('<p class="untested">Not tested in this scan:</p><ul class="untested">')
         lines += [f"<li>{_e(gap)}</li>" for gap in gaps]
         lines.append("</ul>")
+    result = ratings.grade(report)
+    lines.append(f'<p class="grade"><span>{_e(result.text)}</span> {_e(ratings.NOT_THE_BOT)}</p>')
+    changed = ratings.changes(report, previous)
+    if changed is not None and changed.lines():
+        lines.append(f'<p class="since">Since the last scan ({_e(changed.compared_with[:10])}):</p><ul class="since">')
+        if changed.new:
+            lines.append(f"<li>New: {_e(', '.join(changed.new))}</li>")
+        if changed.still_there:
+            lines.append(f"<li>Still there: {_e(', '.join(changed.still_there))}</li>")
+        if changed.no_longer_found:
+            lines.append(
+                f"<li>Tested for again and not found: {_e('; '.join(changed.no_longer_found))}. "
+                "A problem is closed when its replay stops working, not when one scan misses it.</li>"
+            )
+        if changed.not_retested:
+            lines.append(f"<li>Found last time and not tested this time: {_e('; '.join(changed.not_retested))}</li>")
+        lines.append("</ul>")
     who = report.authorization.get("authorized_by", "") if report.authorization else ""
     facts = [
         ("Target", _e(report.target)),
+        ("Grade", _e(result.letter or "not graded")),
         ("Tested", _e(str(report.started_at)[:10])),
         ("Attacks", f"{_e(report.attacks_run)}, in {_e(report.messages_sent)} messages"),
     ]
@@ -418,7 +440,7 @@ def _finding(finding: Finding, report_path: str | None, slots: tuple[SlotStatus,
     lines = [
         '<article class="card">',
         f'<span class="num">{_e(finding.id)}</span>',
-        f'<span class="tag {"unsure" if refused else "bad"}">{_e(finding.level.label)}</span>',
+        f'<span class="tag {"unsure" if refused else "bad"}">{_e(ratings.severity(finding).capitalize())}: {_e(finding.level.label)}</span>',
         f"<h3>{_e(finding.title)}</h3>",
         f'<p class="what">{what} It worked again in {_e(rate.successes)} of {_e(rate.trials)} replays from a fresh start.</p>',
     ]
@@ -563,11 +585,12 @@ def _rest(report: ScanReport) -> list[str]:
     return lines
 
 
-def render_html(report: ScanReport, report_path: str | None = None) -> str:
-    """The report as one HTML document. `report_path` is the JSON file's path, used in replay commands."""
+def render_html(report: ScanReport, report_path: str | None = None, previous: object = None) -> str:
+    """The report as one HTML document. `report_path` is the JSON file's path, used in replay commands.
+    `previous` is the earlier report of the same bot (as read from its JSON), for what changed since."""
     body: list[str] = ["<h1>BotSting scan report</h1>"]
     # A reader wants the verdict, then what was reached and how, then how far to trust it.
-    body += _verdict(report)
+    body += _verdict(report, previous)
     body += _reached(report)
     body += _findings(report, report_path)
     body += _suspected(report)

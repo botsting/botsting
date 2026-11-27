@@ -123,6 +123,7 @@ def run_scan_command(args: argparse.Namespace) -> int:
         Path(args.markdown) if args.markdown else None,
         Path(args.html) if args.html else None,
         Path(args.sarif) if getattr(args, "sarif", None) else None,
+        Path(args.statement) if getattr(args, "statement", None) else None,
     )
     if args.html:
         open_for_a_person(Path(args.html), getattr(args, "no_open", False))
@@ -348,6 +349,7 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--markdown", help="also write a readable report to this path")
     scan.add_argument("--html", help="also write a self-contained report to open in a browser or print")
     scan.add_argument("--sarif", help="also write the findings as SARIF 2.1.0, for a code-scanning dashboard")
+    scan.add_argument("--statement", help="also write a one-page statement of the scan, to show to someone else")
     scan.add_argument("--no-open", action="store_true", help="do not open the browser report when the scan ends")
     scan.set_defaults(handler=_scan_or_first_scan)
 
@@ -407,6 +409,10 @@ def build_parser() -> argparse.ArgumentParser:
     from botsting.conclusion import register as register_conclusion
 
     register_conclusion(commands)
+
+    from botsting.statement import register as register_statement
+
+    register_statement(commands)
 
     from botsting.demo import register as register_demo
 
