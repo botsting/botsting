@@ -86,11 +86,11 @@ def test_an_inconclusive_scan_is_never_graded(report):
         assert result.letter == "" and result.text.startswith("Not graded: the scan was inconclusive")
 
 
-def test_a_grade_always_says_it_is_about_the_scan_and_never_says_safe(report):
+def test_a_grade_always_says_it_is_about_the_scan_and_never_uses_the_word_safe(report):
     for case in (report, clean(report), at_level(report, EvidenceLevel.ACTION_ATTEMPTED)):
         written = ratings.grade(case).to_dict()
-        assert written["note"] == ratings.NOT_THE_BOT and "not a statement that the bot is safe" in written["note"]
-        assert "safe" not in written["reason"] and "secure" not in written["reason"]
+        assert written["note"] == ratings.NOT_THE_BOT and "not a statement that the bot is protected" in written["note"]
+        assert not any(word in (written["reason"] + written["note"]).lower() for word in ("safe", "secure", "clean", "certified", "passed"))
 
 
 def test_changes_since_the_last_scan(report):

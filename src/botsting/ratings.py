@@ -28,7 +28,7 @@ from botsting.core.models import EvidenceLevel, Finding, ScanReport
 CRITICAL, HIGH, MEDIUM = "critical", "high", "medium"
 ORDER = (CRITICAL, HIGH, MEDIUM)
 FEW_ATTACKS = 10
-NOT_THE_BOT = "The grade describes this scan, not the bot: it is not a statement that the bot is safe."
+NOT_THE_BOT = "The grade describes this scan, not the bot. It is not a statement that the bot is protected."
 
 
 def severity(finding: Finding) -> str:
