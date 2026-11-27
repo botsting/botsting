@@ -126,6 +126,12 @@ def run_scan_command(args: argparse.Namespace) -> int:
         open_for_a_person(Path(args.html), getattr(args, "no_open", False))
     replay = replay_command(str(args.out), report.findings[0].id) if report.findings else ""
     show_summary(report, paths, replay)
+    if str(args.target).startswith("http:"):
+        # A bot of the person's own (not a built-in practice bot): ask whether to send the report for
+        # our conclusion. It asks only at a terminal, and sends only after an answer.
+        from botsting.conclusion import offer
+
+        offer(Path(args.out))
     return {
         "violations_verified": EXIT_VIOLATIONS,
         "no_verified_violations": EXIT_NO_VERIFIED,
@@ -394,6 +400,10 @@ def build_parser() -> argparse.ArgumentParser:
     from botsting.mcp_server import register as register_mcp
 
     register_mcp(commands)
+
+    from botsting.conclusion import register as register_conclusion
+
+    register_conclusion(commands)
 
     from botsting.demo import register as register_demo
 
