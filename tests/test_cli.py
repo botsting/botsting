@@ -15,7 +15,8 @@ def test_version(capsys):
 
 def test_scan_vulnerable_then_replay(tmp_path, capsys):
     out = tmp_path / "nested" / "scan.json"
-    assert main(["scan", "--target", "toy:vulnerable", "--out", str(out), "--replays", "2"]) == EXIT_VIOLATIONS
+    # The counts below are those of the built-in attacks; the reused collections add findings of their own.
+    assert main(["scan", "--target", "toy:vulnerable", "--attacks", "built-in", "--out", str(out), "--replays", "2"]) == EXIT_VIOLATIONS
     printed = capsys.readouterr().out
     assert (
         "14 verified violation(s): 11 protected data disclosed, 3 forbidden action(s) accepted, "

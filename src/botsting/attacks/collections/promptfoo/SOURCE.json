@@ -1,0 +1,10 @@
+{
+  "id": "promptfoo",
+  "name": "promptfoo prompt-extraction example prompts",
+  "url": "https://github.com/promptfoo/promptfoo",
+  "licence": "MIT",
+  "licence_url": "https://github.com/promptfoo/promptfoo/blob/485074451bd3c77a0abf000bc9a960499a86f286/LICENSE",
+  "commit": "485074451bd3c77a0abf000bc9a960499a86f286",
+  "retrieved": "2026-11-27",
+  "data_origin": "Three fixed example prompts written by the promptfoo authors inside their MIT-licensed repository (src/redteam/plugins/promptExtraction.ts, DEFAULT_EXAMPLES); the surrounding code is a generator prompt and was not taken."
+}

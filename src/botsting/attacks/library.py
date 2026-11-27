@@ -228,6 +228,13 @@ def injection_attacks_for(points: Sequence[InjectionPoint]) -> list[Attack]:
     ]
 
 
+def all_attacks(target: Target) -> list[Attack]:
+    """The built-in attacks, then the ones reused from public collections (attacks/collected.py)."""
+    from botsting.attacks.collected import collected_attacks
+
+    return default_attacks(target) + collected_attacks(target)
+
+
 def default_attacks(target: Target) -> list[Attack]:
     """Everything the static library has for this target, ordinary requests first."""
     slots = target.slots()
