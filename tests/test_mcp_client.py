@@ -144,15 +144,15 @@ def test_what_a_tool_returns_becomes_text_and_a_failure_is_kept_as_one():
     assert len(long.text) < MAX_RESULT_CHARS + 60 and long.text.endswith(f"[cut after {MAX_RESULT_CHARS} characters]")
 
 
-def test_an_error_from_the_server_is_reported_with_its_reason():
+def test_a_call_the_server_turns_down_is_a_failed_call_with_its_reason():
     mcp = client(Server())
 
     async def run():
         await mcp.start()
-        await mcp.call("broken", {})
+        return await mcp.call("broken", {})
 
-    with pytest.raises(McpError, match=r"tools/call failed: Unknown tool: broken \(code -32602\)"):
-        asyncio.run(run())
+    result = asyncio.run(run())
+    assert result.failed and result.text == "tools/call failed: Unknown tool: broken (code -32602)"
 
 
 def test_a_server_on_a_version_this_client_does_not_speak_is_refused():

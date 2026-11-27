@@ -64,6 +64,8 @@ from botsting.core.matcher import (
 )
 from botsting.core.meter import Meter, ScanConfig, _Stop
 from botsting.core.models import (
+    ASSISTANT_IS_BOTSTING,
+    ASSISTANT_KEY,
     CONTROLS_BY_HARNESS,
     CONTROLS_KEY,
     RECORDERS_ATTESTED,
@@ -572,6 +574,15 @@ def _limitations_for(strategy: AdaptiveStrategy | None, target_config: dict[str,
             "The scan checked with an ordinary request that the bot does not simply repeat its request "
             "variables; a bot that repeats them only in some other situation would still produce a finding "
             "that is not a leak of what it stores."
+        )
+    if target_config.get(ASSISTANT_KEY) == ASSISTANT_IS_BOTSTING:
+        items.append(
+            "This target is a server of tools, not a bot. BotSting played the assistant itself: the model named "
+            "in this report, given plain instructions and the server's tools. A finding shows that this model, "
+            "after reading the planted text in a tool's answer, asked for a tool it had no reason to use. "
+            "Another assistant, or the same model under other instructions, may act differently, so finding "
+            "nothing does not show that every assistant would leave the tool alone. Every call the model asked "
+            "for was sent to the server; \"accepted\" means the server did not answer it with an error."
         )
     return tuple(items) + _identity_note(target_config)
 
