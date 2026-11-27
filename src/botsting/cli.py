@@ -22,7 +22,7 @@ from botsting.core.benchmark import DEFAULT_MARGIN, compare_strategies, render_b
 from botsting.core.models import Rate, ScanReport
 from botsting.core.runner import ScanConfig, identity_unknown, replay_finding, run_scan, run_to_completion
 from botsting.exits import EXIT_FAILED, EXIT_INCONCLUSIVE, EXIT_NO_VERIFIED, EXIT_OK, EXIT_VIOLATIONS
-from botsting.reporting import open_for_a_person, show_summary, write_file, write_reports
+from botsting.reporting import earlier_report, open_for_a_person, show_summary, write_file, write_reports
 from botsting.shell import replay_command
 from botsting.targets.registry import SpecError, build_model, build_target
 
@@ -116,16 +116,18 @@ def run_scan_command(args: argparse.Namespace) -> int:
         return EXIT_INCONCLUSIVE
     assert isinstance(report, ScanReport)
 
+    previous = earlier_report(Path(args.out))  # read before this scan's report replaces it
     paths = write_reports(
         report,
         Path(args.out),
         Path(args.markdown) if args.markdown else None,
         Path(args.html) if args.html else None,
+        Path(args.sarif) if getattr(args, "sarif", None) else None,
     )
     if args.html:
         open_for_a_person(Path(args.html), getattr(args, "no_open", False))
     replay = replay_command(str(args.out), report.findings[0].id) if report.findings else ""
-    show_summary(report, paths, replay)
+    show_summary(report, paths, replay, previous)
     return {
         "violations_verified": EXIT_VIOLATIONS,
         "no_verified_violations": EXIT_NO_VERIFIED,
@@ -339,6 +341,7 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--out", default="reports/scan.botsting.json", help="where to write the JSON report")
     scan.add_argument("--markdown", help="also write a readable report to this path")
     scan.add_argument("--html", help="also write a self-contained report to open in a browser or print")
+    scan.add_argument("--sarif", help="also write the findings as SARIF 2.1.0, for a code-scanning dashboard")
     scan.add_argument("--no-open", action="store_true", help="do not open the browser report when the scan ends")
     scan.set_defaults(handler=_scan_or_first_scan)
 
