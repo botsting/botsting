@@ -7,6 +7,8 @@
     hardened:keyword-fixed               application-code-fixed control for hardened:keyword
     hardened:multiturn                   held-out multi-turn intake hardened target
     hardened:multiturn-fixed             application-code-fixed control for hardened:multiturn
+    http:<name>                          a bot behind an HTTP chat endpoint, described in botsting.targets.json
+    mcp:<name>                           an MCP server described there; BotSting plays the assistant
 
 Only local practice targets exist so far. Remote targets arrive together with the
 authorization gate, not before it.
@@ -62,6 +64,17 @@ def build_target(spec: str) -> Target:
             return build_http_target(variant, spec)
         except TargetConfigError as exc:
             raise SpecError(str(exc)) from exc
+    if kind == "mcp":
+        # An MCP server, described by name in botsting.targets.json. BotSting plays the assistant.
+        if query or "?" in spec:
+            raise SpecError("mcp targets take no options; put settings in the targets file")
+        from botsting.targets.http import TargetConfigError
+        from botsting.targets.mcp_server import build_mcp_server_target
+
+        try:
+            return build_mcp_server_target(variant, spec)
+        except TargetConfigError as exc:
+            raise SpecError(str(exc)) from exc
     try:
         if "?" in spec and not query:
             raise ValueError("'?' must be followed by options such as model=scripted")
@@ -93,4 +106,4 @@ def build_target(spec: str) -> Target:
             f"unknown hardened variant {variant!r}; use 'hardened:keyword', 'hardened:keyword-fixed', "
             "'hardened:multiturn' or 'hardened:multiturn-fixed'"
         )
-    raise SpecError(f"unknown target kind {kind!r}; use 'toy', 'hardened' or 'http'")
+    raise SpecError(f"unknown target kind {kind!r}; use 'toy', 'hardened', 'http' or 'mcp'")

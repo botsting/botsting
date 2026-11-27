@@ -38,6 +38,10 @@ class McpError(TargetError):
     """The server could not be reached, or did not answer as an MCP server does."""
 
 
+class McpRefused(McpError):
+    """The server answered the request with an error of its own."""
+
+
 @dataclass(frozen=True)
 class McpTool:
     name: str
@@ -159,7 +163,7 @@ class McpClient:
                 continue
             error = answer.get("error")
             if isinstance(error, Mapping):
-                raise McpError(f"{method} failed: {str(error.get('message', 'no reason given'))[:300]} (code {error.get('code')})")
+                raise McpRefused(f"{method} failed: {str(error.get('message', 'no reason given'))[:300]} (code {error.get('code')})")
             result = answer.get("result")
             if isinstance(result, Mapping):
                 return result, headers
@@ -213,5 +217,10 @@ class McpClient:
         raise McpError(f"the server lists more than {MAX_TOOLS} tools, or its list never ends")
 
     async def call(self, name: str, arguments: Mapping[str, Any]) -> McpResult:
-        result, _ = await self._request("tools/call", {"name": name, "arguments": dict(arguments)})
+        try:
+            result, _ = await self._request("tools/call", {"name": name, "arguments": dict(arguments)})
+        except McpRefused as refused:
+            # The server turned the call down, for example for arguments it does not accept. That is an
+            # outcome of the call, not a failure to reach the server.
+            return McpResult(str(refused), failed=True)
         return McpResult(_result_text(result), failed=result.get("isError") is True)

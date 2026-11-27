@@ -263,8 +263,10 @@ async def preflight(target: Target, meter: Meter | None = None) -> Preflight:
         statuses.append(status)
         if status.state == "reachable":
             watched.add(rule.tool)
+    # A target that makes every tool call itself has no recorder that could miss one.
+    sees_every_call = getattr(target, "records_every_tool_call", False) is True
     for point in injection_points(target):
-        unwatched = [tool for tool in point.forbidden_tools if tool not in watched]
+        unwatched = [] if sees_every_call else [tool for tool in point.forbidden_tools if tool not in watched]
         if unwatched:
             # Seeing no call proves nothing unless the recorder is known to see calls.
             statuses.append(
