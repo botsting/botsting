@@ -1,4 +1,4 @@
-"""`botsting conclusion`: the one way a report leaves the machine, and only after the person answers."""
+"""`botsting conclusion` and the question at the end of a scan: the two ways a report leaves the machine, both asked for."""
 
 import argparse
 import asyncio
@@ -49,30 +49,24 @@ def args(**changes):
     return argparse.Namespace(**{"report": "reports/scan.botsting.json", "without_conversations": False, "yes": False, "remove": None, **changes})
 
 
-def test_nothing_is_sent_when_the_answer_is_not_yes(report_file, monkeypatch, capsys):
+def test_running_the_command_is_the_request_so_it_sends_without_a_question(report_file, monkeypatch, capsys):
     seen: list = []
-    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
-    for typed in ("n", "no", "maybe", "w"):
-        monkeypatch.setattr("builtins.input", lambda prompt, typed=typed: typed)
+
+    def must_not_ask(prompt):
+        raise AssertionError("the command asked a question")
+
+    monkeypatch.setattr("builtins.input", must_not_ask)
+    for terminal in (True, False):  # the same in a script: whoever ran the command asked for it
+        monkeypatch.setattr("sys.stdin.isatty", lambda terminal=terminal: terminal)
         assert conclusion.run(args(), service(seen)) == 0
-        assert "Nothing was sent." in capsys.readouterr().out
-    assert seen == []
+        printed = capsys.readouterr().out
+        # What goes and where is shown before it goes.
+        assert printed.index("This will send the report") < printed.index("Sending it now.") < printed.index("Our conclusion.")
+    assert len(seen) == 2
 
 
-def test_without_a_terminal_it_refuses_unless_told_yes(report_file, monkeypatch, capsys):
+def test_it_sends_the_report_to_botsting_and_prints_the_conclusion(report_file, capsys):
     seen: list = []
-    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
-    assert conclusion.run(args(), service(seen)) == 2
-    printed = capsys.readouterr().out
-    assert "Not sent: there is no terminal to ask at; add --yes" in printed and seen == []
-    assert "This will send the report" in printed  # what would be sent is shown even then
-
-
-@pytest.mark.parametrize("typed", ["", "y", "YES"])
-def test_a_yes_or_enter_sends_it_to_botsting_and_prints_the_conclusion(report_file, monkeypatch, capsys, typed):
-    seen: list = []
-    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
-    monkeypatch.setattr("builtins.input", lambda prompt: typed)
     assert conclusion.run(args(), service(seen)) == 0
     (request,) = seen
     assert str(request.url) == "https://api.botsting.com/conclusion" and request.method == "POST"
@@ -82,7 +76,7 @@ def test_a_yes_or_enter_sends_it_to_botsting_and_prints_the_conclusion(report_fi
     printed = capsys.readouterr().out
     assert "Our conclusion." in printed and f"botsting conclusion --remove {REFERENCE}" in printed
     assert (report_file.parent / "conclusion.txt").read_text(encoding="utf-8") == "Our conclusion.\nFix F1 first.\n"
-    # Before the question, the person was told what goes and where, and how long it is kept.
+    # The person is told what goes and where, and how long it is kept.
     assert "It includes the conversations" in printed and "until you ask us to remove it" in printed
     assert "botsting.com/privacy" in printed and "180" not in printed
 
@@ -174,10 +168,10 @@ def test_the_address_can_only_be_https_or_this_machine(report_file, monkeypatch,
 
 
 def test_the_command_is_on_the_command_line(report_file, monkeypatch, capsys):
-    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
-    monkeypatch.setattr("builtins.input", lambda prompt: "n")
-    assert main(["conclusion"]) == 0
-    assert "Nothing was sent." in capsys.readouterr().out
+    # An address the command refuses, so this test can never send anything anywhere.
+    monkeypatch.setenv(conclusion.URL_ENV, "http://example.invalid/conclusion")
+    assert main(["conclusion"]) == 2
+    assert "Not sent: BOTSTING_CONCLUSION_URL must be an https address" in capsys.readouterr().out
 
 
 def test_a_report_the_service_could_not_keep_still_gets_its_conclusion_and_no_removal_line(report_file, capsys):

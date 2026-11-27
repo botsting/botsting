@@ -14,6 +14,7 @@ BotSting tests a bot its owner controls and reports only what is proven: a fake 
 3. **Propose every change to the bot as a diff and wait for approval.** The server never edits the project; neither do you without a yes.
 4. **Never weaken a result.** "Inconclusive" is not "clean". "No verified violations" is a statement about the tests that ran, not "safe". Say what the report says was not tested.
 5. Do not write attack messages of your own. The tool has its own.
+6. **Never send a report anywhere yourself.** `botsting conclusion` sends the scan's report to BotSting's service as soon as it is run. Run it only when the user asks for BotSting's conclusion in their own words, and tell them first what it sends (the report, with the conversations unless `--without-conversations` is given).
 
 ## Steps
 

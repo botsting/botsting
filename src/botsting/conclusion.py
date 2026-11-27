@@ -5,11 +5,12 @@
     botsting conclusion --without-conversations
     botsting conclusion --remove 202611-...     # have a report you sent removed
 
-A scan itself sends nothing anywhere. A report leaves your machine in one way only: you are
-shown what would be sent and where, you are asked, and you answer. At the end of a scan run
-at a terminal the question is asked for you ("Send it? [Y/n]", where Enter means yes); in a
-script, a pipeline or an assistant it is never asked and nothing is sent. Setting
-`BOTSTING_NO_CONCLUSION` stops the question.
+A scan itself sends nothing anywhere. A report leaves your machine only when you ask for
+that, in one of two ways. You run this command: it shows what is being sent and where,
+and sends it; running it is the request, so it does not ask again. Or, at the end of a
+scan run at a terminal, you are shown the same and asked ("Send it? [Y/n]", where Enter
+means yes); in a script, a pipeline or an assistant that question is never asked and
+nothing is sent. Setting `BOTSTING_NO_CONCLUSION` stops the question.
 
 What you get back: what the result means, which finding to deal with first, what the
 scan did not test, and whether something that went wrong was a fault in BotSting and
@@ -254,12 +255,7 @@ def run(args: argparse.Namespace, transport: Any = None) -> int:
         for line in describe(path, body, report, conversations, url):
             print(line)
         print()
-        if not args.yes:
-            if not sys.stdin.isatty():
-                raise ConclusionError("there is no terminal to ask at; add --yes to send it, after reading what is sent above")
-            if _answer("Send it? [Y/n] ") not in ("", "y", "yes"):
-                print("Nothing was sent.")
-                return EXIT_OK
+        print("Sending it now.")  # running this command is the request; it does not ask a second time
     except ConclusionError as error:
         print(f"Not sent: {error}")
         return EXIT_FAILED
@@ -312,11 +308,11 @@ def offer(path: Path, transport: Any = None) -> bool:
 def register(commands: Any) -> None:
     parser = commands.add_parser(
         "conclusion",
-        help="send a finished report to BotSting, after showing you what is sent, and get our conclusion back",
-        description="Send a finished report to BotSting and get our conclusion back. You are shown what is sent and asked first.",
+        help="send a finished report to BotSting, showing you what is sent, and get our conclusion back",
+        description="Send a finished report to BotSting and get our conclusion back. It shows what is being sent, then sends it.",
     )
     parser.add_argument("report", nargs="?", default="reports/scan.botsting.json", help="the JSON report of a scan (default: reports/scan.botsting.json)")
     parser.add_argument("--without-conversations", action="store_true", help="leave out every message, reply, planted text and tool argument")
-    parser.add_argument("--yes", action="store_true", help="send without asking (for use where there is no terminal)")
+    parser.add_argument("--yes", action="store_true", help="not needed: the command sends without asking (kept so older scripts still run)")
     parser.add_argument("--remove", metavar="REFERENCE", help="remove a report you sent earlier; the reference was printed with its conclusion")
     parser.set_defaults(handler=run)

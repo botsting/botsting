@@ -4,7 +4,7 @@
 
 **`botsting conclusion`: send a finished report and get our conclusion back.** It says what the result means, which finding to deal with first, what the scan did not test, and whether something that went wrong was a fault in BotSting and not in your bot. In exchange we get a real report to learn from.
 
-- You are shown what would be sent and where, and asked, before anything leaves your machine. The names of who authorized and ran the test are removed first. `--without-conversations` also removes every message, reply, planted text and tool argument.
+- Running the command is the request: it shows what is being sent and where, and sends it. The names of who authorized and ran the test are removed first. `--without-conversations` also removes every message, reply, planted text and tool argument.
 - At the end of a scan of your own bot, run at a terminal, the question is asked for you: `Send it? [Y/n]`, where Enter means yes and `w` sends it without the conversations. It is never asked in a script, a pipeline or an assistant, and `BOTSTING_NO_CONCLUSION=1` stops it.
 - A report is kept until you ask for it to be removed: `botsting conclusion --remove REFERENCE`, or https://botsting.com/delete. The service does not keep your network address.
 - `docs/never-do.md`, point 10, now says exactly this.
