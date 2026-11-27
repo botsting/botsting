@@ -217,7 +217,7 @@ When something is not working, `botsting doctor --target http:staging` checks th
 Limits:
 
 - The harness sees tools covered by a decorator or by a guarded tool list.
-- Calls made after a streaming reply has started are blocked but not reported.
+- A bot that streams its reply is covered: during a test the Python harness holds the reply until the bot has finished it, so a marked tool called while the reply was being written is recorded and reported like any other. Your real users' replies are never held. (The JavaScript harness does not do this yet: there, a call made after the reply has started is blocked but not reported.)
 - The test session follows the request. Python carries it into `await`, `asyncio.to_thread` and the thread pools of Starlette and FastAPI. It is not carried into a thread you start yourself, a bare `run_in_executor`, a process pool or a job queue (Celery, RQ). A marked tool that runs there during a test runs for real. If your tools run that way, mark the function that hands the work over, not the worker.
 - The signatures stop the model from faking the record. They do not stop the bot's own code from lying.
 

@@ -538,20 +538,134 @@ def test_the_readiness_check_carries_no_canaries(key):
     assert path == pp.READY_PATH and body["fixtures"] == {} and body["content"] == {}
 
 
-def test_calls_after_a_streaming_reply_has_started_are_blocked_but_not_reported(key):
-    """The stated limit: the record is sent with the response headers."""
+def test_a_call_made_while_a_streamed_reply_is_being_written_is_reported_too(key):
+    """During a test the reply is held until the bot has finished it, so the record covers every call."""
     real_refunds.clear()
+    sent = []
 
     async def streaming_bot(scope, receive, send):
         issue_refund("early", 1)
-        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.start", "status": 200, "headers": [(b"content-type", b"text/event-stream")]})
+        sent.append("start")
+        await send({"type": "http.response.body", "body": b"data: one\n\n", "more_body": True})
         issue_refund("late", 2)
-        await send({"type": "http.response.body", "body": b"{}"})
+        await send({"type": "http.response.body", "body": b"data: two\n\n", "more_body": True})
+        issue_refund("last", 3)
+        await send({"type": "http.response.body", "body": b""})
 
     token = pp.make_session_token(KEY, "s1", {}, nonce="n")
     response = post(pp.wrap(streaming_bot), headers={pp.SESSION_HEADER: token})
     calls = pp.read_calls_header(KEY, "s1", response.headers[pp.CALLS_HEADER], "n")
-    assert [c["arguments"]["order_id"] for c in calls] == ["early"] and real_refunds == []
+    assert [c["arguments"]["order_id"] for c in calls] == ["early", "late", "last"] and real_refunds == []
+    assert response.text == "data: one\n\ndata: two\n\n" and response.headers["content-type"] == "text/event-stream"
+
+
+def test_an_ordinary_users_streamed_reply_is_never_held(key):
+    order = []
+
+    async def streaming_bot(scope, receive, send):
+        async def passed_on(message):
+            order.append(message["type"])
+            await send(message)
+
+        await passed_on({"type": "http.response.start", "status": 200, "headers": []})
+        order.append("the bot goes on working")
+        await passed_on({"type": "http.response.body", "body": b"one", "more_body": True})
+        await passed_on({"type": "http.response.body", "body": b"two"})
+
+    seen = []
+
+    async def go():
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def send(message):
+            seen.append((message["type"], len(order)))
+
+        await pp.wrap(streaming_bot)({"type": "http", "method": "POST", "path": "/chat", "headers": []}, receive, send)
+
+    asyncio.run(go())
+    # Each message reached the server at the moment the bot sent it, not at the end.
+    assert seen == [("http.response.start", 1), ("http.response.body", 3), ("http.response.body", 4)]
+
+
+def test_a_test_reply_larger_than_the_limit_is_passed_on_as_it_comes(key, monkeypatch):
+    monkeypatch.setattr(pp, "_HOLD_LIMIT", 10)
+
+    async def streaming_bot(scope, receive, send):
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        issue_refund("before", 1)
+        await send({"type": "http.response.body", "body": b"x" * 11, "more_body": True})
+        issue_refund("after", 2)
+        await send({"type": "http.response.body", "body": b"end"})
+
+    token = pp.make_session_token(KEY, "s1", {}, nonce="n")
+    response = post(pp.wrap(streaming_bot), headers={pp.SESSION_HEADER: token})
+    calls = pp.read_calls_header(KEY, "s1", response.headers[pp.CALLS_HEADER], "n")
+    assert [c["arguments"]["order_id"] for c in calls] == ["before"] and response.text == "x" * 11 + "end"
+
+
+def test_a_bot_that_fails_while_streaming_leaves_the_error_to_the_server(key):
+    passed = []
+
+    async def failing_bot(scope, receive, send):
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"partial", "more_body": True})
+        raise RuntimeError("the model call failed")
+
+    async def go():
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def send(message):
+            passed.append(message)
+
+        token = pp.make_session_token(KEY, "s1", {}, nonce="n")
+        scope = {"type": "http", "method": "POST", "path": "/chat", "headers": [(pp.SESSION_HEADER.lower().encode(), token.encode())]}
+        await pp.wrap(failing_bot)(scope, receive, send)
+
+    with pytest.raises(RuntimeError, match="the model call failed"):
+        asyncio.run(go())
+    assert passed == [] and not pp.active()  # nothing half-sent, so the server can answer 500
+
+
+def test_a_wsgi_reply_that_is_streamed_reports_the_calls_made_while_it_was_written(key):
+    real_refunds.clear()
+    answered = {}
+
+    def app(environ, start_response):
+        start_response("200 OK", [("Content-Type", "text/event-stream")])
+
+        def pieces():
+            yield b"data: one\n\n"
+            issue_refund("late", 2)
+            yield b"data: two\n\n"
+
+        return pieces()
+
+    def start_response(status, headers):
+        answered.update(headers, status=status)
+
+    token = pp.make_session_token(KEY, "s1", {}, nonce="n1")
+    environ = {"REQUEST_METHOD": "POST", "PATH_INFO": "/chat", "HTTP_BOTSTING_SESSION": token}
+    body = pp.wrap(app)(environ, start_response)
+    assert b"".join(body) == b"data: one\n\ndata: two\n\n" and answered["status"] == "200 OK" and real_refunds == []
+    calls = pp.read_calls_header(KEY, "s1", answered[pp.CALLS_HEADER], "n1")
+    assert [c["arguments"]["order_id"] for c in calls] == ["late"] and not pp.active()
+
+
+def test_a_wsgi_app_that_writes_its_body_the_old_way_keeps_its_order(key):
+    answered = {}
+
+    def app(environ, start_response):
+        write = start_response("200 OK", [("Content-Type", "text/plain")])
+        write(b"first,")
+        return [b"second"]
+
+    token = pp.make_session_token(KEY, "s1", {}, nonce="n1")
+    environ = {"REQUEST_METHOD": "POST", "PATH_INFO": "/chat", "HTTP_BOTSTING_SESSION": token}
+    body = pp.wrap(app)(environ, lambda status, headers: answered.update(headers))
+    assert b"".join(body) == b"first,second" and pp.CALLS_HEADER in answered
 
 
 def test_a_tool_run_in_a_thread_you_start_yourself_is_not_covered(key):
