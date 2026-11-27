@@ -30,6 +30,7 @@ pyrit = ["pyrit>=1.2.0,<2"]
 agents = ["openai-agents~=0.25.0"]
 langchain = ["langchain-core~=1.8.4"]
 claude-agent = ["claude-agent-sdk~=0.2.187"]
+anthropic = ["anthropic>=2,<3"]
 
 [project.scripts]
 botsting = "botsting.cli:main"
