@@ -49,6 +49,7 @@ def write_reports(
     markdown: Path | None = None,
     html: Path | None = None,
     sarif: Path | None = None,
+    statement: Path | None = None,
 ) -> list[tuple[str, str]]:
     """Write the JSON report, and the readable, browser and SARIF reports when paths are given.
 
@@ -59,6 +60,12 @@ def write_reports(
     previous = earlier_report(out)
     write_file(out, json.dumps(with_ratings(report, previous), indent=2))
     paths = [("Report (JSON)", str(out.resolve()))]
+    if statement is not None:
+        from botsting.statement import fingerprint, render_statement
+
+        # The statement carries the fingerprint of the report file exactly as it was just written.
+        write_file(statement, render_statement(report, fingerprint(out.read_bytes())))
+        paths.append(("Scan statement (one page, to show someone)", str(statement.resolve())))
     if sarif is not None:
         from botsting import ratings
 
