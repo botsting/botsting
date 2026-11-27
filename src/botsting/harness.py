@@ -45,8 +45,11 @@ What a test session does
 - The recorded calls go back to the scanner in a response header,
   BotSting-Tool-Calls, signed for that session and that one message, so a record
   cannot be made up, moved to another conversation or reused for a later message.
-  Only calls made before the response headers are sent are reported, so a streaming
-  reply must finish its tool calls first.
+  During a test the harness holds the reply until the bot has finished writing it, and
+  only then sends it with the record, so a call made while a streamed reply was being
+  written is in the record too. The scanner gets the reply in one piece; it does not need
+  it piece by piece. Ordinary requests are never held. A reply over 8 MB is passed on as
+  it comes, with the calls made up to then.
 
 What the harness tells the scanner about the bot
 ------------------------------------------------
@@ -174,6 +177,8 @@ class _StandIn(dict):  # type: ignore[type-arg]
 _DEFAULT_RESULT = _StandIn(status="ok")
 _READY = b"botsting harness ready\n"
 _REFUSED = b"botsting: this request carries a test session that is not valid here, so it was not run\n"
+# How much of a test reply is held back before it is passed on as it comes.
+_HOLD_LIMIT = 8_000_000
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -818,21 +823,42 @@ class _Asgi:
             await send({"type": "http.response.body", "body": _READY})
             return
 
+        # The reply is held until the bot has finished it, so the record that goes with it covers
+        # every tool call, also one made while a streamed reply was being written.
+        held: list[dict[str, Any]] = []
+        size = 0
+        passing = False  # the reply was sent on (it is complete, or it outgrew the limit)
+
+        async def pass_on() -> None:
+            nonlocal passing
+            passing = True
+            for message in held:
+                if message.get("type") == "http.response.start":
+                    calls = (CALLS_HEADER.lower().encode("ascii"), session.header_value().encode("ascii"))
+                    message = {**message, "headers": [*message.get("headers", []), calls]}
+                await send(message)
+            held.clear()
+
         async def send_with_calls(message: dict[str, Any]) -> None:
-            if message.get("type") == "http.response.start":
-                headers = list(message.get("headers", []))
-                headers.append(
-                    (
-                        CALLS_HEADER.lower().encode("ascii"),
-                        session.header_value().encode("ascii"),
-                    )
-                )
-                message = {**message, "headers": headers}
-            await send(message)
+            nonlocal size
+            if passing:
+                await send(message)
+                return
+            held.append(message)
+            kind = message.get("type")
+            if kind == "http.response.body":
+                size += len(message.get("body", b""))
+                if not message.get("more_body", False) or size > _HOLD_LIMIT:
+                    await pass_on()
+            elif kind != "http.response.start":
+                await pass_on()  # a kind of message this does not know: never hold it back
 
         reset = _enter(session)
         try:
             await self.app(scope, receive, send_with_calls)
+            if held:
+                await pass_on()  # the app ended without a last body message
+            # If the app raised, what was held is dropped, so the server can answer with its own error.
         finally:
             _leave(reset)
 
@@ -873,17 +899,30 @@ class _Wsgi:
             )
             return [_READY]
 
-        def start_with_calls(status: str, headers: list[tuple[str, str]], exc_info: Any = None) -> Any:
-            headers = [*headers, (CALLS_HEADER, session.header_value())]
-            return start_response(status, headers) if exc_info is None else start_response(status, headers, exc_info)
+        # The start of the reply is held until the whole body has been read, so the record that goes
+        # with it covers every tool call, also one made while a streamed reply was being written.
+        started: list[tuple[str, list[tuple[str, str]], Any]] = []
+        written: list[bytes] = []  # from the old write() way of sending a body
+
+        def hold_the_start(status: str, headers: list[tuple[str, str]], exc_info: Any = None) -> Any:
+            started[:] = [(status, list(headers), exc_info)]
+            return written.append
 
         reset = _enter(session)
         body: Iterable[bytes] = ()
         try:
-            body = self.app(environ, start_with_calls)
+            body = self.app(environ, hold_the_start)
             # Read the body inside the session, so a view that runs lazily still sees it.
-            # Calls made after start_response cannot be reported; see the module notes.
-            return list(body)
+            chunks = list(body)
+            if not started:
+                return chunks  # the app never started a reply; the server will say so
+            status, headers, exc_info = started[0]
+            headers = [*headers, (CALLS_HEADER, session.header_value())]
+            if exc_info is None:
+                start_response(status, headers)
+            else:
+                start_response(status, headers, exc_info)
+            return [*written, *chunks]
         finally:
             try:
                 close = getattr(body, "close", None)
