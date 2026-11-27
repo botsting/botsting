@@ -79,6 +79,10 @@ def _shapes(field: str | None, session_field: str | None) -> list[dict[str, Any]
 
 def find_reply(data: Any) -> str | None:
     """A JSON pointer to the reply text in a response, or None if there is no text in it."""
+    from botsting.targets.streams import Streamed
+
+    if isinstance(data, Streamed):  # a reply that was streamed: its pieces, joined, are always here
+        return "/text" if data["text"].strip() else None
     if isinstance(data, str):
         return "" if data.strip() else None
 
@@ -331,7 +335,8 @@ def discover(
                 continue
             pointer = reply_pointer if reply_pointer is not None else find_reply(data)
             if pointer is None:
-                last = "the bot answered, but there was no text in its answer"
+                unreadable = getattr(data, "unreadable", None)
+                last = unreadable() if callable(unreadable) else "the bot answered, but there was no text in its answer"
                 continue
             shown = next(key for key, value in body.items() if value == "{message}") if "messages" not in body else "messages"
             say(f"It takes the message in {shown!r} and answers at {pointer or 'the top level'!r}.")

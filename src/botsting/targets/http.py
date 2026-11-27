@@ -103,6 +103,7 @@ from botsting.harness import (
     read_record,
 )
 from botsting.targets.base import TargetError
+from botsting.targets.streams import StreamError, read_stream
 
 DEFAULT_TARGETS_FILE = "botsting.targets.json"
 _NAME = re.compile(r"[A-Za-z0-9_-]{1,64}")
@@ -678,6 +679,17 @@ class HttpTarget:
                 raise TargetError(f"could not reach {path}: {type(exc).__name__}: {exc}") from exc
         if not data:
             return None, answered
+        kind = answered.get("content-type", "")
+        if "json" in kind and not any(name in kind for name in ("ndjson", "jsonl", "json-seq", "stream+json", "x-json-stream")):
+            streamed = None  # one JSON answer, the usual case
+        else:
+            try:
+                # A reply sent piece by piece: wait for the end (done above), then join the pieces.
+                streamed = read_stream(kind, data, declared="x-vercel-ai-data-stream" in answered)
+            except StreamError as exc:
+                raise TargetError(f"{path}: {exc}") from exc
+        if streamed is not None:
+            return streamed, answered
         try:
             return json.loads(data), answered
         except ValueError:
