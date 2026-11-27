@@ -177,3 +177,41 @@ def test_the_command_line_prints_the_grade_and_what_changed(tmp_path, monkeypatc
     assert (tmp_path / "reports" / "scan.sarif").exists() and "SARIF" in first
     main(arguments)
     assert "Still there since the last scan: F1" in capsys.readouterr().out
+
+
+def test_the_browser_and_readable_reports_show_the_grade_and_each_severity(report):
+    from botsting.report_html import render_html
+    from botsting.report_markdown import render_markdown
+
+    page, text = render_html(report), render_markdown(report)
+    result = ratings.grade(report)
+    for rendered in (page, text):
+        assert result.text.replace("'", "&#x27;") in rendered or result.text in rendered
+        assert ratings.NOT_THE_BOT in rendered and "Since the last scan" not in rendered
+    assert f"<div><span>Grade</span>{result.letter}</div>" in page
+    for finding in report.findings:
+        assert f"{ratings.severity(finding).capitalize()}: {finding.level.label}" in page
+    assert text.count("- Severity: ") == len(report.findings)
+    unsure = replace(report, findings=(), status="inconclusive", inconclusive_reasons=("the secret could not be fetched",))
+    assert "<div><span>Grade</span>not graded</div>" in render_html(unsure) and "Not graded: the scan was inconclusive" in render_markdown(unsure)
+
+
+def test_the_reports_say_what_changed_since_the_scan_before(report, tmp_path):
+    from botsting.report_html import render_html
+    from botsting.report_markdown import render_markdown
+
+    before = report.to_dict()
+    gone = {**before["findings"][0], "attack_id": "an-attack-that-worked-last-time", "title": "An older <way> in"}
+    earlier = {**before, "findings": [*before["findings"][1:], gone]}
+    page, text = render_html(report, None, earlier), render_markdown(report, None, earlier)
+    day = report.finished_at[:10]
+    assert f"Since the last scan ({day}):" in page and f"Since the last scan ({day}):" in text
+    assert f"<li>New: {report.findings[0].id}</li>" in page
+    assert "Tested for again and not found: An older &lt;way&gt; in." in page, "a title from an old report is shown as text, never as markup"
+    assert "A problem is closed when its replay stops working" in page and "A problem is closed when its replay stops working" in text
+    # Written by a scan: the second scan to the same place carries the comparison into all three files.
+    out = tmp_path / "scan.botsting.json"
+    for _ in range(2):
+        write_reports(report, out, tmp_path / "report.md", tmp_path / "report.html")
+    assert "Since the last scan" in (tmp_path / "report.html").read_text(encoding="utf-8")
+    assert "Still there since the last scan" in (tmp_path / "report.md").read_text(encoding="utf-8")
