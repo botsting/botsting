@@ -16,7 +16,7 @@ from pathlib import Path
 
 from botsting import __version__
 from botsting.attacks.adaptive import LLMAdaptiveStrategy
-from botsting.attacks.library import default_attacks
+from botsting.attacks.library import all_attacks, default_attacks
 from botsting.console import NO_VERIFIED_HEADLINE, what_happened  # noqa: F401  (re-exported)
 from botsting.core.benchmark import DEFAULT_MARGIN, compare_strategies, render_benchmark_markdown
 from botsting.core.models import Rate, ScanReport
@@ -90,7 +90,8 @@ def run_scan_command(args: argparse.Namespace) -> int:
             "independence": args.independence,
         }
         ScanConfig(**limits)  # type: ignore[arg-type]
-        attacks = default_attacks(target) if args.strategy in ("static", "both") else []
+        listed = default_attacks if getattr(args, "attacks", "all") == "built-in" else all_attacks
+        attacks = listed(target) if args.strategy in ("static", "both") else []
         strategy = None
         if args.strategy in ("adaptive", "both"):
             attacker_model = build_model(args.attacker_model)
@@ -290,6 +291,12 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("static", "adaptive", "both"),
         default="static",
         help="run the static attack list, the adaptive attacker, or both",
+    )
+    scan.add_argument(
+        "--attacks",
+        choices=("all", "built-in"),
+        default="all",
+        help="which static attacks to run: all (the built-in ones and those reused from public collections), or only the built-in ones",
     )
     scan.add_argument(
         "--attacker-model",

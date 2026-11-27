@@ -10,6 +10,7 @@ import pytest
 
 from botsting.attacks import collected, library
 from botsting.attacks.collected import ALLOWED_LICENCES, CollectionError, collected_attacks, load
+from botsting.cli import main
 from botsting.targets.base import injection_points, tool_rules
 from botsting.targets.registry import build_target
 
@@ -186,5 +187,23 @@ def test_the_same_text_in_two_sources_is_refused(tmp_path):
 def test_the_collections_that_ship_follow_every_rule():
     sources, entries = load(collected.ROOT)
     assert all(source.licence in ALLOWED_LICENCES for source in sources)
-    assert {e.source for e in entries} == {s.id for s in sources}
+    assert {e.source for e in entries} == {s.id for s in sources} == {"agentdojo", "promptfoo", "promptinject"}
     assert (collected.ROOT / "README.md").exists()
+    for source in sources:
+        # The licence text is the one published at the recorded commit, and the record points at that commit.
+        assert source.commit in source.licence_url and len(source.commit) == 40
+        assert b"\r" not in (collected.ROOT / source.id / "LICENSE").read_bytes()
+
+
+def test_a_scan_from_the_command_line_runs_the_collected_attacks_unless_told_not_to(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    target = build_target("toy:vulnerable")
+    built_in, everything = library.default_attacks(target), library.all_attacks(target)
+    assert everything[: len(built_in)] == built_in and len(everything) > len(built_in)
+    assert len({a.id for a in everything}) == len(everything)
+    counts = {}
+    for choice in ("all", "built-in"):
+        out = tmp_path / choice / "scan.botsting.json"
+        main(["scan", "--target", "toy:vulnerable", "--replays", "1", "--attacks", choice, "--out", str(out)])
+        counts[choice] = json.loads(out.read_text(encoding="utf-8"))["attacks_run"]
+    assert counts == {"all": len(everything), "built-in": len(built_in)}

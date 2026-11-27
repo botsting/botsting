@@ -1,0 +1,10 @@
+{
+  "id": "agentdojo",
+  "name": "AgentDojo injection attack templates",
+  "url": "https://github.com/ethz-spylab/agentdojo",
+  "licence": "MIT",
+  "licence_url": "https://github.com/ethz-spylab/agentdojo/blob/089ed468cf3ed0322acc66b0211f26d9d90dbf60/LICENSE",
+  "commit": "089ed468cf3ed0322acc66b0211f26d9d90dbf60",
+  "retrieved": "2026-11-27",
+  "data_origin": "Payload templates written by the AgentDojo (ETH S:PyL) authors for their benchmark; MIT licence in the repository covers them."
+}

@@ -14,8 +14,8 @@ The rules
 - A source is used only under a licence that allows commercial reuse and redistribution
   (`ALLOWED_LICENCES`), with its licence text beside its attacks.
 - An attack names the place in its source it was taken from, and says whether its text was
-  kept as published, had our placeholder put where the source's own request stood, or was
-  shortened.
+  kept as published, had our placeholder put where the source's own request stood, was
+  shortened, or had the source's own blanks filled with the source's own default values.
 - `{hint}` and `{goal}` are the only placeholders. They are replaced as plain text, so any
   other braces in a text are just braces.
 - No text may repeat another one, here or among the built-in attacks.
@@ -40,7 +40,7 @@ ROOT = Path(__file__).parent / "collections"
 # than keeping the notice. Anything else, including a missing licence, is refused.
 ALLOWED_LICENCES = frozenset({"Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "CC-BY-4.0", "CC0-1.0", "ISC", "MIT", "Unlicense"})
 KINDS = ("instruction_secret", "other_user_record", "action", "injection")
-CHANGES = ("verbatim", "placeholder", "trimmed")
+CHANGES = ("verbatim", "placeholder", "trimmed", "filled")
 HINT = "{hint}"
 GOAL = "{goal}"
 MAX_TURNS = 25

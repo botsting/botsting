@@ -1,0 +1,10 @@
+{
+  "id": "promptinject",
+  "name": "PromptInject jailbreak templates",
+  "url": "https://github.com/agencyenterprise/PromptInject",
+  "licence": "MIT",
+  "licence_url": "https://github.com/agencyenterprise/PromptInject/blob/2928a719d5de62d3766226f1b44c51d9570bc530/LICENSE",
+  "commit": "2928a719d5de62d3766226f1b44c51d9570bc530",
+  "retrieved": "2026-11-27",
+  "data_origin": "Jailbreak template strings written by Agency Enterprise for the PromptInject framework; bundled and redistributed by garak under Apache-2.0, original MIT licence covers the texts."
+}
