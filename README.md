@@ -166,6 +166,17 @@ Exit codes: `0` no verified violations, `1` violations verified, `2` inconclusiv
 
 Known limits are listed at the end of every report.
 
+## Get our conclusion on a report
+
+    botsting conclusion                      # the report of the last scan
+    botsting conclusion path/to/scan.botsting.json --without-conversations
+
+This sends the finished report to BotSting's service and prints what comes back: what the result means, which finding to deal with first, what the scan did not test, and whether something that went wrong was a fault in BotSting and not in your bot. The answer is worked out by fixed rules, not by a model. What we get in exchange is a real report to learn from, which is how the tool improves.
+
+- **Nothing is sent unless you ask.** Running the command is asking: it shows what is being sent and where, and sends it. At the end of a scan of your own bot, run at a terminal, you are shown the same and asked `Send it? [Y/n]`; Enter means yes, `w` sends it without the conversations, anything else sends nothing. In a script, a pipeline or a coding assistant that question is never asked and nothing is sent. `BOTSTING_NO_CONCLUSION=1` stops the question for good.
+- **What is sent:** the report file, after the names of who authorized and ran the test are removed. The secrets in it are fake ones made for the test. The conversations contain your bot's real replies, which can include its instructions; `--without-conversations` removes every message, reply, planted text and tool argument. The report also names the address the bot was tested at.
+- **What is kept:** the report, privately, until you ask for it to be removed. The conclusion ends with a reference; `botsting conclusion --remove REFERENCE` or https://botsting.com/delete removes that report. The service does not keep your network address. Details: https://botsting.com/privacy
+
 ## Scanning a bot over HTTP
 
 Any bot with an HTTP chat endpoint can be scanned once it has a small *test harness*: one extra endpoint in its staging or test build that BotSting calls before every attempt.

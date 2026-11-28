@@ -1,6 +1,6 @@
 [project]
 name = "botsting"
-version = "0.0.3"
+version = "0.0.4"
 description = "Evidence-first security testing for LLM applications: report what was proven, not what looked bad."
 readme = "README.md"
 requires-python = ">=3.11"
