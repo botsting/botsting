@@ -198,7 +198,7 @@ def test_the_same_text_in_two_sources_is_refused(tmp_path):
 def test_the_collections_that_ship_follow_every_rule():
     sources, entries = load(collected.ROOT)
     assert all(source.licence in ALLOWED_LICENCES for source in sources)
-    assert {e.source for e in entries} == {s.id for s in sources} == {"agentdojo", "promptfoo", "promptinject"}
+    assert {e.source for e in entries} == {s.id for s in sources} == {"agentdojo", "botsting-authored", "promptfoo", "promptinject"}
     assert (collected.ROOT / "README.md").exists()
     for source in sources:
         # The licence text is the one published at the recorded commit, and the record points at that commit.
